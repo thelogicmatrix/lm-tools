@@ -230,4 +230,66 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 4b - back/active/backlog-remove');
 }
 
+// --- Finding 1: unresolvable target must exit non-zero and print to stderr ---
+{
+  const repo = tempRepo();
+  const r1 = gtg(repo, ['remove', 'no-such-slug']);
+  assert.notEqual(r1.status, 0, 'remove of unknown slug should exit non-zero');
+  assert.ok(r1.stderr.length > 0, 'remove of unknown slug should print to stderr');
+  const r2 = gtg(repo, ['back', '99']);
+  assert.notEqual(r2.status, 0, 'back of out-of-range number should exit non-zero');
+  assert.ok(r2.stderr.length > 0, 'back of out-of-range number should print to stderr');
+  console.log('ok - Finding 1: unresolvable target exits non-zero');
+}
+
+// --- Finding 2: back/active success-message hint must point at the moved entry's
+// sorted position in the destination list, not the raw post-push array length ---
+{
+  const repo = tempRepo();
+  // back: shelve Zebra first (backlog = [Zebra]), then shelve Apple.
+  // Sorted backlog = [Apple, Zebra] — Apple's hint must be 1, not length (2).
+  gtg(repo, HANDOFF_ARGS('zebra', 'Zebra'), { input: BODY });
+  gtg(repo, ['back', 'zebra']);
+  gtg(repo, HANDOFF_ARGS('apple', 'Apple'), { input: BODY });
+  const rb = gtg(repo, ['back', 'apple']);
+  assert.equal(rb.status, 0, rb.stderr);
+  assert.match(rb.stdout, /Bring back: gtg active 1(?!\d)/, 'back hint must use sorted position (Apple=1), not raw length');
+  console.log('ok - Finding 2a: back hint uses sorted position');
+}
+{
+  const repo = tempRepo();
+  // active: Zebra stays active, Apple parked straight to backlog, then activated.
+  // Sorted active after move = [Apple, Zebra] — Apple's hint must be 1, not length (2).
+  gtg(repo, HANDOFF_ARGS('zebra', 'Zebra'), { input: BODY });
+  gtg(repo, ['backlog', '--project', 'Apple', '--slug', 'apple',
+    '--phase', 'executing', '--tier', 'Sonnet', '--next', 'do the next thing'], { input: BODY });
+  const ra = gtg(repo, ['active', 'apple']);
+  assert.equal(ra.status, 0, ra.stderr);
+  assert.match(ra.stdout, /Shelve again: gtg back 1(?!\d)/, 'active hint must use sorted position (Apple=1), not raw length');
+  console.log('ok - Finding 2b: active hint uses sorted position');
+}
+
+// --- Finding 3: undo must not re-trigger autoShelf (no re-park, no extra commit) ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('stale-undo', 'Stale Undo'), { input: BODY });
+  const ap = join(repo, 'docs/handoffs/_active.json');
+  const data = JSON.parse(readFileSync(ap, 'utf8'));
+  data.handoffs[0].updated = new Date(Date.now() - 8 * 86400000).toISOString();
+  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+  execSync('git add -A && git commit -q -m "backdate for test"', { cwd: repo, stdio: 'ignore' });
+  gtg(repo, ['remove', 'stale-undo']);
+  const commitsBeforeUndo = execSync('git rev-list --count HEAD', { cwd: repo, encoding: 'utf8' }).trim();
+  const ru = gtg(repo, ['undo']);
+  assert.equal(ru.status, 0, ru.stderr);
+  assert.equal(active(repo).handoffs.length, 1, 'undo did not restore the stale entry to active');
+  assert.equal(active(repo).handoffs[0].slug, 'stale-undo');
+  assert.ok(!existsSync(join(repo, 'docs/handoffs/_backlog.json'))
+    || JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog.length === 0,
+    'undo must not re-park the stale entry to backlog');
+  const commitsAfterUndo = execSync('git rev-list --count HEAD', { cwd: repo, encoding: 'utf8' }).trim();
+  assert.equal(Number(commitsAfterUndo), Number(commitsBeforeUndo) + 1, 'undo must create exactly one commit, no autoShelf side-commit');
+  console.log('ok - Finding 3: undo does not re-trigger autoShelf');
+}
+
 console.log('ALL PASS');

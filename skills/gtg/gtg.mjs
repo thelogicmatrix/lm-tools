@@ -209,39 +209,41 @@ Unknown commands dispatch to <root>/.gtg/commands/<name>.mjs — see README "Ext
 // --- back / active / remove / undo --------------------------------------------
 function back(argv) {
   const t = argv[0];
-  if (!t) { console.log("Usage: gtg back <number|slug>  (see 'gtg list')"); return; }
+  if (!t) { console.error("Usage: gtg back <number|slug>  (see 'gtg list')"); process.exit(2); }
   const act = entries(REL_ACTIVE, 'handoffs');
   const match = resolveEntry(act, t);
-  if (!match) { console.log(`No active project matching '${t}'. Try 'gtg list'.`); return; }
+  if (!match) { console.error(`No active project matching '${t}'. Try 'gtg list'.`); process.exit(2); }
   match.updated = nowIso(); // restamp = parked-at
   const bl = entries(REL_BACKLOG, 'backlog').filter((e) => e.slug !== match.slug);
   bl.push(match);
   saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
   saveEntries(REL_BACKLOG, 'backlog', bl);
   commit([REL_ACTIVE, REL_BACKLOG], `gtg backlog: park ${match.project}`);
-  console.log(`Parked: ${match.project} -> backlog. Bring back: gtg active ${bl.length}`);
+  const hint = sortByProject(bl).indexOf(match) + 1;
+  console.log(`Parked: ${match.project} -> backlog. Bring back: gtg active ${hint}`);
 }
 
 function activate(argv) {
   const t0 = argv[0];
-  if (!t0) { console.log("Usage: gtg active <number|slug>  (see 'gtg backlog')"); return; }
+  if (!t0) { console.error("Usage: gtg active <number|slug>  (see 'gtg backlog')"); process.exit(2); }
   const t = t0.replace(/^[bB](?=\d+$)/, ''); // accept the b<n> numbering `gtg backlog` shows
   const bl = entries(REL_BACKLOG, 'backlog');
-  if (!bl.length) { console.log('Backlog is empty - nothing to activate.'); return; }
+  if (!bl.length) { console.error('Backlog is empty - nothing to activate.'); process.exit(2); }
   const match = resolveEntry(bl, t);
-  if (!match) { console.log(`No backlog project matching '${t0}'. Try 'gtg backlog'.`); return; }
+  if (!match) { console.error(`No backlog project matching '${t0}'. Try 'gtg backlog'.`); process.exit(2); }
   match.updated = nowIso();
   const act = entries(REL_ACTIVE, 'handoffs').filter((e) => e.slug !== match.slug);
   act.push(match);
   saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== match));
   saveEntries(REL_ACTIVE, 'handoffs', act);
   commit([REL_ACTIVE, REL_BACKLOG], `gtg activate: ${match.project}`);
-  console.log(`Activated: ${match.project}. Shelve again: gtg back ${act.length}`);
+  const hint = sortByProject(act).indexOf(match) + 1;
+  console.log(`Activated: ${match.project}. Shelve again: gtg back ${hint}`);
 }
 
 function remove(argv) {
   const t = argv[0];
-  if (!t) { console.log("Usage: gtg remove <number|slug>  (see 'gtg list')"); return; }
+  if (!t) { console.error("Usage: gtg remove <number|slug>  (see 'gtg list')"); process.exit(2); }
   const act = entries(REL_ACTIVE, 'handoffs');
   const match = resolveEntry(act, t);
   if (match) {
@@ -259,22 +261,27 @@ function remove(argv) {
     console.log(`Removed from backlog: ${blMatch.project}`);
     return;
   }
-  console.log(`No project matching '${t}'. Try 'gtg list' or 'gtg backlog'.`);
+  console.error(`No project matching '${t}'. Try 'gtg list' or 'gtg backlog'.`);
+  process.exit(2);
 }
 
 // undo = restore _active.json from before its last-modifying commit; repeats to step further back
 function undo() {
   let last;
   try { last = execSync(`git log -1 --format=%H -- "${REL_ACTIVE}"`, { cwd: ROOT }).toString().trim(); } catch { last = ''; }
-  if (!last) { console.log('No gtg history to undo.'); return; }
+  if (!last) { console.error('No gtg history to undo.'); process.exit(2); }
   const subject = execSync(`git log -1 --format=%s ${last}`, { cwd: ROOT }).toString().trim();
   let prev;
   try { prev = execSync(`git show "${last}^:${REL_ACTIVE}"`, { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); }
-  catch { console.log(`Nothing before '${subject}' - can't undo further.`); return; }
+  catch { console.error(`Nothing before '${subject}' - can't undo further.`); process.exit(2); }
   writeFileSync(join(ROOT, REL_ACTIVE), prev);
   commit([REL_ACTIVE], `gtg undo: revert '${subject}'`);
+  // Report what came back without re-running list() — list() calls autoShelf(),
+  // which would immediately re-park a still-stale restored entry (and commit again).
+  const restored = (() => { try { return JSON.parse(prev); } catch { return {}; } })();
+  const names = Array.isArray(restored.handoffs) ? restored.handoffs.map((e) => e.project) : [];
   console.log(`Undone: ${subject}`);
-  list([]);
+  console.log(`Active entries now (${names.length}): ${names.join(', ') || '(none)'}`);
 }
 
 // --- dispatch -----------------------------------------------------------------
