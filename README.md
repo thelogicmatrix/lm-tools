@@ -31,7 +31,7 @@ Requires Node.js ≥ 18 and git on PATH.
 | "let's continue <project>" | Handoff found, read, resumed from its Next Action; entry consumed |
 | "gtg list" | Active handoffs (idle >7d auto-shelf to the backlog) |
 | "gtg backlog <idea>" | Park a long-horizon idea on the shelf |
-| "gtg back <n>" / "gtg active <n>" | Shelf / reactivate an entry |
+| "gtg back <n\|slug>" / "gtg active <n\|slug>" | Shelf / reactivate an entry |
 | "gtg remove <n>" / undo via "gtg undo" | Prune; git history is the undo stack |
 
 Handoffs live in *your repo* (`<repo>/docs/handoffs/`), committed to *your* history.

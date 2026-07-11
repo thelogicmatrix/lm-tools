@@ -2,8 +2,8 @@
 // gtg — zero-model bookkeeping CLI for the gtg pause/resume skill.
 // Storage root: GTG_HUB env var if set, else the current git repo's root.
 // Unknown subcommands dispatch to <root>/.gtg/commands/<name>.mjs (see README).
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -36,8 +36,8 @@ function writeStore(rel, data) {
 function commit(paths, message) {
   const opts = { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] };
   try {
-    execSync(`git add ${paths.map((x) => `"${x}"`).join(' ')}`, opts);
-    execSync(`git commit -q -m "${message.replace(/"/g, "'")}"`, opts);
+    execFileSync('git', ['add', ...paths], opts);
+    execFileSync('git', ['commit', '-q', '-m', message], opts);
   } catch (e) {
     const out = `${e.stdout || ''}${e.stderr || ''}`;
     if (/nothing to commit|no changes added/i.test(out)) return; // identical content — files already on disk
@@ -268,17 +268,33 @@ function remove(argv) {
 // undo = restore _active.json from before its last-modifying commit; repeats to step further back
 function undo() {
   let last;
-  try { last = execSync(`git log -1 --format=%H -- "${REL_ACTIVE}"`, { cwd: ROOT }).toString().trim(); } catch { last = ''; }
+  try { last = execFileSync('git', ['log', '-1', '--format=%H', '--', REL_ACTIVE], { cwd: ROOT }).toString().trim(); } catch { last = ''; }
   if (!last) { console.error('No gtg history to undo.'); process.exit(2); }
-  const subject = execSync(`git log -1 --format=%s ${last}`, { cwd: ROOT }).toString().trim();
-  let prev;
-  try { prev = execSync(`git show "${last}^:${REL_ACTIVE}"`, { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); }
+  const subject = execFileSync('git', ['log', '-1', '--format=%s', last], { cwd: ROOT }).toString().trim();
+  let prevActive;
+  try { prevActive = execFileSync('git', ['show', `${last}^:${REL_ACTIVE}`], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); }
   catch { console.error(`Nothing before '${subject}' - can't undo further.`); process.exit(2); }
-  writeFileSync(join(ROOT, REL_ACTIVE), prev);
-  commit([REL_ACTIVE], `gtg undo: revert '${subject}'`);
+  writeFileSync(join(ROOT, REL_ACTIVE), prevActive);
+
+  // back/active/autoShelf commit _active.json + _backlog.json together — restoring only
+  // the active file would leave a moved entry in BOTH stores. Restore backlog from the
+  // same parent commit.
+  // ponytail: undo-stack-of-one — this reverts the single last active-list change; a
+  // backlog-only edit made AFTER that change (e.g. a fresh `gtg backlog --project ...`
+  // park) is not independently preserved. Acceptable ceiling.
+  const backlogPath = join(ROOT, REL_BACKLOG);
+  const backlogExistedBefore = existsSync(backlogPath);
+  let prevBacklog = null;
+  try { prevBacklog = execFileSync('git', ['show', `${last}^:${REL_BACKLOG}`], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); }
+  catch { /* _backlog.json didn't exist at that point in history — treat as absent */ }
+  let backlogTouched = false;
+  if (prevBacklog !== null) { writeFileSync(backlogPath, prevBacklog); backlogTouched = true; }
+  else if (backlogExistedBefore) { rmSync(backlogPath); backlogTouched = true; }
+
+  commit(backlogTouched ? [REL_ACTIVE, REL_BACKLOG] : [REL_ACTIVE], `gtg undo: revert '${subject}'`);
   // Report what came back without re-running list() — list() calls autoShelf(),
   // which would immediately re-park a still-stale restored entry (and commit again).
-  const restored = (() => { try { return JSON.parse(prev); } catch { return {}; } })();
+  const restored = (() => { try { return JSON.parse(prevActive); } catch { return {}; } })();
   const names = Array.isArray(restored.handoffs) ? restored.handoffs.map((e) => e.project) : [];
   console.log(`Undone: ${subject}`);
   console.log(`Active entries now (${names.length}): ${names.join(', ') || '(none)'}`);

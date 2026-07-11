@@ -1,6 +1,6 @@
 ---
 name: gtg
-description: Activate when the user says "gtg", "gotta go", "got to go", "need to sleep", "heading out", "pin this chat", or any clear session-ending departure phrase — wraps current work and packages it for cold resume. Also activate on "gtg list", "gtg prune" / "gtg remove <project>", "gtg peek <project>" (read a handoff without consuming it), "gtg resume <project>" / "let's continue <project>", "gtg backlog" / "gtg back <n>" / "gtg active <n>" (backlog shelf), or "gtg backlog <idea>" (park a long-horizon idea).
+description: Activate when the user says "gtg", "gotta go", "got to go", "need to sleep", "heading out", "pin this chat", or any clear session-ending departure phrase — wraps current work and packages it for cold resume. Also activate on "gtg list", "gtg prune" / "gtg remove <project>", "gtg peek <project>" (read a handoff without consuming it), "gtg resume <project>" / "let's continue <project>", "gtg backlog" / "gtg back <n|slug>" / "gtg active <n|slug>" (backlog shelf), or "gtg backlog <idea>" (park a long-horizon idea).
 ---
 
 # GTG — Pause and Resume
@@ -16,7 +16,7 @@ The CLI: `node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs"` — referred to as `g
 | Trigger | Do this |
 |---|---|
 | "gtg list" / "what's active" | Run `gtg.mjs list` and relay its output. Stop. |
-| "gtg backlog" / "gtg back &lt;n&gt;" / "gtg active &lt;n&gt;" | Run `gtg.mjs backlog` / `back <n>` / `active <n>` verbatim (each commits itself). Relay output. Stop. |
+| "gtg backlog" / "gtg back &lt;n\|slug&gt;" / "gtg active &lt;n\|slug&gt;" | Run `gtg.mjs backlog` / `back <n|slug>` / `active <n|slug>` verbatim (each commits itself). Relay output. Stop. |
 | "gtg backlog &lt;idea&gt;" (an idea named, not bare) | Park a long-horizon idea — see "Backlog Park" below. |
 | "gtg prune" / "gtg remove &lt;n\|slug&gt;" | Run `gtg.mjs remove <n\|slug>`. `gtg.mjs undo` reverts. Stop. |
 | "gtg peek &lt;project&gt;" | Find the entry in `docs/handoffs/_active.json` (or `_backlog.json`), read its `file` verbatim, relay the content. **Do not consume** — no store mutation. |

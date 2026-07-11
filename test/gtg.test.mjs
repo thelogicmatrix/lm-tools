@@ -230,6 +230,44 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 4b - back/active/backlog-remove');
 }
 
+// --- Finding C1: shell injection via unvalidated --project must not execute ---
+// commit() used to interpolate the commit message (built from --project/--phase) into
+// a shell string run via execSync (POSIX: /bin/sh -c). Only --slug was validated.
+// NOTE (platform caveat): this proves the fix on POSIX (sh interprets $(...)). On
+// Windows, execSync's default shell is cmd.exe, which does NOT interpret $(...), so
+// this assertion could pass even against the old vulnerable code when run on Windows.
+// Kept anyway as the correct regression guard for POSIX/CI.
+{
+  const repo = tempRepo();
+  const marker = join(repo, 'INJECTED_MARKER');
+  const evilProject = 'Pwn$(touch INJECTED_MARKER)Name';
+  const r = gtg(repo, HANDOFF_ARGS('inject-test', evilProject), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!existsSync(marker), 'shell injection via --project executed a command');
+  assert.equal(active(repo).handoffs[0].project, evilProject,
+    'stored project must be the literal string including $(...), untouched');
+  console.log('ok - Finding C1: shell injection via --project neutralized');
+}
+
+// --- Finding I1: undo must restore BOTH stores, not leave the entry duplicated ---
+// back/active/autoShelf commit _active.json + _backlog.json together in one commit.
+// undo used to restore only _active.json from the pre-commit parent, leaving the
+// moved entry ALSO present in _backlog.json.
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('proj-i1', 'Project I1'), { input: BODY });
+  gtg(repo, ['back', 'proj-i1']);
+  const ru = gtg(repo, ['undo']);
+  assert.equal(ru.status, 0, ru.stderr);
+  const inActive = active(repo).handoffs.some((e) => e.slug === 'proj-i1');
+  const blPath = join(repo, 'docs/handoffs/_backlog.json');
+  const inBacklog = existsSync(blPath)
+    && JSON.parse(readFileSync(blPath, 'utf8')).backlog.some((e) => e.slug === 'proj-i1');
+  assert.ok(inActive, 'undo should restore the entry to active');
+  assert.ok(!inBacklog, 'undo left the entry duplicated in backlog too');
+  console.log('ok - Finding I1: undo restores both stores after back');
+}
+
 // --- Finding 1: unresolvable target must exit non-zero and print to stderr ---
 {
   const repo = tempRepo();
