@@ -103,6 +103,12 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const r3 = gtg(repo, HANDOFF_ARGS('x', 'X'), { input: '' });
   assert.equal(r3.status, 2);
   assert.match(r3.stderr, /empty body/);
+  // slug must not traverse paths or inject shell — rejected before any write
+  for (const bad of ['../evil', 'a/b', 'a;rm -rf', 'a b']) {
+    const rb = gtg(repo, HANDOFF_ARGS(bad, 'X'), { input: BODY });
+    assert.equal(rb.status, 2, `bad slug '${bad}' should exit 2`);
+    assert.match(rb.stderr, /--slug must match/);
+  }
   console.log('ok - error cases');
 }
 

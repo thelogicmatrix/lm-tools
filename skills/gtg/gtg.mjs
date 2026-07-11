@@ -34,10 +34,16 @@ function writeStore(rel, data) {
   writeFileSync(p, JSON.stringify(data, null, 2) + '\n');
 }
 function commit(paths, message) {
+  const opts = { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] };
   try {
-    execSync(`git add ${paths.map((x) => `"${x}"`).join(' ')}`, { cwd: ROOT });
-    execSync(`git commit -q -m "${message.replace(/"/g, "'")}"`, { cwd: ROOT });
-  } catch { /* nothing staged or identical content — files are on disk regardless */ }
+    execSync(`git add ${paths.map((x) => `"${x}"`).join(' ')}`, opts);
+    execSync(`git commit -q -m "${message.replace(/"/g, "'")}"`, opts);
+  } catch (e) {
+    const out = `${e.stdout || ''}${e.stderr || ''}`;
+    if (/nothing to commit|no changes added/i.test(out)) return; // identical content — files already on disk
+    // Don't let a real git failure masquerade as success: the files are written, but say so.
+    console.error(`gtg: git commit failed, changes are on disk but uncommitted — ${(e.stderr || e.message || '').toString().trim().split('\n')[0]}`);
+  }
 }
 function entries(rel, key) {
   const d = readStore(rel);
@@ -79,6 +85,8 @@ function writeHandoff(argv, { storeRel, key, verb }) {
   const a = parseFlags(argv);
   const missing = ['project', 'slug', 'phase', 'tier', 'next'].filter((k) => !a[k]);
   if (missing.length) { console.error(`gtg ${verb}: missing --${missing.join(', --')}`); process.exit(2); }
+  // slug becomes a filename and a git-add arg — constrain it so it can't traverse paths or inject shell.
+  if (!/^[A-Za-z0-9_-]+$/.test(a.slug)) { console.error(`gtg ${verb}: --slug must match [A-Za-z0-9_-]`); process.exit(2); }
   const body = readFileSync(0, 'utf8').trim(); // stdin
   if (!body) { console.error(`gtg ${verb}: empty body on stdin`); process.exit(2); }
   let branch = a.branch;
