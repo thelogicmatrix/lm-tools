@@ -43,9 +43,19 @@ instead of the repo you're working in — one list across all your projects.
 
 ## Extending gtg
 
-Any subcommand the CLI doesn't recognize falls through to
-`<storage-root>/.gtg/commands/<name>.mjs` — dynamically imported, default export
-called as `fn(ctx)`:
+gtg has three tiers. You only ever touch the third.
+
+| Tier | Lives in | Active |
+|---|---|---|
+| **Core** | the plugin's `gtg.mjs` + `SKILL.md` | always |
+| **Bundled** | the plugin's `extensions/` | on by default (`gtg stats`, reattachment hooks) |
+| **Yours** | `<storage-root>/.gtg/` | when you add a file |
+
+Two extension points:
+
+**1. CLI commands** — any subcommand the CLI doesn't recognize resolves to
+`<storage-root>/.gtg/commands/<name>.mjs`, dynamically imported, default export called as
+`fn(ctx)`:
 
 ```js
 // .gtg/commands/hello.mjs
@@ -56,9 +66,26 @@ export default async ({ root, args, readStore, writeStore, commit }) => {
 ```
 
 `ctx` = `{ root, args, readStore(path), writeStore(path, data), commit(paths, message) }`.
-**Stability contract:** post-v1 this shape only grows — new optional fields, never
-removed or repurposed ones. A breaking change to `ctx` is a major version bump.
-Built-in names always win; an extension can't shadow `list` or `remove`.
+
+**2. Procedure hooks** — the exit and resume flows load markdown hooks if present, so you
+can add project-specific steps without forking the skill:
+
+```
+.gtg/skill/on-exit.md     # runs while the handoff is being written (may append to it / stage files)
+.gtg/skill/on-resume.md   # runs while a handoff is being consumed
+```
+
+A hook is just instructions the model reads and follows. See the bundled examples in the
+plugin's `extensions/skill/`.
+
+**Resolution & precedence:** built-in commands always win. Otherwise **your** `.gtg/`
+command overrides a bundled one of the same name (so you can replace `stats`). Hooks are
+**additive** — the bundled hook runs, then yours.
+
+**Update-safe by design:** your `.gtg/` lives in your own repo/hub, never inside the
+plugin, and the CLI only ever *reads* it — a plugin update can't touch your files. The
+extension surface (`ctx`, the `.gtg/` layout, hook load-points, resolution order) only
+grows within a major version; a breaking change is a major version bump.
 
 ## Storage format
 
