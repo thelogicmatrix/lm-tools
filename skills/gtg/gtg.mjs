@@ -295,10 +295,17 @@ else if (builtins[cmd]) { await builtins[cmd](rest); }
 else {
   // Extension dispatch: <root>/.gtg/commands/<name>.mjs, default export called as fn(ctx).
   // ctx is a STABILITY CONTRACT — additive-only post-v1; breaking changes = major version bump.
-  const ext = join(ROOT, '.gtg', 'commands', `${cmd}.mjs`);
-  if (existsSync(ext)) {
-    const mod = await import(pathToFileURL(ext).href);
-    await mod.default({ root: ROOT, args: rest, readStore, writeStore, commit });
+  // cmd becomes a path segment — constrain it the same way --slug is (see above): it can't traverse paths.
+  const ext = /^[A-Za-z0-9_-]+$/.test(cmd) ? join(ROOT, '.gtg', 'commands', `${cmd}.mjs`) : null;
+  if (ext && existsSync(ext)) {
+    try {
+      const mod = await import(pathToFileURL(ext).href);
+      if (typeof mod.default !== 'function') throw new Error('no default export function');
+      await mod.default({ root: ROOT, args: rest, readStore, writeStore, commit });
+    } catch (e) {
+      console.error(`gtg: extension '${cmd}' failed: ${(e?.message || String(e)).split('\n')[0]}`);
+      process.exit(1);
+    }
   } else {
     console.error(`gtg: unknown command '${cmd}' — try 'gtg help'`);
     process.exit(2);

@@ -323,4 +323,42 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 6 - extension dispatch + ctx contract');
 }
 
+// --- Finding T5-1: unknown <cmd> must not traverse paths outside .gtg/commands ---
+// `gtg ../evil` builds join(ROOT, '.gtg', 'commands', '../evil.mjs') which path.join
+// normalizes to ROOT/.gtg/evil.mjs — outside the commands dir. Unvalidated, this would
+// import and execute that file. cmd must be constrained the same way --slug is.
+{
+  const repo = tempRepo();
+  mkdirSync(join(repo, '.gtg/commands'), { recursive: true });
+  writeFileSync(join(repo, '.gtg/evil.mjs'), `export default () => console.log('EVIL-MARKER')\n`);
+  const r = gtg(repo, ['../evil']);
+  assert.doesNotMatch(r.stdout, /EVIL-MARKER/, 'path traversal executed a file outside .gtg/commands');
+  assert.equal(r.status, 2, 'traversal attempt should fall through to the unknown-command exit 2');
+  assert.match(r.stderr, /unknown command/);
+  console.log('ok - Finding T5-1: cmd path traversal rejected');
+}
+
+// --- Finding T5-2: extension import/invoke failures must fail cleanly, not crash raw ---
+{
+  const repo = tempRepo();
+  mkdirSync(join(repo, '.gtg/commands'), { recursive: true });
+  writeFileSync(join(repo, '.gtg/commands/boom.mjs'), `throw new Error('kaboom')\n`);
+  const r = gtg(repo, ['boom']);
+  assert.equal(r.status, 1, 'extension throw should exit 1 (controlled), not crash uncontrolled');
+  assert.match(r.stderr, /extension 'boom' failed/);
+  assert.match(r.stderr, /kaboom/);
+  assert.doesNotMatch(r.stderr, /at Object|node:internal|Unhandled/, 'raw node stack/unhandled-rejection dump leaked');
+  console.log('ok - Finding T5-2a: extension import throw handled cleanly');
+}
+{
+  const repo = tempRepo();
+  mkdirSync(join(repo, '.gtg/commands'), { recursive: true });
+  writeFileSync(join(repo, '.gtg/commands/nodefault.mjs'), `export const x = 1;\n`);
+  const r = gtg(repo, ['nodefault']);
+  assert.equal(r.status, 1, 'missing default export should exit 1 cleanly');
+  assert.match(r.stderr, /extension 'nodefault' failed/);
+  assert.doesNotMatch(r.stderr, /TypeError/, 'raw TypeError leaked instead of the clean message');
+  console.log('ok - Finding T5-2b: extension missing default export handled cleanly');
+}
+
 console.log('ALL PASS');
