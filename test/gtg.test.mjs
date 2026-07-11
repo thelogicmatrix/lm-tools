@@ -20,9 +20,12 @@ function tempRepo() {
 
 // Run the CLI. GTG_HUB is stripped from the inherited env unless opts.hub is given,
 // so the dev machine's own hub setting can't leak into the tests.
+// GIT_CEILING_DIRECTORIES pins git's upward repo search at tmpdir so a bare
+// temp dir can't resolve to an enclosing repo (e.g. a git-tracked home dir).
 function gtg(cwd, args, opts = {}) {
   const env = { ...process.env, ...(opts.env || {}) };
   delete env.GTG_HUB;
+  env.GIT_CEILING_DIRECTORIES = tmpdir();
   if (opts.hub) env.GTG_HUB = opts.hub;
   return spawnSync(process.execPath, [CLI, ...args], {
     cwd, env, encoding: 'utf8', input: opts.input ?? '',

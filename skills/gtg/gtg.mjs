@@ -6,20 +6,13 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { tmpdir } from 'node:os';
 
 // --- storage root -----------------------------------------------------------
 function resolveRoot() {
   if (process.env.GTG_HUB) return process.env.GTG_HUB;
   try {
-    // GIT_CEILING_DIRECTORIES bounds the upward repo search at the OS temp
-    // root, so a scratch dir under tmpdir() never accidentally resolves to
-    // some ancestor repo that happens to enclose the temp directory (e.g. a
-    // home directory that is itself a git mirror). Correct on Windows/POSIX.
-    return execSync('git rev-parse --show-toplevel', {
-      stdio: ['ignore', 'pipe', 'ignore'],
-      env: { ...process.env, GIT_CEILING_DIRECTORIES: tmpdir() },
-    }).toString().trim();
+    return execSync('git rev-parse --show-toplevel', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim();
   } catch {
     console.error('gtg: not inside a git repository and GTG_HUB is not set');
     process.exit(2);
