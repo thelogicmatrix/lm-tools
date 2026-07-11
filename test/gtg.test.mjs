@@ -399,4 +399,49 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok - Finding T5-2b: extension missing default export handled cleanly');
 }
 
+// --- 7. bundled command dispatches with NO user .gtg present ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
+  const r = gtg(repo, ['stats']);
+  assert.equal(r.status, 0, `bundled stats failed: ${r.stderr}`);
+  assert.match(r.stdout, /1 active/);
+  assert.match(r.stdout, /Sonnet/); // tier breakdown (HANDOFF_ARGS uses --tier Sonnet)
+  console.log('ok 7 - bundled stats dispatch');
+}
+
+// --- 7b. stats on an empty/absent store prints zeros, never throws ---
+{
+  const repo = tempRepo();
+  const r = gtg(repo, ['stats']);
+  assert.equal(r.status, 0, `stats on empty store failed: ${r.stderr}`);
+  assert.match(r.stdout, /0 active/);
+  assert.match(r.stdout, /0 backlog/);
+  console.log('ok 7b - stats empty store');
+}
+
+// --- 7c. user .gtg/commands/<verb> OVERRIDES a bundled command of the same name ---
+{
+  const repo = tempRepo();
+  mkdirSync(join(repo, '.gtg/commands'), { recursive: true });
+  writeFileSync(join(repo, '.gtg/commands/stats.mjs'),
+    `export default () => console.log('USER-STATS-OVERRIDE')\n`);
+  const r = gtg(repo, ['stats']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /USER-STATS-OVERRIDE/, 'user command did not override bundled');
+  console.log('ok 7c - user overrides bundled');
+}
+
+// --- 7d. update-safety: a user command survives an unrelated bundled command existing ---
+{
+  const repo = tempRepo();
+  mkdirSync(join(repo, '.gtg/commands'), { recursive: true });
+  writeFileSync(join(repo, '.gtg/commands/mine.mjs'),
+    `export default (ctx) => console.log('MINE:' + (typeof ctx.readStore))\n`);
+  const r = gtg(repo, ['mine']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /MINE:function/, 'user command lost its ctx');
+  console.log('ok 7d - user command intact alongside bundled tier');
+}
+
 console.log('ALL PASS');

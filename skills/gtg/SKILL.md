@@ -21,6 +21,7 @@ The CLI: `node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs"` — referred to as `g
 | "gtg prune" / "gtg remove &lt;n\|slug&gt;" | Run `gtg.mjs remove <n\|slug>`. `gtg.mjs undo` reverts. Stop. |
 | "gtg peek &lt;project&gt;" | Find the entry in `docs/handoffs/_active.json` (or `_backlog.json`), read its `file` verbatim, relay the content. **Do not consume** — no store mutation. |
 | "gtg resume &lt;project&gt;" / "let's continue &lt;project&gt;" | Read `references/resume.md`, follow it. |
+| "gtg &lt;verb&gt;" not listed above (e.g. "gtg stats", "gtg issues") | Run `gtg.mjs <verb>` and relay its output. Bundled extras ship with the plugin (`stats` — a handoff-store snapshot); a `<storage-root>/.gtg/commands/<verb>.mjs` you've added resolves here too (yours overrides a bundled one of the same name). Unknown → the CLI errors. Stop. |
 | everything else (departure) | Follow the Exit Procedure below. |
 
 ## Exit Procedure (the default departure path)
@@ -37,6 +38,11 @@ If the working tree has uncommitted changes that belong to the work: `git add <f
 Cheapest model tier that does it reliably: `Haiku` mechanical · `Sonnet` standard build/debug (default) · `Opus`/`Fable` heavy or plan/review work. Unsure → `Sonnet`.
 
 ### 4. Write the handoff — ONE call
+**First, run exit hooks (extensions may add project-specific steps).** In order:
+(1) read and follow `${CLAUDE_PLUGIN_ROOT}/skills/gtg/extensions/skill/on-exit.md` (bundled, ships active);
+(2) if `<storage-root>/.gtg/skill/on-exit.md` exists, read and follow it too.
+Hooks run **now** — while the handoff body below is still being composed (a hook may append a section to it) and before the CLI call (a hook may `git add` files, which ride the handoff's single commit). Missing hook files are simply skipped.
+
 The CLI owns all mechanics (timestamp, filename, header, store dedupe+append, git commit). Pass the body on stdin:
 
 ```bash

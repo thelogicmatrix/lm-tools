@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 
 // --- storage root -----------------------------------------------------------
 function resolveRoot() {
@@ -21,6 +21,8 @@ function resolveRoot() {
 const ROOT = resolveRoot();
 const REL_ACTIVE = 'docs/handoffs/_active.json';
 const REL_BACKLOG = 'docs/handoffs/_backlog.json';
+// Directory of this CLI file — bundled extensions ship alongside it under extensions/.
+const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 
 // --- helpers (readStore/writeStore/commit are also the extension ctx) --------
 function readStore(rel) {
@@ -309,11 +311,17 @@ const builtins = {
 if (!cmd) { list([]); }
 else if (builtins[cmd]) { await builtins[cmd](rest); }
 else {
-  // Extension dispatch: <root>/.gtg/commands/<name>.mjs, default export called as fn(ctx).
-  // ctx is a STABILITY CONTRACT — additive-only post-v1; breaking changes = major version bump.
-  // cmd becomes a path segment — constrain it the same way --slug is (see above): it can't traverse paths.
-  const ext = /^[A-Za-z0-9_-]+$/.test(cmd) ? join(ROOT, '.gtg', 'commands', `${cmd}.mjs`) : null;
-  if (ext && existsSync(ext)) {
+  // Extension dispatch, in resolution order: user <root>/.gtg/commands/<cmd>.mjs FIRST
+  // (user overrides bundled), then the plugin's own extensions/commands/<cmd>.mjs
+  // (bundled, ships active). cmd becomes a path segment — constrain it the same way
+  // --slug is, so it can't traverse paths. ctx is a STABILITY CONTRACT (additive-only).
+  const safe = /^[A-Za-z0-9_-]+$/.test(cmd);
+  const userExt = safe ? join(ROOT, '.gtg', 'commands', `${cmd}.mjs`) : null;
+  const bundledExt = safe ? join(CLI_DIR, 'extensions', 'commands', `${cmd}.mjs`) : null;
+  const ext = (userExt && existsSync(userExt)) ? userExt
+    : (bundledExt && existsSync(bundledExt)) ? bundledExt
+    : null;
+  if (ext) {
     try {
       const mod = await import(pathToFileURL(ext).href);
       if (typeof mod.default !== 'function') throw new Error('no default export function');
