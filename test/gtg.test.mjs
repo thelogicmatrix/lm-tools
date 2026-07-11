@@ -18,6 +18,15 @@ function tempRepo() {
   return dir;
 }
 
+// Like tempRepo() but deliberately WITHOUT a local identity, so commit() can be
+// forced into a genuine (non-"nothing to commit") git failure by also isolating
+// global/system config (see the commit-failure test below).
+function tempRepoNoIdentity() {
+  const dir = mkdtempSync(join(tmpdir(), 'gtg-noid-'));
+  execSync('git init -q -b main', { cwd: dir });
+  return dir;
+}
+
 // Run the CLI. GTG_HUB is stripped from the inherited env unless opts.hub is given,
 // so the dev machine's own hub setting can't leak into the tests.
 // GIT_CEILING_DIRECTORIES pins git's upward repo search at tmpdir so a bare
@@ -148,6 +157,41 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const rb = gtg(repo, ['backlog']);
   assert.match(rb.stdout, /b1\. Stale Project/);
   console.log('ok 2b - auto-shelf + backlog list');
+}
+
+// --- 2c. list numbering matches resolveEntry's full-list order (not filtered subset) ---
+// resolveEntry (used by remove/back/active) resolves a numeric "<n>" against the
+// FULL sorted active list — so `list <filter>` must number entries by their
+// position in that full list, not by their index within the filtered subset.
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('alpha', 'Alpha'), { input: BODY });
+  gtg(repo, HANDOFF_ARGS('bravo', 'Bravo'), { input: BODY });
+  gtg(repo, HANDOFF_ARGS('charlie', 'Charlie'), { input: BODY });
+  const r = gtg(repo, ['list', 'bravo']);
+  assert.equal(r.status, 0, r.stderr);
+  // Full sorted order is Alpha, Bravo, Charlie — Bravo is position 2, even though
+  // it's the only entry shown here. Numbering by filtered-subset index would wrongly show "1.".
+  assert.match(r.stdout, /^2\. Bravo/m, 'list <filter> must number by full sorted-list position, not filtered index');
+  console.log('ok 2c - list numbering matches resolve order');
+}
+
+// --- 3. commit() failure discrimination: a genuine (non-"nothing to commit") git
+// failure must still let the CLI succeed (files are written regardless) while
+// surfacing a warning to stderr, not swallowing it as silent success ---
+{
+  const repo = tempRepoNoIdentity();
+  const noConfig = join(tmpdir(), `gtg-no-such-gitconfig-${process.pid}-${Date.now()}`);
+  const r = gtg(repo, HANDOFF_ARGS('proj-c', 'Project C'), {
+    input: BODY,
+    env: { GIT_CONFIG_GLOBAL: noConfig, GIT_CONFIG_SYSTEM: noConfig, GIT_CONFIG_NOSYSTEM: '1' },
+  });
+  assert.equal(r.status, 0, `CLI should still exit 0 even if the git commit fails: ${r.stderr}`);
+  assert.match(r.stdout, /^docs\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-proj-c\.md$/m, 'handoff success output missing from stdout');
+  assert.match(r.stdout, /RESUME: "let's continue Project C"/);
+  assert.match(r.stderr, /uncommitted/i, 'genuine git commit failure must be surfaced as a warning, not swallowed');
+  assert.ok(existsSync(join(repo, 'docs/handoffs/_active.json')), 'entry should still be written to disk despite commit failure');
+  console.log('ok 3 - commit failure surfaces warning, CLI still succeeds');
 }
 
 console.log('ALL PASS');

@@ -158,20 +158,22 @@ function autoShelf() {
 function list(argv) {
   autoShelf();
   const filter = argv.find((x) => !x.startsWith('--'));
-  let act = entries(REL_ACTIVE, 'handoffs');
+  const allAct = sortByProject(entries(REL_ACTIVE, 'handoffs'));
   const blCount = entries(REL_BACKLOG, 'backlog').length;
-  if (filter) {
-    const f = filter.toLowerCase();
-    act = act.filter((e) => e.slug === filter || e.project.toLowerCase().includes(f));
-  }
-  if (!act.length) {
+  const shown = filter
+    ? allAct.filter((e) => e.slug === filter || e.project.toLowerCase().includes(filter.toLowerCase()))
+    : allAct;
+  if (!shown.length) {
     console.log(`No active gtg projects${filter ? ` matching '${filter}'` : ''}.` +
       (blCount ? ` (+${blCount} backlogged — gtg backlog)` : ''));
     return;
   }
-  console.log(`${act.length} active gtg project${act.length === 1 ? '' : 's'}:`);
-  sortByProject(act).forEach((e, i) => {
-    console.log(`${i + 1}. ${e.project} - ${e.phase} [${e.tier || '?'}] (${ago(e.updated)})`);
+  console.log(`${shown.length} active gtg project${shown.length === 1 ? '' : 's'}${filter ? ` matching '${filter}'` : ''}:`);
+  shown.forEach((e) => {
+    // Number by position in the FULL sorted list, not the filtered subset, so
+    // `gtg remove <n>` (resolveEntry runs over the full list) targets this same entry.
+    const n = allAct.indexOf(e) + 1;
+    console.log(`${n}. ${e.project} - ${e.phase} [${e.tier || '?'}] (${ago(e.updated)})`);
     console.log(`   next: ${e.next}`);
   });
   if (blCount) console.log(`+ ${blCount} backlogged - gtg backlog`);
