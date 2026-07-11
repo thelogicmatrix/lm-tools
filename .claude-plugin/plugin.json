@@ -1,0 +1,6 @@
+{
+  "name": "gtg",
+  "version": "1.0.0",
+  "description": "Pause/resume workflow for Claude Code sessions — say 'gtg' to write a handoff before you leave, 'let's continue X' to resume cold days later.",
+  "author": { "name": "Nathan Wong" }
+}

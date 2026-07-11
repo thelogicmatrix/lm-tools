@@ -1,0 +1,11 @@
+{
+  "name": "gtg-marketplace",
+  "owner": { "name": "Nathan Wong" },
+  "plugins": [
+    {
+      "name": "gtg",
+      "source": "./",
+      "description": "Pause/resume workflow for Claude Code sessions — say 'gtg' to write a handoff before you leave, 'let's continue X' to resume cold days later."
+    }
+  ]
+}
