@@ -194,4 +194,40 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 3 - commit failure surfaces warning, CLI still succeeds');
 }
 
+// --- 3+4. remove empties _active.json; undo restores it ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
+  const r = gtg(repo, ['remove', 'proj-a']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Removed: Project A/);
+  assert.equal(active(repo).handoffs.length, 0, 'remove left entries behind');
+  const ru = gtg(repo, ['undo']);
+  assert.equal(ru.status, 0, ru.stderr);
+  assert.equal(active(repo).handoffs.length, 1, 'undo did not restore');
+  assert.equal(active(repo).handoffs[0].slug, 'proj-a');
+  console.log('ok 3+4 - remove + undo');
+}
+
+// --- 4b. back shelves, active reactivates, remove falls through to backlog ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
+  const rb = gtg(repo, ['back', 'proj-a']);
+  assert.match(rb.stdout, /Parked: Project A/);
+  assert.equal(active(repo).handoffs.length, 0);
+  const bl = () => JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  assert.equal(bl().length, 1);
+  const ra = gtg(repo, ['active', 'b1']);
+  assert.match(ra.stdout, /Activated: Project A/);
+  assert.equal(active(repo).handoffs.length, 1);
+  assert.equal(bl().length, 0);
+  // remove falls through to backlog when not in active
+  gtg(repo, ['back', 'proj-a']);
+  const rr = gtg(repo, ['remove', 'proj-a']);
+  assert.match(rr.stdout, /Removed from backlog: Project A/);
+  assert.equal(bl().length, 0);
+  console.log('ok 4b - back/active/backlog-remove');
+}
+
 console.log('ALL PASS');

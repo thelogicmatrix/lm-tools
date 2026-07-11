@@ -206,9 +206,83 @@ Storage root: GTG_HUB env var if set, else the enclosing git repo.
 Unknown commands dispatch to <root>/.gtg/commands/<name>.mjs — see README "Extending gtg".`);
 }
 
+// --- back / active / remove / undo --------------------------------------------
+function back(argv) {
+  const t = argv[0];
+  if (!t) { console.log("Usage: gtg back <number|slug>  (see 'gtg list')"); return; }
+  const act = entries(REL_ACTIVE, 'handoffs');
+  const match = resolveEntry(act, t);
+  if (!match) { console.log(`No active project matching '${t}'. Try 'gtg list'.`); return; }
+  match.updated = nowIso(); // restamp = parked-at
+  const bl = entries(REL_BACKLOG, 'backlog').filter((e) => e.slug !== match.slug);
+  bl.push(match);
+  saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
+  saveEntries(REL_BACKLOG, 'backlog', bl);
+  commit([REL_ACTIVE, REL_BACKLOG], `gtg backlog: park ${match.project}`);
+  console.log(`Parked: ${match.project} -> backlog. Bring back: gtg active ${bl.length}`);
+}
+
+function activate(argv) {
+  const t0 = argv[0];
+  if (!t0) { console.log("Usage: gtg active <number|slug>  (see 'gtg backlog')"); return; }
+  const t = t0.replace(/^[bB](?=\d+$)/, ''); // accept the b<n> numbering `gtg backlog` shows
+  const bl = entries(REL_BACKLOG, 'backlog');
+  if (!bl.length) { console.log('Backlog is empty - nothing to activate.'); return; }
+  const match = resolveEntry(bl, t);
+  if (!match) { console.log(`No backlog project matching '${t0}'. Try 'gtg backlog'.`); return; }
+  match.updated = nowIso();
+  const act = entries(REL_ACTIVE, 'handoffs').filter((e) => e.slug !== match.slug);
+  act.push(match);
+  saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== match));
+  saveEntries(REL_ACTIVE, 'handoffs', act);
+  commit([REL_ACTIVE, REL_BACKLOG], `gtg activate: ${match.project}`);
+  console.log(`Activated: ${match.project}. Shelve again: gtg back ${act.length}`);
+}
+
+function remove(argv) {
+  const t = argv[0];
+  if (!t) { console.log("Usage: gtg remove <number|slug>  (see 'gtg list')"); return; }
+  const act = entries(REL_ACTIVE, 'handoffs');
+  const match = resolveEntry(act, t);
+  if (match) {
+    saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
+    commit([REL_ACTIVE], `gtg prune: remove ${match.project} - confirmed done`);
+    console.log(`Removed: ${match.project}`);
+    return;
+  }
+  // not in active — try the backlog (lets resume-consume clear a pulled backlog item)
+  const bl = entries(REL_BACKLOG, 'backlog');
+  const blMatch = resolveEntry(bl, t.replace(/^[bB](?=\d+$)/, ''));
+  if (blMatch) {
+    saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== blMatch));
+    commit([REL_BACKLOG], `gtg prune: remove ${blMatch.project} from backlog - confirmed done`);
+    console.log(`Removed from backlog: ${blMatch.project}`);
+    return;
+  }
+  console.log(`No project matching '${t}'. Try 'gtg list' or 'gtg backlog'.`);
+}
+
+// undo = restore _active.json from before its last-modifying commit; repeats to step further back
+function undo() {
+  let last;
+  try { last = execSync(`git log -1 --format=%H -- "${REL_ACTIVE}"`, { cwd: ROOT }).toString().trim(); } catch { last = ''; }
+  if (!last) { console.log('No gtg history to undo.'); return; }
+  const subject = execSync(`git log -1 --format=%s ${last}`, { cwd: ROOT }).toString().trim();
+  let prev;
+  try { prev = execSync(`git show "${last}^:${REL_ACTIVE}"`, { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); }
+  catch { console.log(`Nothing before '${subject}' - can't undo further.`); return; }
+  writeFileSync(join(ROOT, REL_ACTIVE), prev);
+  commit([REL_ACTIVE], `gtg undo: revert '${subject}'`);
+  console.log(`Undone: ${subject}`);
+  list([]);
+}
+
 // --- dispatch -----------------------------------------------------------------
 const [cmd, ...rest] = process.argv.slice(2);
-const builtins = { handoff, backlog, list, help, '--help': help, '-h': help };
+const builtins = {
+  handoff, backlog, list, help, '--help': help, '-h': help,
+  back, active: activate, remove, rm: remove, prune: remove, undo,
+};
 if (!cmd) { list([]); }
 else if (builtins[cmd]) { await builtins[cmd](rest); }
 else {
