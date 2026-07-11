@@ -293,6 +293,14 @@ const builtins = {
 if (!cmd) { list([]); }
 else if (builtins[cmd]) { await builtins[cmd](rest); }
 else {
-  console.error(`gtg: unknown command '${cmd}' — try 'gtg help'`);
-  process.exit(2);
+  // Extension dispatch: <root>/.gtg/commands/<name>.mjs, default export called as fn(ctx).
+  // ctx is a STABILITY CONTRACT — additive-only post-v1; breaking changes = major version bump.
+  const ext = join(ROOT, '.gtg', 'commands', `${cmd}.mjs`);
+  if (existsSync(ext)) {
+    const mod = await import(pathToFileURL(ext).href);
+    await mod.default({ root: ROOT, args: rest, readStore, writeStore, commit });
+  } else {
+    console.error(`gtg: unknown command '${cmd}' — try 'gtg help'`);
+    process.exit(2);
+  }
 }

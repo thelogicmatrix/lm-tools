@@ -292,4 +292,35 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok - Finding 3: undo does not re-trigger autoShelf');
 }
 
+// --- 6. extension dispatch + ctx contract ---
+{
+  const repo = tempRepo();
+  mkdirSync(join(repo, '.gtg/commands'), { recursive: true });
+  writeFileSync(join(repo, '.gtg/commands/ping.mjs'),
+    `export default (ctx) => console.log(JSON.stringify({
+      hasRoot: !!ctx.root,
+      hasArgs: Array.isArray(ctx.args),
+      hasReadStore: typeof ctx.readStore === 'function',
+      hasWriteStore: typeof ctx.writeStore === 'function',
+      hasCommit: typeof ctx.commit === 'function',
+      argsThrough: ctx.args.join(','),
+    }))\n`);
+  const r = gtg(repo, ['ping', 'a', 'b']);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout.trim());
+  for (const k of ['hasRoot', 'hasArgs', 'hasReadStore', 'hasWriteStore', 'hasCommit']) {
+    assert.equal(out[k], true, `ctx contract broken: ${k}`);
+  }
+  assert.equal(out.argsThrough, 'a,b');
+  // built-ins win: an extension named list.mjs must NOT be dispatched
+  writeFileSync(join(repo, '.gtg/commands/list.mjs'), `export default () => console.log('EXTENSION-LIST')\n`);
+  const rl = gtg(repo, ['list']);
+  assert.doesNotMatch(rl.stdout, /EXTENSION-LIST/, 'extension shadowed a builtin');
+  // unknown command with no extension file still errors
+  const rx = gtg(repo, ['nonesuch']);
+  assert.equal(rx.status, 2);
+  assert.match(rx.stderr, /unknown command/);
+  console.log('ok 6 - extension dispatch + ctx contract');
+}
+
 console.log('ALL PASS');
