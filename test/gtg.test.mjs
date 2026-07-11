@@ -106,4 +106,42 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok - error cases');
 }
 
+// --- 2. list shows entries; list <project> filters ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
+  gtg(repo, HANDOFF_ARGS('proj-b', 'Project B'), { input: BODY });
+  const r = gtg(repo, ['list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /2 active gtg projects/);
+  assert.match(r.stdout, /Project A/);
+  assert.match(r.stdout, /Project B/);
+  const rf = gtg(repo, ['list', 'proj-a']);
+  assert.match(rf.stdout, /Project A/);
+  assert.doesNotMatch(rf.stdout, /Project B/, 'filter leaked other project');
+  console.log('ok 2 - list + filter');
+}
+
+// --- 2b. 7-day auto-shelf: stale active entry moves to backlog on list ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('stale-proj', 'Stale Project'), { input: BODY });
+  // Backdate the entry 8 days
+  const ap = join(repo, 'docs/handoffs/_active.json');
+  const data = JSON.parse(readFileSync(ap, 'utf8'));
+  data.handoffs[0].updated = new Date(Date.now() - 8 * 86400000).toISOString();
+  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+  const r = gtg(repo, ['list']);
+  assert.match(r.stdout, /Auto-shelved 1 project/);
+  assert.match(r.stdout, /No active gtg projects/);
+  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  assert.equal(bl.length, 1);
+  assert.equal(bl[0].slug, 'stale-proj');
+  assert.equal(JSON.parse(readFileSync(ap, 'utf8')).handoffs.length, 0);
+  // shelf listing shows it
+  const rb = gtg(repo, ['backlog']);
+  assert.match(rb.stdout, /b1\. Stale Project/);
+  console.log('ok 2b - auto-shelf + backlog list');
+}
+
 console.log('ALL PASS');

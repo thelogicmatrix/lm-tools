@@ -127,7 +127,61 @@ function backlog(argv) {
   if (parseFlags(argv).project) return writeHandoff(argv, { storeRel: REL_BACKLOG, key: 'backlog', verb: 'backlog' });
   return backlogList();
 }
-function backlogList() { console.log('gtg backlog: list not implemented yet'); } // replaced in Task 3
+// Active entries idle >7d silently move to the backlog when `list` runs.
+// 'updated' is refreshed on every handoff/back/active, so only genuinely idle entries qualify.
+function autoShelf() {
+  const act = entries(REL_ACTIVE, 'handoffs');
+  const cutoff = Date.now() - 7 * 86400000;
+  const stale = act.filter((e) => e.updated && Date.parse(e.updated) <= cutoff);
+  if (!stale.length) return;
+  const fresh = act.filter((e) => !stale.includes(e));
+  let bl = entries(REL_BACKLOG, 'backlog');
+  for (const s of stale) {
+    s.updated = nowIso(); // restamp = shelf date
+    bl = bl.filter((e) => e.slug !== s.slug);
+    bl.push(s);
+  }
+  saveEntries(REL_ACTIVE, 'handoffs', fresh);
+  saveEntries(REL_BACKLOG, 'backlog', bl);
+  commit([REL_ACTIVE, REL_BACKLOG], `gtg backlog: auto-park ${stale.length} stale (>7d) project(s)`);
+  console.log(`Auto-shelved ${stale.length} project(s) idle >7d to backlog: ${stale.map((s) => s.project).join(', ')}`);
+}
+
+function list(argv) {
+  autoShelf();
+  const filter = argv.find((x) => !x.startsWith('--'));
+  let act = entries(REL_ACTIVE, 'handoffs');
+  const blCount = entries(REL_BACKLOG, 'backlog').length;
+  if (filter) {
+    const f = filter.toLowerCase();
+    act = act.filter((e) => e.slug === filter || e.project.toLowerCase().includes(f));
+  }
+  if (!act.length) {
+    console.log(`No active gtg projects${filter ? ` matching '${filter}'` : ''}.` +
+      (blCount ? ` (+${blCount} backlogged — gtg backlog)` : ''));
+    return;
+  }
+  console.log(`${act.length} active gtg project${act.length === 1 ? '' : 's'}:`);
+  sortByProject(act).forEach((e, i) => {
+    console.log(`${i + 1}. ${e.project} - ${e.phase} [${e.tier || '?'}] (${ago(e.updated)})`);
+    console.log(`   next: ${e.next}`);
+  });
+  if (blCount) console.log(`+ ${blCount} backlogged - gtg backlog`);
+}
+
+function backlogList() {
+  const bl = entries(REL_BACKLOG, 'backlog');
+  if (!bl.length) {
+    console.log("Backlog is empty. Shelf an active entry with 'gtg back <n>', or park an idea with 'gtg backlog --project ...'.");
+    return;
+  }
+  console.log(`${bl.length} backlogged project${bl.length === 1 ? '' : 's'}:`);
+  sortByProject(bl).forEach((e, i) => {
+    console.log(`b${i + 1}. ${e.project} - ${e.phase} [${e.tier || '?'}] (parked ${ago(e.updated)})`);
+    console.log(`    next: ${e.next}`);
+  });
+  console.log('Activate: gtg active <n>');
+}
 
 function help() {
   console.log(`gtg — pause/resume + backlog bookkeeping
@@ -144,8 +198,8 @@ Unknown commands dispatch to <root>/.gtg/commands/<name>.mjs — see README "Ext
 
 // --- dispatch -----------------------------------------------------------------
 const [cmd, ...rest] = process.argv.slice(2);
-const builtins = { handoff, backlog, help, '--help': help, '-h': help };
-if (!cmd) { builtins.list ? builtins.list([]) : help(); }
+const builtins = { handoff, backlog, list, help, '--help': help, '-h': help };
+if (!cmd) { list([]); }
 else if (builtins[cmd]) { await builtins[cmd](rest); }
 else {
   console.error(`gtg: unknown command '${cmd}' — try 'gtg help'`);
