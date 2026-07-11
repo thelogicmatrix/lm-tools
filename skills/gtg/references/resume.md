@@ -9,6 +9,7 @@ All paths below are relative to the storage root: `$GTG_HUB` if set, else the cu
 3. Read the linked handoff file (the entry's `file`, relative to the storage root).
 4. Respond: `"Found your [date] handoff for [project] — picking up from [next action]."`
 5. **Consume the entry** (do this before working, however you arrived): run `node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs" remove <slug>` — it removes the entry from the active list or the backlog (whichever holds it) and commits. The CLI owns this mechanic; don't hand-edit the JSON.
+5b. **Run resume hooks.** In order: (1) read and follow `${CLAUDE_PLUGIN_ROOT}/skills/gtg/extensions/skill/on-resume.md` (bundled — restores the prior session's task list, notes active skills); (2) if `<storage-root>/.gtg/skill/on-resume.md` exists, read and follow it too. Missing hook files are simply skipped.
 6. Continue from the Next Action without further preamble.
 
 **Stale handoff:** if the Next Action already looks done (files match, work complete), say so and ask how to proceed instead of redoing it — but still consume the entry (step 5); a pulled handoff is never left dangling.
