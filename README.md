@@ -17,8 +17,8 @@ Why this one, when several handoff skills exist:
 ## Install
 
 ```
-/plugin marketplace add <github-owner>/gtg-skill
-/plugin install gtg@gtg-marketplace
+/plugin marketplace add thelogicmatrix/lm-tools
+/plugin install gtg@lm-tools
 ```
 
 Requires Node.js ≥ 18 and git on PATH.
