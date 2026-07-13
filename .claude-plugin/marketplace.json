@@ -6,6 +6,11 @@
       "name": "gtg",
       "source": "./",
       "description": "Pause/resume workflow for Claude Code sessions — say 'gtg' to write a handoff before you leave, 'let's continue X' to resume cold days later."
+    },
+    {
+      "name": "due-diligence",
+      "source": "./due-diligence",
+      "description": "Adversarial pre-ship review (due-diligence) + build-to-standard construction (cdd): a modular 38-lens system that finds material defects before a reviewer does."
     }
   ]
 }

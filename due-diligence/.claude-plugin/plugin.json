@@ -1,0 +1,6 @@
+{
+  "name": "due-diligence",
+  "version": "1.0.0",
+  "description": "Adversarial pre-ship review (due-diligence) + build-to-standard construction (cdd): a modular lens system that finds material defects before a reviewer does.",
+  "author": { "name": "Nathan Wong" }
+}
