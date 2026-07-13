@@ -25,9 +25,10 @@ Two skills that make work hold up under a hostile reviewer — one for *before* 
 ```
 
 **As plain skills (static, no auto-update):** both skills are ordinary skill folders under
-`skills/` — copy them straight into your project's or user `.claude/skills/`:
+`due-diligence/skills/` — copy them straight into your project's or user `.claude/skills/`
+(paths below are from the repo root after cloning):
 ```
-cp -r skills/due-diligence skills/cdd  <your-repo>/.claude/skills/
+cp -r due-diligence/skills/due-diligence due-diligence/skills/cdd  <your-repo>/.claude/skills/
 ```
 Copy **both** as siblings — `cdd` reads `../due-diligence/references/`, so they must sit
 next to each other under `.claude/skills/`. This gives you a frozen copy you commit to your

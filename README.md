@@ -1,5 +1,7 @@
 # Got to Go (gtg) — pause and resume for Claude Code
 
+> Part of the **lm-tools** marketplace, which also ships [`due-diligence`](due-diligence/README.md) — build-to-standard construction (`cdd`) + pre-ship adversarial review. Install either independently: `/plugin install gtg@lm-tools` or `/plugin install due-diligence@lm-tools`.
+
 Say **"gtg"** when you have to leave mid-task: Claude writes a structured handoff
 (what was done, where you stopped, the exact next action, decisions already made)
 and pins it to a tracked list. Days later, say **"let's continue X"** in a fresh
