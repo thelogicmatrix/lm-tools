@@ -40,6 +40,24 @@ standalone. cdd without due-diligence loses the shared knowledge base.)
 - Before building: *"cdd this"* / *"build to DD standard"* → get the build brief.
 - Before shipping: *"run due diligence on this"* / *"make this bulletproof"* → the Critic ↔ Corrector loop.
 
-## Extending
+## Extending — add or change lenses without forking
 
-Add a lens by dropping a `references/lenses/<name>.md` checklist that cites a `references/res_<domain>.md` knowledge file, and adding a row to the selection table in `skills/due-diligence/SKILL.md`. No dispatcher code to touch.
+Due Diligence follows the lm-tools three-tier contract: a core you don't touch, and a tier
+you own that survives updates.
+
+| Tier | Where | Updates? |
+|---|---|---|
+| **Core** | the plugin's `references/lenses/` + `res_*.md` (the 38 shipped) | with the tool |
+| **Yours** | `.dd/` in *your* repo | never touched by a plugin update |
+
+**Add your own lens** — drop a checklist in `.dd/lenses/<name>.md` in your repo (same shape
+as a shipped lens: `## Fires on` / `## Attacks` / `## Evidence of attack` / `## Severity guide`),
+with any backing knowledge in `.dd/res/<domain>.md`. DD scans `.dd/lenses/` on every run and
+selects your lens per-case just like a built-in — no table edit, no plugin change.
+
+**Change how a built-in lens behaves** — put a lens in `.dd/lenses/` with the **same name** as
+a shipped one (e.g. `.dd/lenses/visual-ui-ux.md`). Yours overrides the built-in for your repo.
+
+**Update-safe by design:** `.dd/` lives in your repo and DD only ever *reads* it, so a plugin
+update can't clobber your lenses. Want a lens shipped for everyone instead? Add it under the
+plugin's `references/lenses/` + a selection-table row in `SKILL.md` and open a PR.

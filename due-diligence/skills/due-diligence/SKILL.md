@@ -73,6 +73,14 @@ pools, chosen the same way:
   below is a fast starting point for candidates, not the whole decision. Consult each
   selected lens's cited `references/res_*.md` for the standard it checks against; open
   only the selected ones.
+- **User lenses (the extension point)** — also scan `.dd/lenses/*.md` in the working repo
+  (and any hub root) for the user's own lenses. Read each candidate's `## Fires on` to
+  decide relevance per-case, exactly like a shipped lens; back them with the user's
+  `.dd/res/*.md` where cited. **Precedence:** a user lens whose filename matches a shipped
+  lens *overrides* it (the user's version wins) — this is how a user changes how an
+  existing lens behaves without editing the plugin. A new name is a new lens. `.dd/` lives
+  in the user's repo and is only ever read here, so plugin updates never touch it. If no
+  `.dd/` exists, this is a no-op.
 
 **General lens roster (select per-case):**
 
@@ -191,10 +199,22 @@ When you summarise to the user, **lead with a 2–3 sentence plain-English botto
 | "I reviewed it myself" | Authors are blind to their own work. Use a fresh Critic. |
 | "One pass / good enough to send" | Fixes create defects; the bar is "no material defect", not "good enough". |
 
-## Adding a lens
+## Adding or changing a lens
 
-1. Write `references/lenses/<name>.md` — template: `# <name> — <what it reviews>` / `> Cites: res_<domain>.md` / `## Fires on` / `## Attacks` / `## Evidence of attack` / `## Severity guide`. Draw the Attacks from the cited `res_` file; don't invent.
-2. If it needs a new knowledge base, add `references/res_<domain>.md` first (research-backed) and cite it. A lens with no external standard (e.g. a bespoke policy lens) may cite an internal doc instead — note it.
+**Your own lenses (update-safe — the normal path for users):** drop them in `.dd/` in your
+repo, never inside the plugin. `.dd/lenses/<name>.md` (same template as below) is picked up
+automatically by the per-case scan; `.dd/res/<domain>.md` backs it. Name it after a shipped
+lens to **override** that lens's behavior; use a new name to add one. A lens declares when it
+applies in its own `## Fires on`, so no table edit is needed. Plugin updates never touch
+`.dd/` — this is the tier you own.
+
+**Template:** `# <name> — <what it reviews>` / `> Cites: res_<domain>.md` (or "internal" if
+no external standard) / `## Fires on` / `## Attacks` / `## Evidence of attack` /
+`## Severity guide`. Draw the Attacks from the cited `res_` file; don't invent.
+
+**Contributing a lens upstream (into the plugin itself):**
+1. Write `references/lenses/<name>.md` per the template above.
+2. If it needs a new knowledge base, add `references/res_<domain>.md` first (research-backed) and cite it.
 3. Add one row, or extend a tag row, in the **Lens selection** table above.
 
-That's the whole extension surface — no dispatcher code to touch.
+Either way — no dispatcher code to touch.

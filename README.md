@@ -1,105 +1,55 @@
-# Got to Go (gtg) — pause and resume for Claude Code
+# lm-tools
 
-> Part of the **lm-tools** marketplace, which also ships [`due-diligence`](due-diligence/README.md) — build-to-standard construction (`cdd`) + pre-ship adversarial review. Install either independently: `/plugin install gtg@lm-tools` or `/plugin install due-diligence@lm-tools`.
+A marketplace of **modular frameworks for Claude Code** — tools built to be *extended*, not just installed. Each one ships a solid core and a documented extension point where you add your own pieces (commands, hooks, lenses) that live in *your* repo and survive updates. Take the defaults, or bend them to fit how you actually work.
 
-Say **"gtg"** when you have to leave mid-task: Claude writes a structured handoff
-(what was done, where you stopped, the exact next action, decisions already made)
-and pins it to a tracked list. Days later, say **"let's continue X"** in a fresh
-session and it picks up cold — no re-explaining, no re-litigating.
+By [Nathan Wong](https://github.com/thelogicmatrix).
 
-Why this one, when several handoff skills exist:
+## Add the marketplace
 
-1. **Terminal-level control.** `list` / `remove` / `back` / `active` / `undo` are
-   zero-model CLI commands — bookkeeping costs no tokens and no agent turns.
-2. **A framework, not a fixed format.** Drop `.gtg/commands/<name>.mjs` into your
-   repo and it becomes a real subcommand of the installed CLI — no fork.
-3. **Self-cleaning.** Resuming consumes the entry; entries idle 7+ days auto-shelf
-   to a backlog. The active list only ever contains what's genuinely open.
-
-## Install
-
-**As a plugin (auto-updating):**
 ```
 /plugin marketplace add thelogicmatrix/lm-tools
+```
+
+Then install whichever tools you want — they're independent:
+
+```
 /plugin install gtg@lm-tools
+/plugin install due-diligence@lm-tools
 ```
 
-**As a plain skill (static, no auto-update):** the skill is self-contained under `skills/gtg/`
-(SKILL.md + the `gtg.mjs` CLI + `extensions/`) — copy that one folder into your project or
-user `.claude/skills/`:
-```
-cp -r skills/gtg  <your-repo>/.claude/skills/
-```
-A frozen copy you commit to your own history that never updates from the marketplace. Your
-own `.gtg/` extensions still live in your repo/hub, untouched either way.
+Prefer a frozen, non-updating copy? Each tool is also a plain skill you can copy into
+`.claude/skills/` — see the per-tool README.
 
-Requires Node.js ≥ 18 and git on PATH.
+## Tools
 
-## Use
+### [gtg — Got to Go](gtg/README.md)
+Pause and resume for Claude Code. Say **"gtg"** when you leave mid-task and it writes a
+structured handoff; say **"let's continue X"** days later and it picks up cold. Zero-model
+terminal commands for list/prune/backlog, 7-day auto-shelving, git-history-as-undo.
+**Extend it:** drop `.gtg/commands/<name>.mjs` and `.gtg/skill/*.md` hooks in your repo —
+new CLI subcommands and procedure steps, no fork. → [gtg/README.md](gtg/README.md)
 
-| You say | What happens |
-|---|---|
-| "gtg" (or any departure phrase) | Handoff written to `docs/handoffs/`, entry pinned, both committed |
-| "let's continue <project>" | Handoff found, read, resumed from its Next Action; entry consumed |
-| "gtg list" | Active handoffs (idle >7d auto-shelf to the backlog) |
-| "gtg backlog <idea>" | Park a long-horizon idea on the shelf |
-| "gtg back <n\|slug>" / "gtg active <n\|slug>" | Shelf / reactivate an entry |
-| "gtg remove <n>" / undo via "gtg undo" | Prune; git history is the undo stack |
+### [due-diligence](due-diligence/README.md)
+Make work hold up under a hostile reviewer. **`due-diligence`** runs an adversarial
+Critic ↔ Corrector loop before you ship; **`cdd`** runs the same lens library *forward* to
+brief a build before you start. A per-case selection from 38 lenses (9 general + 29 domain),
+each grounded in a research-backed knowledge file.
+**Extend it:** drop your own lenses in `.dd/lenses/` in your repo — DD reads them alongside
+the shipped ones, and a same-named lens overrides a built-in. → [due-diligence/README.md](due-diligence/README.md)
 
-Handoffs live in *your repo* (`<repo>/docs/handoffs/`), committed to *your* history.
+## The shared contract
 
-## Advanced: tracking multiple repos from one place
+Every lm-tools framework follows the same three-tier shape:
 
-Set `GTG_HUB=<path>` (a git repo) and every gtg command stores its handoffs there
-instead of the repo you're working in — one list across all your projects.
-
-## Extending gtg
-
-gtg has three tiers. You only ever touch the third.
-
-| Tier | Lives in | Active |
+| Tier | Where | Updates? |
 |---|---|---|
-| **Core** | the plugin's `gtg.mjs` + `SKILL.md` | always |
-| **Bundled** | the plugin's `extensions/` | on by default (`gtg stats`, reattachment hooks) |
-| **Yours** | `<storage-root>/.gtg/` | when you add a file |
+| **Core** | the plugin | ships + updates with the tool |
+| **Bundled** | the plugin's defaults | on by default, updates with the tool |
+| **Yours** | a dot-dir in *your* repo (`.gtg/`, `.dd/`, …) | never touched by updates — you own it |
 
-Two extension points:
+The plugin only ever *reads* your tier, so a plugin update can't clobber your extensions.
+That's the point: a framework you add to and modify, not a black box.
 
-**1. CLI commands** — any subcommand the CLI doesn't recognize resolves to
-`<storage-root>/.gtg/commands/<name>.mjs`, dynamically imported, default export called as
-`fn(ctx)`:
+## License
 
-```js
-// .gtg/commands/hello.mjs
-export default async ({ root, args, readStore, writeStore, commit }) => {
-  const data = readStore('docs/handoffs/_active.json'); // parsed JSON or null
-  console.log(`hello from ${root}, ${data?.handoffs?.length ?? 0} active, args: ${args.join(' ')}`);
-};
-```
-
-`ctx` = `{ root, args, readStore(path), writeStore(path, data), commit(paths, message) }`.
-
-**2. Procedure hooks** — the exit and resume flows load markdown hooks if present, so you
-can add project-specific steps without forking the skill:
-
-```
-.gtg/skill/on-exit.md     # runs while the handoff is being written (may append to it / stage files)
-.gtg/skill/on-resume.md   # runs while a handoff is being consumed
-```
-
-A hook is just instructions the model reads and follows. See the bundled examples in the
-plugin's `extensions/skill/`.
-
-**Resolution & precedence:** built-in commands always win. Otherwise **your** `.gtg/`
-command overrides a bundled one of the same name (so you can replace `stats`). Hooks are
-**additive** — the bundled hook runs, then yours.
-
-**Update-safe by design:** your `.gtg/` lives in your own repo/hub, never inside the
-plugin, and the CLI only ever *reads* it — a plugin update can't touch your files. The
-extension surface (`ctx`, the `.gtg/` layout, hook load-points, resolution order) only
-grows within a major version; a breaking change is a major version bump.
-
-## Storage format
-
-`docs/handoffs/_active.json` — `{"handoffs":[{project, slug, phase, tier, next, file, updated}]}`;
-`_backlog.json` the same with key `backlog`. Handoff docs are plain markdown next to them.
+See [LICENSE](LICENSE).
