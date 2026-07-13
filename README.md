@@ -16,10 +16,20 @@ Why this one, when several handoff skills exist:
 
 ## Install
 
+**As a plugin (auto-updating):**
 ```
 /plugin marketplace add thelogicmatrix/lm-tools
 /plugin install gtg@lm-tools
 ```
+
+**As a plain skill (static, no auto-update):** the skill is self-contained under `skills/gtg/`
+(SKILL.md + the `gtg.mjs` CLI + `extensions/`) — copy that one folder into your project or
+user `.claude/skills/`:
+```
+cp -r skills/gtg  <your-repo>/.claude/skills/
+```
+A frozen copy you commit to your own history that never updates from the marketplace. Your
+own `.gtg/` extensions still live in your repo/hub, untouched either way.
 
 Requires Node.js ≥ 18 and git on PATH.
 
