@@ -1,4 +1,4 @@
-# gtg — pause and resume for Claude Code
+# Got to Go (gtg) — pause and resume for Claude Code
 
 Say **"gtg"** when you have to leave mid-task: Claude writes a structured handoff
 (what was done, where you stopped, the exact next action, decisions already made)

@@ -18,10 +18,21 @@ Two skills that make work hold up under a hostile reviewer — one for *before* 
 
 ## Install
 
+**As a plugin (auto-updating):**
 ```
 /plugin marketplace add thelogicmatrix/lm-tools
 /plugin install due-diligence@lm-tools
 ```
+
+**As plain skills (static, no auto-update):** both skills are ordinary skill folders under
+`skills/` — copy them straight into your project's or user `.claude/skills/`:
+```
+cp -r skills/due-diligence skills/cdd  <your-repo>/.claude/skills/
+```
+Copy **both** as siblings — `cdd` reads `../due-diligence/references/`, so they must sit
+next to each other under `.claude/skills/`. This gives you a frozen copy you commit to your
+own repo that never updates from the marketplace. (`cdd` is optional; `due-diligence` works
+standalone. cdd without due-diligence loses the shared knowledge base.)
 
 ## Use
 
