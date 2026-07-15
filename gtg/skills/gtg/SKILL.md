@@ -20,7 +20,7 @@ otherwise read as a verb.
 | Session start | `gtg <project>` | Resume that project (= `gtg resume <project>`; brackets optional — verb-check disambiguates) |
 | Mid-session | `gtg` | Depart (Exit Procedure), slug inferred from context |
 | Mid-session | `gtg [project]` | Depart, but **force the handoff slug** to `project` (brackets **required**) |
-| Anytime | `gtg <verb>` | Run the CLI verb (`list`, `backlog`, `back`, `active`, `prune`, `remove`, `peek`, `resume`, `undo`, `stats`, `help`) |
+| Anytime | `gtg <verb>` | Handle per the router table below — the verb (`list`, `backlog`, `back`, `active`, `prune`, `remove`, `peek`, `resume`, `undo`, `stats`, `help`) routes to its row; some are `gtg.mjs` CLI calls, others (`peek`, `resume`) are skill-handled |
 
 Disambiguation: a bracketed token is always a project; otherwise a token matching a known
 verb is a command; else (session start only) it's a project name to resume. When a
