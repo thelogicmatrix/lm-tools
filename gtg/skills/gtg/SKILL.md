@@ -104,7 +104,7 @@ Same mechanics as the Exit Procedure, three differences: no work-in-progress com
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs" backlog \
-  --project "<Name>" --slug <slug> --phase free-form --eta "TBD" \
+  --project "<Name>" --slug <slug> --phase free-form \
   --next "<first concrete step, or 'TBD — <thought>'>" <<'BODY'
 ## The Idea
 <a few sentences: what it is, why it's worth remembering, any seed thoughts>
