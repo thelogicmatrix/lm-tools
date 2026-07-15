@@ -10,7 +10,7 @@
     {
       "name": "due-diligence",
       "source": "./due-diligence",
-      "description": "Due Diligence — adversarial pre-ship review + build-to-standard construction (cdd): a modular 38-lens framework you extend with your own lenses to fit your work."
+      "description": "Due Diligence — adversarial pre-ship review + build-to-standard construction (cdd): a modular 39-lens framework you extend with your own lenses to fit your work."
     }
   ]
 }
