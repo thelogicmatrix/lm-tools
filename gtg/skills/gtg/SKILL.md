@@ -9,7 +9,26 @@ Graceful mid-task pause for cold resume. "gtg" is a reserved phrase — never ca
 
 **Fast, not rushed:** the *procedure* must be quick (no extra exploration, no new work), but the *handoff content* must be accurate enough for a cold resume days later — the real stoppable point, the real next action, decisions not to re-litigate.
 
+## Trigger Semantics — what `gtg` means by context
+
+Brackets `[]` are the explicit project override, required only where a bare token would
+otherwise read as a verb.
+
+| Context | Input | Meaning |
+|---|---|---|
+| Session start (message is *only* `gtg…`) | `gtg` | Resume mode: if exactly one active project, resume it; else run `list` and ask which |
+| Session start | `gtg <project>` | Resume that project (= `gtg resume <project>`; brackets optional — verb-check disambiguates) |
+| Mid-session | `gtg` | Depart (Exit Procedure), slug inferred from context |
+| Mid-session | `gtg [project]` | Depart, but **force the handoff slug** to `project` (brackets **required**) |
+| Anytime | `gtg <verb>` | Run the CLI verb (`list`, `backlog`, `back`, `active`, `prune`, `remove`, `peek`, `resume`, `undo`, `stats`, `help`) |
+
+Disambiguation: a bracketed token is always a project; otherwise a token matching a known
+verb is a command; else (session start only) it's a project name to resume. When a
+mid-session `gtg [project]` gives a slug, Exit step 2 uses it verbatim — skip the
+`list <candidate>` reuse-guess.
+
 All bookkeeping (list/remove/back/active/undo) is zero-model: shell out to the CLI, relay its output, don't reason about the JSON. Handoffs are stored at `docs/handoffs/` under the storage root — the current git repo by default, or `$GTG_HUB` if that env var is set (see README "Advanced").
+When *you* (the skill) issue a mutation (`remove`/`back`/`active`), always pass the entry's **`slug`**, never a bare list number — list numbers re-sort as entries move and a stale number silently targets the wrong project. The bare-integer form exists only for a human reading `list`.
 
 The CLI: `node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs"` — referred to as `gtg.mjs` below.
 
@@ -31,11 +50,13 @@ If the message is **only** a departure phrase ("gtg", "heading out", …), skip 
 If it's embedded in a longer message ("gotta go soon, but first…"), reply one line — `"Wrapping [project] at [stoppable point] — confirm and go?"` — and wait for an affirmative. Nothing else first.
 
 ### 2. Identify the project + commit in-progress work
-Name the active project from context (**never ask**). Before slugifying fresh, run `gtg.mjs list <candidate-name>` — if exactly one existing entry matches, **reuse its slug** so the handoff updates that entry in place instead of minting a duplicate. Zero or multiple matches: slugify fresh (e.g. "Payments refactor" → `payments-refactor`).
+Name the active project from context (**never ask**). Before slugifying fresh, run `gtg.mjs list <candidate-name>` — if exactly one existing entry matches, **reuse its slug** so the handoff updates that entry in place instead of minting a duplicate. Zero or multiple matches: slugify fresh (e.g. "Payments refactor" → `payments-refactor`). If the trigger was `gtg [project]`, use that slug verbatim and skip the `gtg.mjs list <candidate-name>` reuse-check.
 If the working tree has uncommitted changes that belong to the work: `git add <files> && git commit -m "wip: gtg checkpoint — <brief>"`. Skip if clean.
 
-### 3. Classify the Next Action's tier
-Cheapest model tier that does it reliably: `Haiku` mechanical · `Sonnet` standard build/debug (default) · `Opus`/`Fable` heavy or plan/review work. Unsure → `Sonnet`.
+### 3. Estimate the Next Action's ETA
+Rough **duration remaining** to finish this project's Next Action, from your read of the
+work: `~30m` · `~2h` · `~3 sessions`. This is a free-time-prioritization seed, not a
+contract — a rough guess is fine, and it's optional (omit `--eta` if you truly can't tell).
 
 ### 4. Write the handoff — ONE call
 **First, run exit hooks (extensions may add project-specific steps).** In order:
@@ -48,7 +69,7 @@ The CLI owns all mechanics (timestamp, filename, header, store dedupe+append, gi
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs" handoff \
   --project "<Name>" --slug <slug> --phase <brainstorming|writing-plans|executing|free-form> \
-  --tier <Haiku|Sonnet|Opus|Fable> --next "<one-line next action, <150 chars>" \
+  --eta "<duration remaining, e.g. ~2h>" --next "<one-line next action, <150 chars>" \
   [--worktree "<path or 'repo root'>"] <<'BODY'
 ## What Was Done This Session
 - <significant actions / decisions>
@@ -79,11 +100,11 @@ Relay the CLI's output as one line, then stop completely — no follow-up, no su
 
 ## Backlog Park (`gtg backlog <idea>`)
 
-Same mechanics as the Exit Procedure, three differences: no work-in-progress commit (it's an idea, not in-progress work), thin fields are fine (`--phase free-form`, `--tier` best-guess, `--next "TBD — <first step>"`), and the `backlog` subcommand routes it to the shelf:
+Same mechanics as the Exit Procedure, three differences: no work-in-progress commit (it's an idea, not in-progress work), thin fields are fine (`--phase free-form`, omit `--eta`, `--next "TBD — <first step>"`), and the `backlog` subcommand routes it to the shelf:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs" backlog \
-  --project "<Name>" --slug <slug> --phase free-form --tier <tier> \
+  --project "<Name>" --slug <slug> --phase free-form --eta "TBD" \
   --next "<first concrete step, or 'TBD — <thought>'>" <<'BODY'
 ## The Idea
 <a few sentences: what it is, why it's worth remembering, any seed thoughts>

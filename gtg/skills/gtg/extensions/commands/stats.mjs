@@ -6,10 +6,10 @@ export default ({ readStore }) => {
   console.log(`${active.length} active, ${backlog.length} backlog`);
 
   if (active.length) {
-    const byTier = {};
-    for (const e of active) byTier[e.tier || '?'] = (byTier[e.tier || '?'] || 0) + 1;
-    const tiers = Object.entries(byTier).sort().map(([t, n]) => `${t}:${n}`).join('  ');
-    console.log(`tiers: ${tiers}`);
+    const byPhase = {};
+    for (const e of active) byPhase[e.phase || '?'] = (byPhase[e.phase || '?'] || 0) + 1;
+    const phases = Object.entries(byPhase).sort().map(([t, n]) => `${t}:${n}`).join('  ');
+    console.log(`phases: ${phases}`);
 
     const oldest = active.reduce((a, b) =>
       Date.parse(a.updated || 0) <= Date.parse(b.updated || 0) ? a : b);
