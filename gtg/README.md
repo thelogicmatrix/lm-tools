@@ -101,5 +101,5 @@ grows within a major version; a breaking change is a major version bump.
 
 ## Storage format
 
-`docs/handoffs/_active.json` — `{"handoffs":[{project, slug, phase, tier, next, file, updated}]}`;
+`docs/handoffs/_active.json` — `{"handoffs":[{project, slug, phase, eta, next, file, updated}]}`;
 `_backlog.json` the same with key `backlog`. Handoff docs are plain markdown next to them.

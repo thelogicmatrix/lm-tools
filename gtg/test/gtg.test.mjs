@@ -43,7 +43,7 @@ function gtg(cwd, args, opts = {}) {
 
 const HANDOFF_ARGS = (slug, project) => [
   'handoff', '--project', project, '--slug', slug,
-  '--phase', 'executing', '--tier', 'Sonnet', '--next', 'do the next thing',
+  '--phase', 'executing', '--eta', '~2h', '--next', 'do the next thing',
 ];
 const BODY = '## What Was Done This Session\n- stuff\n\n## Next Action\ndo the next thing\n';
 const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_active.json'), 'utf8'));
@@ -76,7 +76,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 {
   const repo = tempRepo();
   const r = gtg(repo, ['backlog', '--project', 'Idea X', '--slug', 'idea-x',
-    '--phase', 'free-form', '--tier', 'Haiku', '--next', 'TBD'], { input: '## The Idea\nsomething\n' });
+    '--phase', 'free-form', '--eta', '~1h', '--next', 'TBD'], { input: '## The Idea\nsomething\n' });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /PARKED on backlog/);
   const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
@@ -300,7 +300,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   // Sorted active after move = [Apple, Zebra] — Apple's hint must be 1, not length (2).
   gtg(repo, HANDOFF_ARGS('zebra', 'Zebra'), { input: BODY });
   gtg(repo, ['backlog', '--project', 'Apple', '--slug', 'apple',
-    '--phase', 'executing', '--tier', 'Sonnet', '--next', 'do the next thing'], { input: BODY });
+    '--phase', 'executing', '--eta', '~2h', '--next', 'do the next thing'], { input: BODY });
   const ra = gtg(repo, ['active', 'apple']);
   assert.equal(ra.status, 0, ra.stderr);
   assert.match(ra.stdout, /Shelve again: gtg back 1(?!\d)/, 'active hint must use sorted position (Apple=1), not raw length');
@@ -406,7 +406,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const r = gtg(repo, ['stats']);
   assert.equal(r.status, 0, `bundled stats failed: ${r.stderr}`);
   assert.match(r.stdout, /1 active/);
-  assert.match(r.stdout, /Sonnet/); // tier breakdown (HANDOFF_ARGS uses --tier Sonnet)
+  assert.match(r.stdout, /executing/); // phase breakdown (HANDOFF_ARGS uses --phase executing)
   console.log('ok 7 - bundled stats dispatch');
 }
 
@@ -441,7 +441,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const r = gtg(repo, ['mine']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /MINE:function/, 'user command lost its ctx');
-  console.log('ok 7d - user command intact alongside bundled tier');
+  console.log('ok 7d - user command intact alongside bundled command');
 }
 
 console.log('ALL PASS');

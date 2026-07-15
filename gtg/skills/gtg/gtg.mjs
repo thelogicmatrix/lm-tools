@@ -24,6 +24,10 @@ const REL_BACKLOG = 'docs/handoffs/_backlog.json';
 // Directory of this CLI file — bundled extensions ship alongside it under extensions/.
 const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 
+// --- color (TTY-gated, NO_COLOR-aware; raw ANSI, no dependency) ---------------
+const COLOR = process.stdout.isTTY && !process.env.NO_COLOR;
+const c = (code, s) => (COLOR ? `\x1b[${code}m${s}\x1b[0m` : String(s));
+
 // --- helpers (readStore/writeStore/commit are also the extension ctx) --------
 function readStore(rel) {
   const p = join(ROOT, rel);
@@ -85,7 +89,7 @@ function parseFlags(argv) {
 // --- handoff / backlog park ---------------------------------------------------
 function writeHandoff(argv, { storeRel, key, verb }) {
   const a = parseFlags(argv);
-  const missing = ['project', 'slug', 'phase', 'tier', 'next'].filter((k) => !a[k]);
+  const missing = ['project', 'slug', 'phase', 'next'].filter((k) => !a[k]);
   if (missing.length) { console.error(`gtg ${verb}: missing --${missing.join(', --')}`); process.exit(2); }
   // slug becomes a filename and a git-add arg — constrain it so it can't traverse paths or inject shell.
   if (!/^[A-Za-z0-9_-]+$/.test(a.slug)) { console.error(`gtg ${verb}: --slug must match [A-Za-z0-9_-]`); process.exit(2); }
@@ -111,7 +115,7 @@ ${body}
 Say: "let's continue ${a.project}"
 `;
   const entry = {
-    project: a.project, slug: a.slug, phase: a.phase, tier: a.tier,
+    project: a.project, slug: a.slug, phase: a.phase, eta: a.eta || undefined,
     next: String(a.next).slice(0, 150), file: relFile, updated: nowIso(),
   };
   if (a['dry-run']) {
@@ -175,7 +179,7 @@ function list(argv) {
     // Number by position in the FULL sorted list, not the filtered subset, so
     // `gtg remove <n>` (resolveEntry runs over the full list) targets this same entry.
     const n = allAct.indexOf(e) + 1;
-    console.log(`${n}. ${e.project} - ${e.phase} [${e.tier || '?'}] (${ago(e.updated)})`);
+    console.log(`${c('1', n + '.')} ${c('1;36', e.project)} ${c('2', '- ' + e.phase)} [${c('32', e.eta || '?')}] ${c('2', '(' + ago(e.updated) + ')')}`);
     console.log(`   next: ${e.next}`);
   });
   if (blCount) console.log(`+ ${blCount} backlogged - gtg backlog`);
@@ -189,7 +193,7 @@ function backlogList() {
   }
   console.log(`${bl.length} backlogged project${bl.length === 1 ? '' : 's'}:`);
   sortByProject(bl).forEach((e, i) => {
-    console.log(`b${i + 1}. ${e.project} - ${e.phase} [${e.tier || '?'}] (parked ${ago(e.updated)})`);
+    console.log(`${c('33', 'b' + (i + 1) + '.')} ${c('1;36', e.project)} ${c('2', '- ' + e.phase)} [${c('32', e.eta || '?')}] ${c('2', '(parked ' + ago(e.updated) + ')')}`);
     console.log(`    next: ${e.next}`);
   });
   console.log('Activate: gtg active <n>');
@@ -197,7 +201,7 @@ function backlogList() {
 
 function help() {
   console.log(`gtg — pause/resume + backlog bookkeeping
-  gtg handoff --project --slug --phase --tier --next [--worktree] [--branch] [--dry-run]   (body on stdin)
+  gtg handoff --project --slug --phase --next [--eta] [--worktree] [--branch] [--dry-run]   (body on stdin)
   gtg backlog [same flags]     park on the backlog shelf (body on stdin); bare = list the shelf
   gtg list [project]           active handoffs (+ 7-day auto-shelf sweep); optional filter
   gtg back <n|slug>            shelf an active entry to the backlog
