@@ -43,7 +43,7 @@ function gtg(cwd, args, opts = {}) {
 
 const HANDOFF_ARGS = (slug, project) => [
   'handoff', '--project', project, '--slug', slug,
-  '--phase', 'executing', '--eta', '~2h', '--next', 'do the next thing',
+  '--eta', '~2h', '--next', 'do the next thing',
 ];
 const BODY = '## What Was Done This Session\n- stuff\n\n## Next Action\ndo the next thing\n';
 const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_active.json'), 'utf8'));
@@ -76,7 +76,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 {
   const repo = tempRepo();
   const r = gtg(repo, ['backlog', '--project', 'Idea X', '--slug', 'idea-x',
-    '--phase', 'free-form', '--eta', '~1h', '--next', 'TBD'], { input: '## The Idea\nsomething\n' });
+    '--eta', '~1h', '--next', 'TBD'], { input: '## The Idea\nsomething\n' });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /PARKED on backlog/);
   const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
@@ -172,7 +172,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(r.status, 0, r.stderr);
   // Full sorted order is Alpha, Bravo, Charlie — Bravo is position 2, even though
   // it's the only entry shown here. Numbering by filtered-subset index would wrongly show "1.".
-  assert.match(r.stdout, /^2\. Bravo/m, 'list <filter> must number by full sorted-list position, not filtered index');
+  assert.match(r.stdout, /^\s*2\. Bravo/m, 'list <filter> must number by full sorted-list position, not filtered index');
   console.log('ok 2c - list numbering matches resolve order');
 }
 
@@ -300,7 +300,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   // Sorted active after move = [Apple, Zebra] — Apple's hint must be 1, not length (2).
   gtg(repo, HANDOFF_ARGS('zebra', 'Zebra'), { input: BODY });
   gtg(repo, ['backlog', '--project', 'Apple', '--slug', 'apple',
-    '--phase', 'executing', '--eta', '~2h', '--next', 'do the next thing'], { input: BODY });
+    '--eta', '~2h', '--next', 'do the next thing'], { input: BODY });
   const ra = gtg(repo, ['active', 'apple']);
   assert.equal(ra.status, 0, ra.stderr);
   assert.match(ra.stdout, /Shelve again: gtg back 1(?!\d)/, 'active hint must use sorted position (Apple=1), not raw length');
@@ -406,7 +406,14 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const r = gtg(repo, ['stats']);
   assert.equal(r.status, 0, `bundled stats failed: ${r.stderr}`);
   assert.match(r.stdout, /1 active/);
-  assert.match(r.stdout, /executing/); // phase breakdown (HANDOFF_ARGS uses --phase executing)
+  // Task 6 rewrote stats.mjs on top of buildReport() (history.mjs); the old
+  // "sessions: N total · deepest: X (Y)" line is gone. Assert the counts line
+  // plus the new session-depth line ("N sessions · deepest: X (Y)"), not the
+  // exact total (perProject can split a row when --slug diverges from
+  // slugify(project) — a pre-existing Tasks 1-5 quirk, out of scope here).
+  const sessLine = r.stdout.match(/(\d+) sessions · deepest: (.+?) \((\d+)\)/);
+  assert.ok(sessLine, `session-depth line missing/malformed in stats output: ${r.stdout}`);
+  assert.equal(sessLine[2], 'Project A');
   console.log('ok 7 - bundled stats dispatch');
 }
 
@@ -442,6 +449,935 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /MINE:function/, 'user command lost its ctx');
   console.log('ok 7d - user command intact alongside bundled command');
+}
+
+// --- 8. resume consumes an entry with its OWN commit subject (not prune) ---
+{
+  const repo = tempRepo();
+  let r = gtg(repo, HANDOFF_ARGS('proj-r', 'Project R'), { input: BODY });
+  assert.equal(r.status, 0, `handoff failed: ${r.stderr}`);
+
+  r = gtg(repo, ['resume', 'proj-r']);
+  assert.equal(r.status, 0, `resume failed: ${r.stderr}`);
+  assert.equal(active(repo).handoffs.length, 0, 'resume did not remove the entry');
+
+  const subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
+  assert.match(subject, /^gtg resume: Project R — handoff consumed$/,
+    `resume must not reuse the prune subject, got: ${subject}`);
+
+  // falls back to the backlog when the slug is not active
+  r = gtg(repo, ['backlog', '--project', 'Idea Z', '--slug', 'idea-z',
+    '--next', 'TBD'], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  r = gtg(repo, ['resume', 'idea-z']);
+  assert.equal(r.status, 0, `backlog resume failed: ${r.stderr}`);
+  const blSubject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
+  assert.match(blSubject, /^gtg resume: Idea Z — backlog handoff consumed$/);
+
+  // no match exits 2
+  r = gtg(repo, ['resume', 'nope']);
+  assert.equal(r.status, 2, 'resume on a missing slug should exit 2');
+
+  console.log('ok 8 - resume has its own verb and commit subject');
+}
+
+// --- 9. phase is gone; sessions counts up; created is stable ---
+{
+  const repo = tempRepo();
+  let r = gtg(repo, HANDOFF_ARGS('proj-s', 'Project S'), { input: BODY });
+  assert.equal(r.status, 0, `handoff failed: ${r.stderr}`);
+
+  let e = active(repo).handoffs[0];
+  assert.equal(e.sessions, 1, 'first handoff should be session 1');
+  assert.ok(!('phase' in e), 'phase must not be written');
+  assert.match(e.created, /^\d{4}-\d{2}-\d{2}T/, 'created must be an ISO stamp');
+  const firstCreated = e.created;
+
+  const doc = readFileSync(join(repo, e.file), 'utf8');
+  assert.ok(!/^Phase:/m.test(doc), 'handoff doc must not carry a Phase: line');
+
+  let subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
+  assert.match(subject, /^handoff: Project S — session 1$/, `got: ${subject}`);
+
+  // second handoff for the same slug: sessions increments, created is carried
+  r = gtg(repo, HANDOFF_ARGS('proj-s', 'Project S'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  e = active(repo).handoffs[0];
+  assert.equal(e.sessions, 2, 'second handoff should be session 2');
+  assert.equal(e.created, firstCreated, 'created must not move on later handoffs');
+  subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
+  assert.match(subject, /^handoff: Project S — session 2$/, `got: ${subject}`);
+
+  // --phase is no longer required
+  r = gtg(repo, ['handoff', '--project', 'Project T', '--slug', 'proj-t',
+    '--next', 'thing'], { input: BODY });
+  assert.equal(r.status, 0, `handoff without --phase must succeed: ${r.stderr}`);
+
+  console.log('ok 9 - phase dropped, sessions counts, created is stable');
+}
+
+// --- 10. created backfills from disk when handoff files exist but no store entry does
+// (a real project whose entry was consumed by `gtg resume`, now handed off again) ---
+{
+  const repo = tempRepo();
+  const dir = join(repo, 'docs/handoffs');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, '2026-01-05-0900-old-proj.md'), '# old\n');
+  writeFileSync(join(dir, '2026-01-10-1200-old-proj.md'), '# old\n');
+
+  const r = gtg(repo, HANDOFF_ARGS('old-proj', 'Old Proj'), { input: BODY });
+  assert.equal(r.status, 0, `handoff failed: ${r.stderr}`);
+  const e = active(repo).handoffs[0];
+  // minor fix: firstHandoffDate() now carries the same local-offset suffix
+  // nowIso() uses (a bare vs aware datetime otherwise breaks Python fromisoformat
+  // comparisons) — assert via regex so the test isn't tied to the CI box's own tz.
+  assert.match(e.created, /^2026-01-05T00:00:00[+-]\d{2}:\d{2}$/,
+    'created must backfill to the EARLIEST pre-existing handoff file, not today, with a local-offset suffix');
+  assert.equal(e.sessions, 3, 'sessions must count the 2 pre-existing files plus this one');
+  console.log('ok 10 - created backfills from disk when no store entry exists');
+}
+
+// --- 11. worktree + branch land on the entry; branch is read FROM the worktree ---
+{
+  const repo = tempRepo();
+
+  // a separate repo standing in for a project worktree, on a distinctive branch
+  const wt = tempRepo();
+  execSync('git commit -q --allow-empty -m init', { cwd: wt });
+  execSync('git checkout -q -b feat/elsewhere', { cwd: wt });
+
+  let r = gtg(repo, [...HANDOFF_ARGS('proj-w', 'Project W'), '--worktree', wt], { input: BODY });
+  assert.equal(r.status, 0, `handoff failed: ${r.stderr}`);
+  let e = active(repo).handoffs[0];
+  assert.equal(e.worktree, wt, 'worktree must be stored on the entry');
+  assert.equal(e.branch, 'feat/elsewhere',
+    `branch must come from the worktree, not the storage root, got: ${e.branch}`);
+
+  // explicit --branch wins over detection
+  r = gtg(repo, [...HANDOFF_ARGS('proj-w2', 'Project W2'), '--worktree', wt,
+    '--branch', 'stated/branch'], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  e = active(repo).handoffs.find((x) => x.slug === 'proj-w2');
+  assert.equal(e.branch, 'stated/branch');
+
+  // no --worktree: defaults to 'repo root' and detects in the storage root
+  r = gtg(repo, HANDOFF_ARGS('proj-w3', 'Project W3'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  e = active(repo).handoffs.find((x) => x.slug === 'proj-w3');
+  assert.equal(e.worktree, 'repo root');
+  assert.equal(e.branch, 'main', `storage-root branch expected, got: ${e.branch}`);
+
+  // a worktree path that does not exist must not throw
+  r = gtg(repo, [...HANDOFF_ARGS('proj-w4', 'Project W4'),
+    '--worktree', join(repo, 'no-such-dir')], { input: BODY });
+  assert.equal(r.status, 0, `missing worktree must not fail the handoff: ${r.stderr}`);
+  e = active(repo).handoffs.find((x) => x.slug === 'proj-w4');
+  assert.equal(e.branch, '?', `unresolvable branch should be '?', got: ${e.branch}`);
+
+  console.log('ok 11 - worktree and branch stored, detected in the right repo');
+}
+
+// --- 12. parent: explicit flag wins, INDEX.md prefix match is the fallback ---
+{
+  const repo = tempRepo();
+  mkdirSync(join(repo, 'docs/projects'), { recursive: true });
+  writeFileSync(join(repo, 'docs/projects/INDEX.md'), [
+    '| Project | Status |',
+    '|---|---|',
+    '| [atlas](atlas.md) | active |',
+    '| [Bench & Bar](bench-and-bar.md) | paused |',
+    '| [Widget — parts catalog](widget.md) | paused |',
+    '| [Widget Ads](widget-ads.md) | paused |',
+    '',
+  ].join('\n'));
+
+  // explicit --parent wins, even when it matches nothing in INDEX.md
+  let r = gtg(repo, [...HANDOFF_ARGS('sub-project', 'Ships Worldbuilding'),
+    '--parent', 'atlas'], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  let e = active(repo).handoffs.find((x) => x.slug === 'sub-project');
+  assert.equal(e.parent, 'atlas', 'explicit --parent must be honoured verbatim');
+
+  // fallback: slug prefix matches an INDEX.md page slug
+  r = gtg(repo, HANDOFF_ARGS('widget-stats-page', 'Widget Stats Page'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  e = active(repo).handoffs.find((x) => x.slug === 'widget-stats-page');
+  assert.equal(e.parent, 'widget', 'widget-* should infer the widget family');
+
+  // fallback: two pages qualify ('widget' and 'widget-ads') — longest wins,
+  // not whichever the shorter page happened to be listed first in INDEX.md
+  r = gtg(repo, HANDOFF_ARGS('widget-ads-report', 'Widget Ads Report'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  e = active(repo).handoffs.find((x) => x.slug === 'widget-ads-report');
+  assert.equal(e.parent, 'widget-ads', 'longest matching page slug must win the tie-break, not the first one found');
+
+  // fallback: exact match — a project that IS the family
+  r = gtg(repo, HANDOFF_ARGS('bench-and-bar', 'Bench & Bar'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  e = active(repo).handoffs.find((x) => x.slug === 'bench-and-bar');
+  assert.equal(e.parent, 'bench-and-bar', 'an exact slug match is its own family');
+
+  // no match: undefined, NOT a wrong guess
+  r = gtg(repo, HANDOFF_ARGS('budget-planner', 'Budget Planner'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  e = active(repo).handoffs.find((x) => x.slug === 'budget-planner');
+  assert.equal(e.parent, undefined, 'an unmatched slug must be standalone, not mis-assigned');
+
+  // a partial word must not match: 'widgeteer' is not in the 'widget' family
+  r = gtg(repo, HANDOFF_ARGS('widgeteer-thing', 'Widgeteer Thing'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  e = active(repo).handoffs.find((x) => x.slug === 'widgeteer-thing');
+  assert.equal(e.parent, undefined, 'prefix match must respect the hyphen boundary');
+
+  // no INDEX.md at all must not throw
+  const bare = tempRepo();
+  r = gtg(bare, HANDOFF_ARGS('anything', 'Anything'), { input: BODY });
+  assert.equal(r.status, 0, `missing INDEX.md must not fail the handoff: ${r.stderr}`);
+
+  console.log('ok 12 - parent inferred from flag then INDEX.md, never guessed wrong');
+}
+
+// --- 13. duration_min computed from _session.json, absent when unavailable ---
+{
+  const repo = tempRepo();
+  mkdirSync(join(repo, 'docs/handoffs'), { recursive: true });
+
+  // a session that started 90 minutes ago, keyed by THIS session's cwd (the repo,
+  // which is where gtg() spawns the CLI). The stamp is a per-cwd map so concurrent
+  // worktree sessions don't clobber each other's clock.
+  const started = new Date(Date.now() - 90 * 60000).toISOString();
+  writeFileSync(join(repo, 'docs/handoffs/_session.json'),
+    JSON.stringify({ sessions: { [repo]: started } }, null, 2));
+
+  let r = gtg(repo, HANDOFF_ARGS('proj-d', 'Project D'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  let e = active(repo).handoffs[0];
+  assert.ok(e.duration_min >= 89 && e.duration_min <= 92,
+    `expected ~90 minutes, got: ${e.duration_min}`);
+
+  // concurrency isolation: a stamp keyed to a DIFFERENT cwd must be ignored —
+  // this session's clock is absent, not another session's.
+  const other = tempRepo();
+  mkdirSync(join(other, 'docs/handoffs'), { recursive: true });
+  writeFileSync(join(other, 'docs/handoffs/_session.json'),
+    JSON.stringify({ sessions: { 'C:/some/other/session': started } }, null, 2));
+  r = gtg(other, HANDOFF_ARGS('proj-o', 'Project O'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(active(other).handoffs[0].duration_min, undefined,
+    "another session's stamp must not be borrowed");
+
+  // no _session.json: the field is absent, NOT zero and NOT guessed
+  const bare = tempRepo();
+  r = gtg(bare, HANDOFF_ARGS('proj-e', 'Project E'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  e = active(bare).handoffs[0];
+  assert.equal(e.duration_min, undefined, 'no stamp must mean no figure, not zero');
+
+  // a stale stamp (>24h) is ignored rather than reported as a 3-day session
+  const stale = tempRepo();
+  mkdirSync(join(stale, 'docs/handoffs'), { recursive: true });
+  writeFileSync(join(stale, 'docs/handoffs/_session.json'),
+    JSON.stringify({ sessions: { [stale]: new Date(Date.now() - 72 * 3600000).toISOString() } }));
+  r = gtg(stale, HANDOFF_ARGS('proj-f', 'Project F'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  e = active(stale).handoffs[0];
+  assert.equal(e.duration_min, undefined, 'a stale stamp must be discarded');
+
+  // a malformed stamp must not throw
+  const bad = tempRepo();
+  mkdirSync(join(bad, 'docs/handoffs'), { recursive: true });
+  writeFileSync(join(bad, 'docs/handoffs/_session.json'), 'not json at all');
+  r = gtg(bad, HANDOFF_ARGS('proj-g', 'Project G'), { input: BODY });
+  assert.equal(r.status, 0, `malformed _session.json must not fail: ${r.stderr}`);
+
+  console.log('ok 13 - duration_min from the session stamp, absent when unknown');
+}
+
+// --- 14. grouped list: families, location, dirty flag, collision warning ---
+{
+  const repo = tempRepo();
+  const wt = tempRepo();
+  execSync('git commit -q --allow-empty -m init', { cwd: wt });
+
+  // two projects in the SAME family
+  let r = gtg(repo, [...HANDOFF_ARGS('fam-one', 'Fam One'), '--parent', 'fam'], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  r = gtg(repo, [...HANDOFF_ARGS('fam-two', 'Fam Two'), '--parent', 'fam'], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  // two standalone projects sharing one worktree AND branch — a collision
+  r = gtg(repo, [...HANDOFF_ARGS('solo-a', 'Solo A'), '--worktree', wt], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  r = gtg(repo, [...HANDOFF_ARGS('solo-b', 'Solo B'), '--worktree', wt], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  // a standalone project sorting BEFORE the family alphabetically, so the
+  // fully-sorted numbering order (AAA First, Fam One, Fam Two, Solo A, Solo B)
+  // diverges from the grouped DISPLAY order (family group first, then
+  // standalone group: AAA First, Solo A, Solo B). A display-sequential bug
+  // would number Fam One "1"; the correct sorted-position number is "2".
+  r = gtg(repo, HANDOFF_ARGS('aaa-first', 'AAA First'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+
+  r = gtg(repo, ['list']);
+  assert.equal(r.status, 0, r.stderr);
+  const out = r.stdout;
+
+  assert.match(out, /▸ fam/, 'family header missing');
+  assert.match(out, /▸ standalone/, 'standalone group missing');
+  // assert on the warning LINE, not just the project name — the name also
+  // appears in the listing above, which would pass a weaker match vacuously.
+  const warnLine = out.split('\n').find((l) => /projects share/.test(l) && /Solo A/.test(l));
+  assert.ok(warnLine, `no collision warning naming Solo A; got:\n${out}`);
+  assert.match(warnLine, /Solo B/, 'collision warning must name both colliding projects');
+
+  // numbering contract: the number shown must still resolve via resolveEntry
+  const famOneLine = out.split('\n').find((l) => l.includes('Fam One'));
+  const num = famOneLine.match(/(\d+)\./)[1];
+  // full-sorted position (AAA First, Fam One, Fam Two, Solo A, Solo B) puts
+  // Fam One at 2 — a display-sequential bug (family group prints first) would
+  // show 1 instead. This is what makes the round-trip check below meaningful.
+  assert.equal(num, '2', `expected Fam One numbered 2 (sorted position), got ${num}`);
+  r = gtg(repo, ['back', num]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Parked: Fam One/,
+    `number ${num} shown next to Fam One resolved to a different project`);
+
+  // dirty worktree is flagged
+  writeFileSync(join(wt, 'scratch.txt'), 'uncommitted');
+  r = gtg(repo, ['list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /uncommitted/, 'dirty worktree not flagged');
+
+  console.log('ok 14 - grouped list with location, dirty flag, collision warning');
+}
+
+// --- 15. Finding C1: undo anchors on whichever store the last commit touched,
+// not _active.json alone — a backlog-only mutation (park a new idea) undoes
+// itself, not an unrelated older active-list commit ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
+  gtg(repo, HANDOFF_ARGS('proj-b', 'Project B'), { input: BODY });
+  const rp = gtg(repo, ['backlog', '--project', 'Idea X', '--slug', 'idea-x', '--next', 'TBD'], { input: BODY });
+  assert.equal(rp.status, 0, rp.stderr);
+
+  const ru = gtg(repo, ['undo']);
+  assert.equal(ru.status, 0, ru.stderr);
+  // Match on WHICH commit got undone (Idea X's park, not Project B's unrelated
+  // handoff) rather than the exact subject wording — that wording is Finding I4's
+  // concern, this test's concern is purely the anchor-commit selection (C1).
+  assert.match(ru.stdout, /Undone:.*Idea X/,
+    `undo must target the backlog-only park commit, not an unrelated active-list commit, got: ${ru.stdout}`);
+  assert.doesNotMatch(ru.stdout, /Undone:.*Project B/,
+    'undo must not revert the unrelated Project B handoff commit');
+
+  const names = active(repo).handoffs.map((e) => e.project).sort();
+  assert.deepEqual(names, ['Project A', 'Project B'],
+    'undo of a backlog-only park must leave the active list untouched');
+  const blPath = join(repo, 'docs/handoffs/_backlog.json');
+  const backlogEmpty = !existsSync(blPath) || JSON.parse(readFileSync(blPath, 'utf8')).backlog.length === 0;
+  assert.ok(backlogEmpty, 'undo must remove the parked idea, not leave the backlog wiped-but-stale or untouched');
+  console.log('ok 15 - Finding C1: undo targets a backlog-only mutation correctly');
+}
+
+// --- 15b. Finding C1: same bug via the OTHER backlog-only mutation, `gtg resume
+// <backlog-slug>` (consumes a backlog entry, writes _backlog.json alone) ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
+  gtg(repo, ['backlog', '--project', 'Idea Y', '--slug', 'idea-y', '--next', 'TBD'], { input: BODY });
+  const rr = gtg(repo, ['resume', 'idea-y']);
+  assert.equal(rr.status, 0, rr.stderr);
+
+  const ru = gtg(repo, ['undo']);
+  assert.equal(ru.status, 0, ru.stderr);
+  assert.match(ru.stdout, /Undone: gtg resume: Idea Y/,
+    `undo must target the backlog-consume commit, got: ${ru.stdout}`);
+  assert.equal(active(repo).handoffs.length, 1, 'undo of a backlog-only resume must not touch the active list');
+  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  assert.equal(bl.length, 1, 'undo must restore the consumed backlog entry');
+  assert.equal(bl[0].slug, 'idea-y');
+  console.log('ok 15b - Finding C1: undo restores a consumed backlog-only entry');
+}
+
+// --- 16. Finding C1: undoing the very first-ever handoff removes _active.json
+// entirely (no last^ to restore) rather than exiting 2 — the intended behaviour
+// change called out in the finding ---
+{
+  const repo = tempRepo();
+  const r = gtg(repo, HANDOFF_ARGS('only-one', 'Only One'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(existsSync(join(repo, 'docs/handoffs/_active.json')));
+
+  const ru = gtg(repo, ['undo']);
+  assert.equal(ru.status, 0, `undoing the first-ever handoff must succeed, not exit 2: ${ru.stderr}`);
+  assert.match(ru.stdout, /Active entries now \(0\)/);
+  assert.ok(!existsSync(join(repo, 'docs/handoffs/_active.json')),
+    '_active.json must be removed entirely, since it never existed before this commit');
+  console.log('ok 16 - Finding C1: undo of the first-ever handoff removes _active.json, not exit 2');
+}
+
+// --- 17. Finding I1: parent and eta carry forward from the prior entry when
+// --parent / --eta are omitted on a later handoff for the same slug ---
+{
+  const repo = tempRepo();
+  let r = gtg(repo, [...HANDOFF_ARGS('sub-proj', 'Sub Proj'), '--parent', 'atlas', '--eta', '~3h'], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  let e = active(repo).handoffs[0];
+  assert.equal(e.parent, 'atlas');
+  assert.equal(e.eta, '~3h');
+
+  // second handoff, same slug, NEITHER flag passed
+  r = gtg(repo, ['handoff', '--project', 'Sub Proj', '--slug', 'sub-proj', '--next', 'more work'], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  e = active(repo).handoffs[0];
+  assert.equal(e.parent, 'atlas', 'parent must carry forward from the prior entry when --parent is omitted');
+  assert.equal(e.eta, '~3h', 'eta must carry forward from the prior entry when --eta is omitted');
+
+  // explicit --parent/--eta on a later handoff still overrides the carried value
+  r = gtg(repo, ['handoff', '--project', 'Sub Proj', '--slug', 'sub-proj', '--next', 'x',
+    '--parent', 'other-fam', '--eta', '~10m'], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  e = active(repo).handoffs[0];
+  assert.equal(e.parent, 'other-fam', 'an explicit --parent must still override the carried-forward value');
+  assert.equal(e.eta, '~10m', 'an explicit --eta must still override the carried-forward value');
+  console.log('ok 17 - Finding I1: parent and eta carry forward when the flags are omitted');
+}
+
+// --- 18. Finding I2: `list()` falls back to the TRUE handoff-file count for a
+// legacy entry (no `sessions` field), not a hardcoded 1 ---
+{
+  const repo = tempRepo();
+  const dir = join(repo, 'docs/handoffs');
+  mkdirSync(dir, { recursive: true });
+  for (let i = 1; i <= 9; i++) writeFileSync(join(dir, `2026-01-0${i}-0900-legacy-proj.md`), '# old\n');
+  writeFileSync(join(dir, '_active.json'), JSON.stringify({
+    handoffs: [{ project: 'Legacy Proj', slug: 'legacy-proj', next: 'x', file: 'f', updated: new Date().toISOString() }],
+  }, null, 2));
+
+  const r = gtg(repo, ['list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Legacy Proj s9/,
+    `legacy entry with 9 handoff files on disk must render s9, not a hardcoded s1, got:\n${r.stdout}`);
+  console.log('ok 18 - Finding I2: list() computes true session count for legacy entries');
+}
+
+// --- 19. Finding I3: sessions is monotonic — Math.max(disk count, prior + 1)
+// so deleted handoff files (or a same-minute filename collision) never make the
+// next handoff report a LOWER session number than one already recorded ---
+{
+  const repo = tempRepo();
+  let r = gtg(repo, HANDOFF_ARGS('proj-mono', 'Project Mono'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(active(repo).handoffs[0].sessions, 1);
+
+  // Simulate the regression: bump the stored `sessions` far ahead (as a real
+  // history of handoffs would have done), then delete the handoff .md files
+  // (plain docs, the README explicitly says fine to prune) so the on-disk
+  // count no longer agrees with what was already recorded.
+  const ap = join(repo, 'docs/handoffs/_active.json');
+  const data = JSON.parse(readFileSync(ap, 'utf8'));
+  data.handoffs[0].sessions = 5;
+  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+  const handoffDoc = data.handoffs[0].file;
+  execSync(`git rm -q ${handoffDoc}`, { cwd: repo });
+  execSync('git commit -q -m "prune old handoff docs"', { cwd: repo });
+
+  r = gtg(repo, HANDOFF_ARGS('proj-mono', 'Project Mono'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  const sessions = active(repo).handoffs[0].sessions;
+  assert.equal(sessions, 6, `sessions must never go backwards from a prior high-water mark, got: ${sessions}`);
+  console.log('ok 19 - Finding I3: sessions counter never regresses');
+}
+
+// --- 20. Finding I4 (part 1): parking a NEW idea gets an unambiguous commit
+// subject ('gtg backlog: new ...'), distinct from `back` shelving an active
+// entry ('gtg backlog: park ...', unchanged — historical commits use it) ---
+{
+  const repo = tempRepo();
+  const rp = gtg(repo, ['backlog', '--project', 'Fresh Idea', '--slug', 'fresh-idea', '--next', 'TBD'], { input: BODY });
+  assert.equal(rp.status, 0, rp.stderr);
+  let subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
+  assert.match(subject, /^gtg backlog: new Fresh Idea — session 1$/, `got: ${subject}`);
+
+  gtg(repo, HANDOFF_ARGS('proj-shelve', 'Project Shelve'), { input: BODY });
+  const rb = gtg(repo, ['back', 'proj-shelve']);
+  assert.equal(rb.status, 0, rb.stderr);
+  subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
+  assert.match(subject, /^gtg backlog: park Project Shelve$/,
+    'shelving an active entry must keep its historical subject unchanged');
+  console.log('ok 20 - Finding I4a: new-idea park has its own unambiguous commit subject');
+}
+
+// --- 21. Finding I4 (part 2): autoShelf's commit subject names the projects it
+// swept, not just a bare count ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('s-one', 'S One'), { input: BODY });
+  gtg(repo, HANDOFF_ARGS('s-two', 'S Two'), { input: BODY });
+  const ap = join(repo, 'docs/handoffs/_active.json');
+  const data = JSON.parse(readFileSync(ap, 'utf8'));
+  for (const e of data.handoffs) e.updated = new Date(Date.now() - 8 * 86400000).toISOString();
+  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+
+  const r = gtg(repo, ['list']);
+  assert.equal(r.status, 0, r.stderr);
+  const subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
+  assert.match(subject, /^gtg backlog: auto-park 2 stale \(>7d\): S One, S Two$/, `got: ${subject}`);
+  console.log('ok 21 - Finding I4b: autoShelf commit subject names the swept projects');
+}
+
+// --- 22. minor: firstHandoffDate() emits the same local-offset suffix nowIso()
+// does (both aware, not one bare/one aware) ---
+{
+  const repo = tempRepo();
+  const dir = join(repo, 'docs/handoffs');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, '2026-03-10-0900-off-proj.md'), '# old\n');
+
+  const r = gtg(repo, HANDOFF_ARGS('off-proj', 'Off Proj'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  const e = active(repo).handoffs[0];
+  const createdOffset = e.created.match(/([+-]\d{2}:\d{2})$/);
+  const updatedOffset = e.updated.match(/([+-]\d{2}:\d{2})$/);
+  assert.ok(createdOffset, `created must carry a local-offset suffix like nowIso(), got: ${e.created}`);
+  assert.ok(updatedOffset, `updated (nowIso) must carry a local-offset suffix, got: ${e.updated}`);
+  assert.equal(createdOffset[1], updatedOffset[1], 'firstHandoffDate() and nowIso() must agree on the offset format');
+  console.log('ok 22 - minor: created/updated offset format matches between firstHandoffDate and nowIso');
+}
+
+// --- 23. minor: dirtyCount() failure renders '?', distinct from a clean (0)
+// worktree which renders nothing ---
+{
+  const repo = tempRepo();
+  const r = gtg(repo, [...HANDOFF_ARGS('unreachable-wt', 'Unreachable Wt'),
+    '--worktree', join(repo, 'no-such-worktree-dir')], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  const rl = gtg(repo, ['list']);
+  assert.equal(rl.status, 0, rl.stderr);
+  assert.match(rl.stdout, /●\s*\?\s*uncommitted/,
+    `an unreachable explicit worktree must render '?', not silently show nothing, got:\n${rl.stdout}`);
+  console.log('ok 23 - minor: unreachable worktree renders ? instead of silence');
+}
+
+// --- 23b. minor: entries with worktree 'repo root' (or legacy-undefined) must
+// NEVER show a dirty flag, even when the hub itself is dirty — that count
+// belongs to the hub, not to any one project (misattribution fix) ---
+{
+  const repo = tempRepo();
+  const r = gtg(repo, HANDOFF_ARGS('hub-entry', 'Hub Entry'), { input: BODY }); // worktree: 'repo root'
+  assert.equal(r.status, 0, r.stderr);
+  writeFileSync(join(repo, 'unrelated-hub-churn.txt'), 'noise'); // dirty the HUB, not any project's worktree
+  const rl = gtg(repo, ['list']);
+  assert.equal(rl.status, 0, rl.stderr);
+  assert.doesNotMatch(rl.stdout, /uncommitted/,
+    `a 'repo root' entry must not be flagged dirty from hub churn, got:\n${rl.stdout}`);
+  console.log('ok 23b - minor: repo-root entries never misattributed with hub dirty count');
+}
+
+// --- 24. minor: `list()`'s resolveDir duplication is gone — both the dirty-map
+// build and per-entry render agree on where a project's worktree resolves,
+// proven end-to-end via the SAME dirty flag appearing for the entry that owns it ---
+{
+  const repo = tempRepo();
+  const wt = tempRepo();
+  execSync('git commit -q --allow-empty -m init', { cwd: wt });
+  writeFileSync(join(wt, 'dirty.txt'), 'x');
+  const r = gtg(repo, [...HANDOFF_ARGS('own-wt-proj', 'Own Wt Proj'), '--worktree', wt], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  const rl = gtg(repo, ['list']);
+  assert.equal(rl.status, 0, rl.stderr);
+  assert.match(rl.stdout, /Own Wt Proj[\s\S]*?● 1 uncommitted/, 'dirty count for the entry\'s own worktree must resolve consistently');
+  console.log('ok 24 - minor: resolveDir consistent between dirty-map build and render');
+}
+
+// --- 25. I2's ctx extension surface: `stats` (a bundled extension, receiving
+// ONLY the documented ctx) also gets `countHandoffFiles` and uses it for the
+// same legacy-entry fallback, instead of a hardcoded 1 ---
+{
+  const repo = tempRepo();
+  const dir = join(repo, 'docs/handoffs');
+  mkdirSync(dir, { recursive: true });
+  for (let i = 1; i <= 4; i++) writeFileSync(join(dir, `2026-02-0${i}-0900-legacy-stats.md`), '# old\n');
+  writeFileSync(join(dir, '_active.json'), JSON.stringify({
+    handoffs: [{ project: 'Legacy Stats', slug: 'legacy-stats', next: 'x', file: 'f', updated: new Date().toISOString() }],
+  }, null, 2));
+
+  const r = gtg(repo, ['stats']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /deepest: Legacy Stats \(4\)/,
+    `stats extension must use ctx.countHandoffFiles for a legacy entry's true count, got:\n${r.stdout}`);
+  console.log('ok 25 - ctx contract: countHandoffFiles reaches the stats extension');
+}
+
+// --- 26. history: classify handoff (both formats), prune backfill, noise ---
+{
+  const H = await import('../skills/gtg/extensions/lib/history.mjs');
+
+  // both handoff formats
+  assert.deepEqual(H.classify('handoff: Project A — session 3'),
+    { type: 'handoff', project: 'Project A', sessions: 3 });
+  assert.deepEqual(H.classify('handoff: Legacy Proj — executing'),
+    { type: 'handoff', project: 'Legacy Proj', sessions: undefined });
+
+  // project name containing an em-dash must not be split by it
+  assert.deepEqual(H.classify('handoff: Widget — parts catalog — session 2'),
+    { type: 'handoff', project: 'Widget — parts catalog', sessions: 2 });
+
+  // the other verbs
+  assert.equal(H.classify('gtg backlog: new Idea Z — session 1').type, 'park');
+  assert.equal(H.classify('gtg backlog: park Shelf Me').type, 'shelve');
+  assert.equal(H.classify('gtg backlog: auto-park 2 stale (>7d): A, B').type, 'autoshelf');
+  assert.equal(H.classify('gtg activate: Bring Back').type, 'activate');
+  assert.equal(H.classify('gtg prune: remove Done Thing - confirmed done').type, 'prune');
+  assert.equal(H.classify('gtg resume: Picked Up — handoff consumed').type, 'resume');
+  assert.equal(H.classify("gtg undo: revert 'handoff: X — session 1'").type, 'undo');
+  assert.equal(H.classify('Merge branch main into feature').type, 'noise');
+
+  // slugify matches CLI conventions
+  assert.equal(H.slugify('Widget — parts catalog'), 'widget-parts-catalog');
+  assert.equal(H.slugify('Bench & Bar'), 'bench-bar');
+
+  // backfill: a prune that recurs later is a resume; one that never returns shipped.
+  // rawLog is newest-first, like `git log`.
+  const raw = [
+    { date: '2026-07-10T00:00:00+08:00', subject: 'handoff: Recurring — session 2' }, // later
+    { date: '2026-07-08T00:00:00+08:00', subject: 'gtg prune: remove Recurring - confirmed done' },
+    { date: '2026-07-05T00:00:00+08:00', subject: 'handoff: Recurring — session 1' },
+    { date: '2026-07-04T00:00:00+08:00', subject: 'gtg prune: remove Gone Forever - confirmed done' },
+    { date: '2026-07-03T00:00:00+08:00', subject: 'handoff: Gone Forever — session 1' },
+  ];
+  const ev = H.classifyEvents(raw);
+  const recurringPrune = ev.find((e) => e.type === 'prune' && e.project === 'Recurring');
+  const goneForeverPrune = ev.find((e) => e.type === 'prune' && e.project === 'Gone Forever');
+  assert.equal(recurringPrune.resumed, true, 'a prune with a later handoff is a resume');
+  assert.equal(recurringPrune.shipped, undefined);
+  assert.equal(goneForeverPrune.shipped, true, 'a prune that never recurs is a ship');
+  assert.equal(goneForeverPrune.resumed, undefined);
+
+  console.log('ok 26 - history classifier + backfill');
+}
+
+// --- 27. history readers against a throwaway repo ---
+{
+  const H = await import('../skills/gtg/extensions/lib/history.mjs');
+  const repo = tempRepo();
+  mkdirSync(join(repo, 'docs/handoffs'), { recursive: true });
+
+  // two handoff docs (readSessions reads filenames) + commits (readEvents reads subjects)
+  writeFileSync(join(repo, 'docs/handoffs/2026-07-05-0900-alpha.md'), '# h');
+  writeFileSync(join(repo, 'docs/handoffs/2026-07-06-1830-alpha.md'), '# h');
+  execSync('git add -A', { cwd: repo });
+  execSync('git commit -q -m "handoff: Alpha — session 2"', { cwd: repo });
+  // a real prune touches _active.json under docs/handoffs/ (unlike --allow-empty,
+  // which the readEvents pathspec would filter out — pathspec follows real usage).
+  writeFileSync(join(repo, 'docs/handoffs/_active.json'), '{"handoffs":[]}');
+  execSync('git add -A', { cwd: repo });
+  execSync('git commit -q -m "gtg prune: remove Alpha - confirmed done"', { cwd: repo });
+
+  const { events, available } = H.readEvents(repo);
+  assert.equal(available, true, 'a real repo must report available');
+  assert.ok(events.some((e) => e.type === 'handoff' && e.project === 'Alpha'), 'handoff event missing');
+  assert.ok(events.some((e) => e.type === 'prune'), 'prune event missing');
+
+  const sessions = H.readSessions(repo);
+  assert.equal(sessions.length, 2, 'two handoff files → two sessions');
+  assert.deepEqual(sessions.map((s) => s.hour).sort((a, b) => a - b), [9, 18]);
+  assert.ok(sessions.every((s) => s.slug === 'alpha'));
+
+  // a non-git dir degrades, never throws. GIT_CEILING_DIRECTORIES pins git's
+  // upward search at tmpdir — readEvents() is called in-process here (unlike the
+  // gtg() CLI helper above), so it inherits process.env directly; without the
+  // ceiling, git would walk up and resolve the enclosing dev-machine repo.
+  const bare = mkdtempSync(join(tmpdir(), 'gtg-nogit-'));
+  const prevCeiling = process.env.GIT_CEILING_DIRECTORIES;
+  process.env.GIT_CEILING_DIRECTORIES = tmpdir();
+  let r;
+  try { r = H.readEvents(bare); } finally {
+    if (prevCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
+    else process.env.GIT_CEILING_DIRECTORIES = prevCeiling;
+  }
+  assert.equal(r.available, false, 'non-git dir → available:false');
+  assert.deepEqual(r.events, []);
+
+  console.log('ok 27 - history readers');
+}
+
+// --- 28. readEvents walk-up guard: a subdir of a real repo that is NOT itself
+// a repo must NOT inherit the enclosing repo's history as its own. Without the
+// guard, `git -C <subdir> log` walks up and returns the OUTER repo's commits
+// with available:true — a wrong answer presented as good data.
+{
+  const H = await import('../skills/gtg/extensions/lib/history.mjs');
+  const outer = tempRepo();
+  mkdirSync(join(outer, 'docs/handoffs'), { recursive: true });
+  writeFileSync(join(outer, 'docs/handoffs/2026-07-05-0900-alpha.md'), '# h');
+  execSync('git add -A', { cwd: outer });
+  execSync('git commit -q -m "handoff: Alpha — session 1"', { cwd: outer });
+
+  // subdir inside outer's worktree, deliberately NOT its own repo (no git init)
+  const sub = join(outer, 'scratch-hub');
+  mkdirSync(sub, { recursive: true });
+
+  const prevCeiling = process.env.GIT_CEILING_DIRECTORIES;
+  delete process.env.GIT_CEILING_DIRECTORIES; // must NOT block the walk-up; the guard must
+  let r, rOuter;
+  try {
+    r = H.readEvents(sub);
+    rOuter = H.readEvents(outer);
+  } finally {
+    if (prevCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
+    else process.env.GIT_CEILING_DIRECTORIES = prevCeiling;
+  }
+  assert.equal(r.available, false, 'non-repo subdir of a real repo must degrade, not inherit outer history');
+  assert.deepEqual(r.events, []);
+  assert.equal(rOuter.available, true, 'the real repo top-level itself must still report available');
+
+  console.log('ok 28 - readEvents walk-up guard');
+}
+
+// --- 29. habit + throughput derivations (pure, injected data) ---
+{
+  const H = await import('../skills/gtg/extensions/lib/history.mjs');
+
+  const ev = [ // newest-first
+    { date: '2026-07-10T18:00:00+08:00', type: 'prune', project: 'P', slug: 'p', shipped: true },
+    { date: '2026-07-09T09:00:00+08:00', type: 'handoff', project: 'P', slug: 'p', sessions: 2 },
+    { date: '2026-07-08T11:00:00+08:00', type: 'handoff', project: 'P', slug: 'p', sessions: 1 },
+    { date: '2026-07-05T14:00:00+08:00', type: 'park', project: 'Q', slug: 'q' },
+  ];
+  const sessions = [
+    { date: '2026-07-08', hour: 11, slug: 'p' },
+    { date: '2026-07-09', hour: 9, slug: 'p' },
+  ];
+
+  const h = H.habit(ev, sessions);
+  assert.equal(h.activeDays, 4, 'four distinct active days');
+  // 07-08, 07-09 (handoffs) and 07-10 (the ship/prune day, also an active
+  // type per spec) are three calendar-consecutive days -> streak of 3.
+  assert.equal(h.longestStreak, 3, '07-08, 07-09 & 07-10 (ship day) are consecutive');
+  assert.equal(h.byHour[11], 1);
+  assert.equal(h.byHour[9], 1);
+  assert.equal(h.grid[0].date, '2026-07-05', 'grid starts at the earliest active day');
+  assert.equal(h.grid[h.grid.length - 1].date, '2026-07-10', 'grid ends at the latest');
+
+  const t = H.throughput(ev);
+  assert.equal(t.shipped, 1);
+  assert.equal(t.parked, 1);
+  assert.equal(t.lastShip.project, 'P');
+  // P shipped 07-10, first handoff 07-08 → 2 days to ship
+  assert.equal(t.medianDaysToShip, 2);
+  assert.equal(t.shipRate, null, 'shipRate is filled by the assembler, not here');
+
+  console.log('ok 29 - habit + throughput');
+}
+
+// --- 30. family / per-project / health / fun derivations ---
+{
+  const H = await import('../skills/gtg/extensions/lib/history.mjs');
+  const ev = [
+    { date: '2026-07-12T10:00:00+08:00', type: 'prune', project: 'Widget Stats', slug: 'widget-stats', shipped: true },
+    { date: '2026-07-11T10:00:00+08:00', type: 'handoff', project: 'Widget Stats', slug: 'widget-stats', sessions: 1 },
+    { date: '2026-07-06T10:00:00+08:00', type: 'activate', project: 'Old Idea', slug: 'old-idea' },
+    { date: '2026-07-05T10:00:00+08:00', type: 'park', project: 'Old Idea', slug: 'old-idea' },
+    { date: '2026-07-04T10:00:00+08:00', type: 'resume', project: 'Widget Data', slug: 'widget-data' },
+    { date: '2026-07-02T10:00:00+08:00', type: 'handoff', project: 'Widget Data', slug: 'widget-data', sessions: 1 },
+  ];
+  const sessions = [
+    { date: '2026-07-11', hour: 10, slug: 'widget-stats' },
+    { date: '2026-07-02', hour: 10, slug: 'widget-data' },
+  ];
+  const active = [{ slug: 'old-idea', project: 'Old Idea', parent: undefined, updated: '2026-07-06T10:00:00+08:00' }];
+  const backlog = [];
+
+  const rows = H.perProject(ev, sessions, active, backlog);
+  const stats = rows.find((r) => r.slug === 'widget-stats');
+  assert.equal(stats.status, 'shipped');
+  assert.equal(stats.daysToShip, 1, 'handoff 07-11 → ship 07-12');
+  const idea = rows.find((r) => r.slug === 'old-idea');
+  assert.equal(idea.status, 'active', 'in the active store → active');
+
+  // family grouping needs parent on the rows; assign via a fake INDEX join
+  rows.forEach((r) => { if (r.slug.startsWith('widget')) r.parent = 'widget'; });
+  const fams = H.families(rows);
+  const widget = fams.find((f) => f.parent === 'widget');
+  assert.equal(widget.subProjects, 2, 'widget-stats + widget-data');
+  assert.equal(widget.shipped, 1);
+
+  const hl = H.health(ev, rows);
+  assert.equal(hl.resurrectionRate, 1, 'one activate, one park → 1.0');
+
+  const fn = H.fun(ev, rows);
+  assert.equal(fn.mostResumed.slug, 'widget-data', 'widget-data has the resume');
+
+  console.log('ok 30 - family / per-project / health / fun');
+}
+
+// --- 31. health(): wipByDay must not invert spans (Finding 1), abandonmentRate
+// must be computed over distinct parked slugs, not raw park/shelve events (Finding 2) ---
+{
+  const H = await import('../skills/gtg/extensions/lib/history.mjs');
+
+  // Finding 1: resume-before-handoff must not produce an inverted (empty) span.
+  const wipEvents = [
+    { date: '2026-07-01T09:00:00+08:00', type: 'resume', project: 'Resumed No Ship', slug: 'resumed-no-ship' },
+    { date: '2026-07-05T09:00:00+08:00', type: 'handoff', project: 'Resumed No Ship', slug: 'resumed-no-ship' },
+    { date: '2026-07-10T09:00:00+08:00', type: 'handoff', project: 'Shipped After', slug: 'shipped-after' },
+    { date: '2026-07-12T09:00:00+08:00', type: 'prune', project: 'Shipped After', slug: 'shipped-after', shipped: true },
+  ];
+  const wipHealth = H.health(wipEvents, []);
+  assert.ok(wipHealth.wipByDay.length > 0,
+    'wipByDay must not come back empty when a slug has resume-before-handoff (old code inverted the span)');
+  const handoffDay = wipHealth.wipByDay.find((d) => d.date === '2026-07-05');
+  assert.ok(handoffDay && handoffDay.count >= 1,
+    'the resumed-then-handed-off project must be counted as in-progress on its first handoff day');
+  const shipDay = wipHealth.wipByDay.find((d) => d.date === '2026-07-12');
+  assert.ok(shipDay, "the genuinely-shipped project's ship day must fall within the wipByDay range");
+  for (const d of wipHealth.wipByDay) assert.ok(d.count >= 0, `negative/garbage count at ${d.date}`);
+
+  // Finding 2: abandonmentRate/resurrectionRate must share a distinct-slug denominator.
+  const abEvents = [
+    { date: '2026-06-01T09:00:00+08:00', type: 'park', project: 'Parked Twice', slug: 'parked-twice' },
+    { date: '2026-06-10T09:00:00+08:00', type: 'park', project: 'Parked Twice', slug: 'parked-twice' },
+    { date: '2026-06-01T09:00:00+08:00', type: 'park', project: 'Parked Recovered', slug: 'parked-recovered' },
+    { date: '2026-06-05T09:00:00+08:00', type: 'activate', project: 'Parked Recovered', slug: 'parked-recovered' },
+  ];
+  const abRows = [
+    { slug: 'parked-twice', status: 'dormant' },
+    { slug: 'parked-recovered', status: 'active' },
+  ];
+  const abHealth = H.health(abEvents, abRows);
+  assert.equal(abHealth.abandonmentRate, 0.5,
+    'abandonmentRate must be 1 abandoned / 2 distinct parked slugs, not 1/3 raw park events');
+  assert.equal(abHealth.resurrectionRate, 0.5,
+    'resurrectionRate must share the same distinct-parked-slug denominator');
+
+  console.log('ok 31 - health(): wipByDay non-inversion + abandonment/resurrection distinct-slug units');
+}
+
+// --- 32. effort: recover committed durations from _active.json diffs ---
+{
+  const H = await import('../skills/gtg/extensions/lib/history.mjs');
+  const repo = tempRepo();
+  mkdirSync(join(repo, 'docs/handoffs'), { recursive: true });
+  const write = (obj) => writeFileSync(join(repo, 'docs/handoffs/_active.json'), JSON.stringify(obj, null, 2) + '\n');
+
+  write({ handoffs: [{ project: 'P', slug: 'p', duration_min: 45 }] });
+  execSync('git add -A && git commit -q -m "handoff: P — session 1"', { cwd: repo });
+  write({ handoffs: [{ project: 'P', slug: 'p', duration_min: 90 }] });
+  execSync('git add -A && git commit -q -m "handoff: P — session 2"', { cwd: repo });
+  write({ handoffs: [{ project: 'Q', slug: 'q', duration_min: 30 }] });
+  execSync('git add -A && git commit -q -m "handoff: Q — session 1"', { cwd: repo });
+
+  const d = H.readDurations(repo);
+  assert.equal(d.total, 45 + 90 + 30, 'sum of all committed durations');
+  assert.equal(d.sessionsTimed, 3);
+  assert.deepEqual(d.bySlug.p.sort((a, b) => a - b), [45, 90]);
+  assert.deepEqual(d.bySlug.q, [30]);
+
+  // no git → empty, no throw
+  const bare = mkdtempSync(join(tmpdir(), 'gtg-nod-'));
+  assert.deepEqual(H.readDurations(bare), { bySlug: {}, total: 0, sessionsTimed: 0 });
+
+  // walk-up guard: a non-repo subdir nested in an outer repo that HAS committed
+  // durations (tracked at a path that lines up with cwd-relative pathspec
+  // resolution — git's pathspec is relative to cwd, so the nested file's repo
+  // path must physically match "scratch-hub/docs/handoffs/_active.json" for the
+  // leak to be reachable at all) must yield the empty result, never that data.
+  const outer = tempRepo();
+  mkdirSync(join(outer, 'scratch-hub/docs/handoffs'), { recursive: true });
+  writeFileSync(join(outer, 'scratch-hub/docs/handoffs/_active.json'),
+    JSON.stringify({ handoffs: [{ project: 'Leak', slug: 'leak', duration_min: 999 }] }, null, 2) + '\n');
+  execSync('git add -A && git commit -q -m "handoff: Leak — session 1"', { cwd: outer });
+  const sub = join(outer, 'scratch-hub'); // deliberately NOT its own repo (no git init)
+
+  const prevCeiling = process.env.GIT_CEILING_DIRECTORIES;
+  delete process.env.GIT_CEILING_DIRECTORIES; // must NOT block the walk-up; the guard must
+  let subResult;
+  try { subResult = H.readDurations(sub); } finally {
+    if (prevCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
+    else process.env.GIT_CEILING_DIRECTORIES = prevCeiling;
+  }
+  assert.deepEqual(subResult, { bySlug: {}, total: 0, sessionsTimed: 0 },
+    'non-repo subdir of a real repo must degrade, not inherit outer durations');
+
+  console.log('ok 32 - effort durations');
+}
+
+// --- 33. buildReport assembler + report/stats commands ---
+{
+  const repo = tempRepo();
+  // one shipped project, one active
+  let r = gtg(repo, HANDOFF_ARGS('live-one', 'Live One'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  r = gtg(repo, HANDOFF_ARGS('shipme', 'Ship Me'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  r = gtg(repo, ['remove', 'shipme']); // ships it
+  assert.equal(r.status, 0, r.stderr);
+
+  // stats prints without crashing and reports the ship
+  r = gtg(repo, ['stats']);
+  assert.equal(r.status, 0, `stats failed: ${r.stderr}`);
+  assert.match(r.stdout, /1 active, 0 backlog/);
+  assert.match(r.stdout, /shipped/i);
+
+  // report writes JSON to the default path and prints it
+  r = gtg(repo, ['report']);
+  assert.equal(r.status, 0, `report failed: ${r.stderr}`);
+  const path = r.stdout.trim().split('\n').find((l) => l.includes('_report.json'));
+  assert.ok(path, 'report must print the json path');
+  const doc = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_report.json'), 'utf8'));
+  assert.equal(doc.historyAvailable, true);
+  assert.equal(doc.counts.active, 1);
+  assert.equal(doc.throughput.shipped, 1);
+  assert.ok(doc.habit && doc.perProject && doc.families && doc.health && doc.fun, 'all sections present');
+  assert.ok(doc.effort, 'effort section present');
+  assert.ok(typeof doc.throughput.shipRate === 'number', 'assembler fills shipRate');
+
+  // --json override
+  r = gtg(repo, ['report', '--json', join(repo, 'custom.json')]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(existsSync(join(repo, 'custom.json')));
+
+  console.log('ok 33 - buildReport + report/stats commands');
+}
+
+// --- 34. perProject: canonicalise the join key to slugify(project). An event's
+// slug comes from the commit subject (slugify(project)); a store entry's slug is
+// the hand-chosen --slug. When they diverge, the old code (keyed store maps by
+// entry.slug) produced a phantom event-row PLUS a separate store-row for one
+// project. Keying both sides by slugify(project) merges them into one row. ---
+{
+  const H = await import('../skills/gtg/extensions/lib/history.mjs');
+  const rawLog = [
+    { date: '2026-07-20T10:00:00+08:00', subject: 'handoff: GTG Stats History Upgrade — session 2' },
+    { date: '2026-07-18T10:00:00+08:00', subject: 'handoff: GTG Stats History Upgrade — session 1' },
+    { date: '2026-07-15T10:00:00+08:00', subject: 'handoff: Same Slug Project — session 1' },
+  ];
+  const events = H.classifyEvents(rawLog);
+  assert.ok(events.some((e) => e.slug === 'gtg-stats-history-upgrade'),
+    'sanity: event slug is slugify(project), not the store slug');
+
+  const active = [
+    { project: 'GTG Stats History Upgrade', slug: 'gtg-stats-history', parent: 'gtg', updated: '2026-07-20T10:00:00+08:00' },
+    { project: 'Same Slug Project', slug: 'same-slug-project', parent: undefined, updated: '2026-07-15T10:00:00+08:00' },
+  ];
+  const rows = H.perProject(events, [], active, []);
+
+  // divergent slug ("gtg-stats-history" vs slugify → "gtg-stats-history-upgrade")
+  const upgradeRows = rows.filter((r) => r.project === 'GTG Stats History Upgrade');
+  assert.equal(upgradeRows.length, 1,
+    'divergent slug must merge into ONE row, not a phantom dormant row + a separate active row');
+  assert.equal(upgradeRows[0].status, 'active');
+  assert.equal(upgradeRows[0].slug, 'gtg-stats-history', 'display slug is the store\'s REAL slug');
+  assert.equal(upgradeRows[0].parent, 'gtg');
+
+  // matching slug (slugify(project) already equals the store slug) — unaffected
+  const sameRows = rows.filter((r) => r.project === 'Same Slug Project');
+  assert.equal(sameRows.length, 1, 'matching-slug case must still yield exactly one row');
+  assert.equal(sameRows[0].status, 'active');
+  assert.equal(sameRows[0].slug, 'same-slug-project');
+
+  console.log('ok 34 - perProject canonicalises the join key to slugify(project)');
 }
 
 console.log('ALL PASS');

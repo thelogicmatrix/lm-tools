@@ -37,11 +37,16 @@ The CLI: `node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs"` — referred to as `g
 | "gtg list" / "what's active" | Run `gtg.mjs list` and relay its output. Stop. |
 | "gtg backlog" / "gtg back &lt;n\|slug&gt;" / "gtg active &lt;n\|slug&gt;" | Run `gtg.mjs backlog` / `back <n|slug>` / `active <n|slug>` verbatim (each commits itself). Relay output. Stop. |
 | "gtg backlog &lt;idea&gt;" (an idea named, not bare) | Park a long-horizon idea — see "Backlog Park" below. |
-| "gtg prune" / "gtg remove &lt;n\|slug&gt;" | Run `gtg.mjs remove <n\|slug>`. `gtg.mjs undo` reverts. Stop. |
+| "gtg prune" / "gtg remove &lt;n\|slug&gt;" | The project **shipped**. Run `gtg.mjs remove <n\|slug>`. `gtg.mjs undo` reverts. Stop. |
 | "gtg peek &lt;project&gt;" | Find the entry in `docs/handoffs/_active.json` (or `_backlog.json`), read its `file` verbatim, relay the content. **Do not consume** — no store mutation. |
-| "gtg resume &lt;project&gt;" / "let's continue &lt;project&gt;" | Read `references/resume.md`, follow it. |
+| "gtg resume &lt;project&gt;" / "let's continue &lt;project&gt;" | The project was **picked back up**, not shipped. Read `references/resume.md`, follow it. **Never** use `remove` for this: `remove` means shipped, `resume` means picked back up, and conflating them makes throughput history meaningless. |
+| "gtg report" | Run `gtg.mjs report` (writes `docs/handoffs/_report.json`, zero model tokens). Then invoke the **reporter** skill on that JSON to build a self-contained HTML report — a GitHub-style habit grid (from `habit.grid`), throughput and family rollups, per-project arcs, and the fun callouts. Playful tone. Write the HTML to the session scratchpad, not the repo. If `historyAvailable` is false or `effort.sessionsTimed` is 0, say so plainly rather than inventing figures. |
 | "gtg &lt;verb&gt;" not listed above (e.g. "gtg stats", "gtg issues") | Run `gtg.mjs <verb>` and relay its output. Bundled extras ship with the plugin (`stats` — a handoff-store snapshot); a `<storage-root>/.gtg/commands/<verb>.mjs` you've added resolves here too (yours overrides a bundled one of the same name). Unknown → the CLI errors. Stop. |
 | everything else (departure) | Follow the Exit Procedure below. |
+
+**On effort:** `duration_min` only accrues from sessions run after gtg 1.4.0 went
+live, so `effort` is near-empty at first and fills in over time. The report must
+label it "accruing", never present a near-zero total as if the work took no time.
 
 ## Exit Procedure (the default departure path)
 
@@ -68,8 +73,9 @@ The CLI owns all mechanics (timestamp, filename, header, store dedupe+append, gi
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs" handoff \
-  --project "<Name>" --slug <slug> --phase <brainstorming|writing-plans|executing|free-form> \
+  --project "<Name>" --slug <slug> \
   --eta "<duration remaining, e.g. ~2h>" --next "<one-line next action, <150 chars>" \
+  [--parent "<docs/projects page slug, if this is a sub-project>"] \
   [--worktree "<path or 'repo root'>"] <<'BODY'
 ## What Was Done This Session
 - <significant actions / decisions>
@@ -91,6 +97,15 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs" handoff \
 BODY
 ```
 
+**`--parent` — pass it whenever this is a sub-project.** Much of the work is one
+effort within a larger one (an Widget page, a atlas setting, a gtg command). The
+parent is the `docs/projects/` page slug the family shares — `widget`, `atlas`,
+`gtg`. You already know it from session context, so pass it; the CLI's fallback
+only catches the cases where the slug happens to start with the family name, and
+would miss e.g. `sub-project` belonging to `atlas`. **Never ask the user
+which family a project belongs to** — a wrong parent only mis-groups a list row,
+whereas a question breaks the one-shot wrap. Omit the flag if genuinely standalone.
+
 If the project has a plan/spec doc, copy the Next Action's scope **from that doc**, not from memory.
 
 ### 5. Final response, then stop
@@ -100,11 +115,11 @@ Relay the CLI's output as one line, then stop completely — no follow-up, no su
 
 ## Backlog Park (`gtg backlog <idea>`)
 
-Same mechanics as the Exit Procedure, three differences: no work-in-progress commit (it's an idea, not in-progress work), thin fields are fine (`--phase free-form`, omit `--eta`, `--next "TBD — <first step>"`), and the `backlog` subcommand routes it to the shelf:
+Same mechanics as the Exit Procedure, three differences: no work-in-progress commit (it's an idea, not in-progress work), thin fields are fine (omit `--eta`, `--next "TBD — <first step>"`), and the `backlog` subcommand routes it to the shelf:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs" backlog \
-  --project "<Name>" --slug <slug> --phase free-form \
+  --project "<Name>" --slug <slug> \
   --next "<first concrete step, or 'TBD — <thought>'>" <<'BODY'
 ## The Idea
 <a few sentences: what it is, why it's worth remembering, any seed thoughts>

@@ -41,6 +41,9 @@ Requires Node.js ≥ 18 and git on PATH.
 |---|---|
 | "gtg" (or any departure phrase) | Handoff written to `docs/handoffs/`, entry pinned, both committed |
 | "let's continue <project>" | Handoff found, read, resumed from its Next Action; entry consumed |
+| "gtg resume <n\|slug>" | Consume a handoff on pick-up — **not** a ship |
+| "gtg stats" | A terminal snapshot: streak, shipped count, deepest project, effort, velocity |
+| "gtg report" | Writes `docs/handoffs/_report.json`, then `/reporter` builds an HTML habit-grid report from it |
 | "gtg list" | Active handoffs (idle >7d auto-shelf to the backlog) |
 | "gtg backlog <idea>" | Park a long-horizon idea on the shelf |
 | "gtg back <n\|slug>" / "gtg active <n\|slug>" | Shelf / reactivate an entry |
@@ -71,13 +74,17 @@ Two extension points:
 
 ```js
 // .gtg/commands/hello.mjs
-export default async ({ root, args, readStore, writeStore, commit }) => {
+export default async ({ root, args, readStore, writeStore, commit, countHandoffFiles }) => {
   const data = readStore('docs/handoffs/_active.json'); // parsed JSON or null
   console.log(`hello from ${root}, ${data?.handoffs?.length ?? 0} active, args: ${args.join(' ')}`);
 };
 ```
 
-`ctx` = `{ root, args, readStore(path), writeStore(path, data), commit(paths, message) }`.
+`ctx` = `{ root, args, readStore(path), writeStore(path, data), commit(paths, message), countHandoffFiles(slug) }`.
+`countHandoffFiles(slug)` returns how many `docs/handoffs/*.md` files exist for that slug — the
+same true-count fallback the CLI itself uses when an entry's `sessions` field is absent (legacy
+entries), so an extension doesn't have to re-implement the file-count logic to avoid the same
+hardcoded-`1` bug.
 
 **2. Procedure hooks** — the exit and resume flows load markdown hooks if present, so you
 can add project-specific steps without forking the skill:
@@ -101,5 +108,54 @@ grows within a major version; a breaking change is a major version bump.
 
 ## Storage format
 
-`docs/handoffs/_active.json` — `{"handoffs":[{project, slug, phase, eta, next, file, updated}]}`;
-`_backlog.json` the same with key `backlog`. Handoff docs are plain markdown next to them.
+`docs/handoffs/_active.json` — `{"handoffs":[{...}]}`; `_backlog.json` the same
+with key `backlog`. Handoff docs are plain markdown next to them.
+
+## Report JSON (`gtg report`)
+
+`gtg report` writes `docs/handoffs/_report.json` (override with `--json <path>`) —
+a regenerable derivative, not tracked state (gitignore it). Every figure is
+computed by `extensions/lib/history.mjs` from the git log and the handoff files;
+nothing is inferred by a model. Top-level keys:
+
+| Key | What |
+|---|---|
+| `historyAvailable` | false when not in a git repo — sections degrade rather than lie |
+| `counts` | active / backlog |
+| `habit` | activity grid, current & longest streak, weekday & hour distribution |
+| `throughput` | shipped (total/7d/30d), parked, resumed, ship rate, days-to-ship |
+| `effort` | `total` minutes + `bySlug` from committed `duration_min` (`gtg stats` shows hours); accrues over time, empty at first |
+| `families` | per-parent rollup: sub-projects, shipped, active, sessions |
+| `perProject` | one row per project: born, sessions, days alive, days-to-ship, status |
+| `health` | resurrection & abandonment rate, WIP-over-time, aging |
+| `fun` | best week, longest-lived shipped project, most-resumed, velocity label |
+
+`gtg stats` prints a few of these as terminal lines. Both are read-only — unlike
+`gtg list`, they never touch the store.
+
+### Entry fields
+
+Each entry in `docs/handoffs/_active.json` / `_backlog.json`:
+
+| Field | Set by | Meaning |
+|---|---|---|
+| `project` | `--project` | display name |
+| `slug` | `--slug` | stable id; also the handoff filename suffix |
+| `sessions` | auto | how many handoffs this slug has, counted from files on disk |
+| `created` | auto | first handoff's date, carried forward across parks and reactivations |
+| `worktree` | `--worktree` | where the work lives; the literal `repo root` if in the storage repo |
+| `branch` | `--branch`, else detected **in the worktree** | the project's branch, not the hub's |
+| `parent` | `--parent`, else inferred from `docs/projects/INDEX.md` | family page slug; absent means standalone |
+| `duration_min` | auto | session length from `_session.json`; absent when unknown or stale |
+| `eta` | `--eta` | rough time remaining on the next action |
+| `next` | `--next` | the one concrete next action |
+| `file` | auto | path to the handoff document |
+| `updated` | auto | last touch; drives the 7-day auto-shelf |
+
+**`phase` was removed in 1.3.0.** Entries written by older versions keep the key;
+it is ignored on read and never rewritten. `sessions` and `created` backfill from
+the handoff files already on disk, so no migration is needed.
+
+**`gtg resume <n|slug>` vs `gtg remove <n|slug>`** — `resume` consumes a handoff
+when you pick a project back up; `remove` (alias `prune`) means it shipped. They
+commit different subjects, which is what makes the git log a usable history.

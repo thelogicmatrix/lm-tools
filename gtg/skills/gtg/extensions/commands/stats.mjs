@@ -1,20 +1,28 @@
-// gtg stats — bundled read-only command: a snapshot of the handoff store.
-// Demonstrates the ctx contract (readStore + pure compute + print). No mutation.
-export default ({ readStore }) => {
-  const active = readStore('docs/handoffs/_active.json')?.handoffs ?? [];
-  const backlog = readStore('docs/handoffs/_backlog.json')?.backlog ?? [];
-  console.log(`${active.length} active, ${backlog.length} backlog`);
+// gtg stats — a few terminal lines from the history extractor. Read-only.
+import { buildReport } from '../lib/history.mjs';
 
-  if (active.length) {
-    const byPhase = {};
-    for (const e of active) byPhase[e.phase || '?'] = (byPhase[e.phase || '?'] || 0) + 1;
-    const phases = Object.entries(byPhase).sort().map(([t, n]) => `${t}:${n}`).join('  ');
-    console.log(`phases: ${phases}`);
+export default ({ root, readStore }) => {
+  const r = buildReport(root, readStore);
+  console.log(`${r.counts.active} active, ${r.counts.backlog} backlog`);
 
-    const oldest = active.reduce((a, b) =>
-      Date.parse(a.updated || 0) <= Date.parse(b.updated || 0) ? a : b);
-    const days = Math.floor((Date.now() - Date.parse(oldest.updated || 0)) / 86400000);
-    const age = Number.isFinite(days) ? `${days}d` : '?';
-    console.log(`oldest active: ${oldest.project} (${age}, auto-shelf at 7d)`);
+  const h = r.habit, t = r.throughput;
+  if (h.activeDays) {
+    console.log(`🔥 ${h.currentStreak}-day streak · ${h.activeDays} active days` +
+      (h.longestStreak > h.currentStreak ? ` (best ${h.longestStreak})` : ' — personal best'));
   }
+  if (t.shipped) {
+    const last = t.lastShip ? ` · last: ${t.lastShip.project} (${t.lastShip.daysAgo === 0 ? 'today' : t.lastShip.daysAgo + 'd ago'})` : '';
+    console.log(`🚢 ${t.shipped} shipped · ${t.shipped7d} in 7d${last}`);
+  }
+  const deepest = r.perProject[0];
+  if (deepest) {
+    const peakHour = h.byHour.indexOf(Math.max(...h.byHour));
+    console.log(`⏱  ${r.perProject.reduce((n, p) => n + p.sessions, 0)} sessions · deepest: ${deepest.project} (${deepest.sessions})` +
+      (h.byHour.some((n) => n) ? ` · peak ${peakHour}:00` : ''));
+  }
+  if (r.effort.sessionsTimed) {
+    console.log(`⌛ ${Math.round(r.effort.total / 60)}h timed across ${r.effort.sessionsTimed} sessions`);
+  }
+  if (t.resumed) console.log(`🅿️  ${t.parked} parked · ${t.resumed} resumes`);
+  if (r.fun.velocity) console.log(`\n${r.fun.velocity}${r.fun.bestWeek ? ` — best week ${r.fun.bestWeek.week} (${r.fun.bestWeek.ships} ships)` : ''}`);
 };
