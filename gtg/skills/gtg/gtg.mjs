@@ -75,9 +75,21 @@ function ago(iso) {
   return h < 48 ? `${Math.floor(h)}h ago` : `${Math.floor(h / 24)}d ago`;
 }
 function sortByProject(arr) { return [...arr].sort((a, b) => a.project.localeCompare(b.project)); }
-// "<n>" resolves against the sorted order `list` displays; else slug exact, else fuzzy project
-function resolveEntry(arr, t) {
-  if (/^\d+$/.test(t)) return sortByProject(arr)[Number(t) - 1] ?? null;
+// The exact top-to-bottom order `list` renders active entries in: each family
+// (parent) alphabetical, its members alphabetical within, then standalone. ONE
+// canonical order so a number on screen, `gtg back <n>`, and the "gtg back <hint>"
+// hints all mean the same row. (Backlog has no families — it stays sortByProject.)
+function displayOrder(arr) {
+  const sorted = sortByProject(arr);
+  const families = [...new Set(sorted.map((e) => e.parent).filter(Boolean))].sort();
+  return [...families.flatMap((f) => sorted.filter((e) => e.parent === f)),
+          ...sorted.filter((e) => !e.parent)];
+}
+// "<n>" resolves against the order the list was DISPLAYED in (pass displayOrder for
+// the grouped active list, default sortByProject for the flat backlog); else slug
+// exact, else fuzzy project.
+function resolveEntry(arr, t, order = sortByProject) {
+  if (/^\d+$/.test(t)) return order(arr)[Number(t) - 1] ?? null;
   return arr.find((e) => e.slug === t)
     ?? arr.find((e) => e.project.toLowerCase().includes(t.toLowerCase()))
     ?? null;
@@ -274,10 +286,20 @@ function dirtyCount(dir) {
 // sites (dirty-count grouping and per-entry rendering) — they must stay identical.
 function resolveDir(e) { return (!e.worktree || e.worktree === 'repo root') ? ROOT : e.worktree; }
 
+// `list` = the 7-day shelf sweep THEN render. Split out so a move command can
+// re-render (maybeAutoList) without re-running autoShelf — which would re-park a
+// just-restored stale entry the moment `undo` brought it back.
 function list(argv) {
   autoShelf();
+  renderList(argv);
+}
+
+function renderList(argv) {
   const filter = argv.find((x) => !x.startsWith('--'));
-  const allAct = sortByProject(entries(REL_ACTIVE, 'handoffs'));
+  // displayOrder, not sortByProject: numbering must run 1..N top-to-bottom in the
+  // order rows actually appear (see displayOrder), and `gtg back <n>` resolves
+  // against this same order.
+  const allAct = displayOrder(entries(REL_ACTIVE, 'handoffs'));
   const blCount = entries(REL_BACKLOG, 'backlog').length;
   const shown = filter
     ? allAct.filter((e) => e.slug === filter || e.project.toLowerCase().includes(filter.toLowerCase()))
@@ -309,9 +331,9 @@ function list(argv) {
   }
 
   const printEntry = (e) => {
-    // Number by position in the FULL sorted list, not the grouped display order,
-    // so `gtg back <n>` (resolveEntry runs over the full sorted list) targets
-    // this same entry. Grouping changes what you see, never what a number means.
+    // Position in the FULL display-order list (allAct), so numbers run 1..N down
+    // the screen and `gtg back <n>` (resolveEntry over displayOrder) targets this
+    // same row even when a filter hides some entries.
     const n = allAct.indexOf(e) + 1;
     const d = hasOwnWorktree(e) ? dirty.get(resolveDir(e)) : undefined;
     // null = worktree unreachable / dirtyCount failed — render the '?' the spec
@@ -342,8 +364,13 @@ function list(argv) {
   // otherwise all collapse onto one '? @ repo root' key and falsely "collide" —
   // skip them, only entries with a real recorded location are compared.
   const byLocation = new Map();
+  const BASE_BRANCHES = new Set(['master', 'main']);
   for (const e of shown) {
     if (!e.worktree) continue;
+    // master/main @ repo root is the SANCTIONED shared home for docs/meta work
+    // (home-repo doctrine — meta paths commit straight to master), not a tangle.
+    // Only a real feature-branch collision (or a shared non-root worktree) warns.
+    if (e.worktree === 'repo root' && BASE_BRANCHES.has(e.branch)) continue;
     const key = `${e.branch || '?'} @ ${e.worktree}`;
     byLocation.set(key, [...(byLocation.get(key) || []), e.project]);
   }
@@ -378,6 +405,9 @@ function help() {
   gtg remove <n|slug>          drop an entry (active first, then backlog)
   gtg resume <n|slug>          consume an entry on pick-up (NOT a ship)
   gtg undo                     revert the last change to the active list
+After a move (back/active/remove/resume/undo) the updated list auto-prints when
+stdout is a terminal; it stays silent when piped (so an AI wastes no context).
+Force either way with --list / --no-list.
 Storage root: GTG_HUB env var if set, else the enclosing git repo.
 Unknown commands dispatch to <root>/.gtg/commands/<name>.mjs — see README "Extending gtg".`);
 }
@@ -387,7 +417,7 @@ function back(argv) {
   const t = argv[0];
   if (!t) { console.error("Usage: gtg back <number|slug>  (see 'gtg list')"); process.exit(2); }
   const act = entries(REL_ACTIVE, 'handoffs');
-  const match = resolveEntry(act, t);
+  const match = resolveEntry(act, t, displayOrder);
   if (!match) { console.error(`No active project matching '${t}'. Try 'gtg list'.`); process.exit(2); }
   match.updated = nowIso(); // restamp = parked-at
   const bl = entries(REL_BACKLOG, 'backlog').filter((e) => e.slug !== match.slug);
@@ -413,7 +443,7 @@ function activate(argv) {
   saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== match));
   saveEntries(REL_ACTIVE, 'handoffs', act);
   commit([REL_ACTIVE, REL_BACKLOG], `gtg activate: ${match.project}`);
-  const hint = sortByProject(act).indexOf(match) + 1;
+  const hint = displayOrder(act).indexOf(match) + 1; // active list is display-ordered
   console.log(`Activated: ${match.project}. Shelve again: gtg back ${hint}`);
 }
 
@@ -421,7 +451,7 @@ function remove(argv) {
   const t = argv[0];
   if (!t) { console.error("Usage: gtg remove <number|slug>  (see 'gtg list')"); process.exit(2); }
   const act = entries(REL_ACTIVE, 'handoffs');
-  const match = resolveEntry(act, t);
+  const match = resolveEntry(act, t, displayOrder);
   if (match) {
     saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
     commit([REL_ACTIVE], `gtg prune: remove ${match.project} - confirmed done`);
@@ -447,7 +477,7 @@ function resumeConsume(argv) {
   const t = argv[0];
   if (!t) { console.error("Usage: gtg resume <number|slug>  (see 'gtg list')"); process.exit(2); }
   const act = entries(REL_ACTIVE, 'handoffs');
-  const match = resolveEntry(act, t);
+  const match = resolveEntry(act, t, displayOrder);
   if (match) {
     saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
     commit([REL_ACTIVE], `gtg resume: ${match.project} — handoff consumed`);
@@ -517,6 +547,18 @@ function undo() {
   console.log(`Active entries now (${names.length}): ${names.join(', ') || '(none)'}`);
 }
 
+// After a move (back/active/remove/resume/undo) a HUMAN wants the updated list;
+// an AI does not — gtg runs piped when a tool invokes it (stdout not a TTY), so
+// TTY-gating suppresses the render for models with zero wasted context, no flag
+// needed. --list / --no-list force it either way. renderList (not list) so undo's
+// just-restored stale entry isn't immediately re-shelved by autoShelf.
+function maybeAutoList(argv) {
+  const a = parseFlags(argv);
+  if (a['no-list']) return;
+  if (a.list || process.stdout.isTTY) renderList([]);
+}
+const MOVE_CMDS = new Set(['back', 'active', 'remove', 'rm', 'prune', 'resume', 'undo']);
+
 // --- dispatch -----------------------------------------------------------------
 const [cmd, ...rest] = process.argv.slice(2);
 const builtins = {
@@ -524,7 +566,10 @@ const builtins = {
   back, active: activate, remove, rm: remove, prune: remove, resume: resumeConsume, undo,
 };
 if (!cmd) { list([]); }
-else if (builtins[cmd]) { await builtins[cmd](rest); }
+else if (builtins[cmd]) {
+  await builtins[cmd](rest);
+  if (MOVE_CMDS.has(cmd)) maybeAutoList(rest);
+}
 else {
   // Extension dispatch, in resolution order: user <root>/.gtg/commands/<cmd>.mjs FIRST
   // (user overrides bundled), then the plugin's own extensions/commands/<cmd>.mjs

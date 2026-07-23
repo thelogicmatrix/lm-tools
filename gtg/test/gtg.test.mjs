@@ -709,11 +709,10 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(r.status, 0, r.stderr);
   r = gtg(repo, [...HANDOFF_ARGS('solo-b', 'Solo B'), '--worktree', wt], { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  // a standalone project sorting BEFORE the family alphabetically, so the
-  // fully-sorted numbering order (AAA First, Fam One, Fam Two, Solo A, Solo B)
-  // diverges from the grouped DISPLAY order (family group first, then
-  // standalone group: AAA First, Solo A, Solo B). A display-sequential bug
-  // would number Fam One "1"; the correct sorted-position number is "2".
+  // a standalone project sorting BEFORE the family alphabetically. Numbering
+  // follows DISPLAY order (family group first, then standalone) — NOT full-sorted
+  // order — so AAA First, though alphabetically first, numbers AFTER the two
+  // family members. displayOrder = [Fam One, Fam Two, AAA First, Solo A, Solo B].
   r = gtg(repo, HANDOFF_ARGS('aaa-first', 'AAA First'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
 
@@ -729,13 +728,14 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.ok(warnLine, `no collision warning naming Solo A; got:\n${out}`);
   assert.match(warnLine, /Solo B/, 'collision warning must name both colliding projects');
 
-  // numbering contract: the number shown must still resolve via resolveEntry
-  const famOneLine = out.split('\n').find((l) => l.includes('Fam One'));
-  const num = famOneLine.match(/(\d+)\./)[1];
-  // full-sorted position (AAA First, Fam One, Fam Two, Solo A, Solo B) puts
-  // Fam One at 2 — a display-sequential bug (family group prints first) would
-  // show 1 instead. This is what makes the round-trip check below meaningful.
-  assert.equal(num, '2', `expected Fam One numbered 2 (sorted position), got ${num}`);
+  // numbering contract: numbers run 1..N in DISPLAY order AND round-trip via
+  // resolveEntry. Fam One heads the family group -> 1; AAA First is alphabetically
+  // first but standalone, so it sits after both family members -> 3. That gap
+  // (1 vs a sorted-order 2) is what proves display order, not sorted position.
+  const numOf = (proj) => out.split('\n').find((l) => l.includes(proj)).match(/(\d+)\./)[1];
+  assert.equal(numOf('Fam One'), '1', `expected Fam One numbered 1 (display order), got ${numOf('Fam One')}`);
+  assert.equal(numOf('AAA First'), '3', `expected AAA First numbered 3 (display order), got ${numOf('AAA First')}`);
+  const num = numOf('Fam One');
   r = gtg(repo, ['back', num]);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Parked: Fam One/,
@@ -1378,6 +1378,55 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(sameRows[0].slug, 'same-slug-project');
 
   console.log('ok 34 - perProject canonicalises the join key to slugify(project)');
+}
+
+// --- 35. tuned collision warning: master/main @ repo root is the sanctioned home
+// for docs/meta work (home-repo doctrine) and must NOT warn; a genuine
+// feature-branch collision (even at repo root) still does ---
+{
+  const repo = tempRepo(); // inits on -b main
+  gtg(repo, HANDOFF_ARGS('meta-a', 'Meta A'), { input: BODY });
+  gtg(repo, HANDOFF_ARGS('meta-b', 'Meta B'), { input: BODY });
+  let out = gtg(repo, ['list']).stdout;
+  assert.doesNotMatch(out, /projects share/, 'main @ repo root must not be flagged as a collision');
+
+  // two projects sharing a FEATURE branch at repo root — a real tangle
+  gtg(repo, [...HANDOFF_ARGS('feat-a', 'Feat A'), '--branch', 'feat/x'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('feat-b', 'Feat B'), '--branch', 'feat/x'], { input: BODY });
+  out = gtg(repo, ['list']).stdout;
+  const warn = out.split('\n').find((l) => /projects share/.test(l));
+  assert.ok(warn && /feat\/x/.test(warn), `feature-branch collision must still warn; got:\n${out}`);
+  assert.match(warn, /Feat A/); assert.match(warn, /Feat B/);
+  assert.doesNotMatch(warn, /Meta A/, 'base-branch @ repo root entries must be excluded from the warning');
+  console.log('ok 35 - collision warning skips master/main @ repo root, still flags a feature branch');
+}
+
+// --- 36. auto-list after a move: suppressed when piped (AI / non-TTY, no wasted
+// context), forced by --list, muted by --no-list ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
+  gtg(repo, HANDOFF_ARGS('proj-b', 'Project B'), { input: BODY });
+
+  // piped stdout (spawnSync) is not a TTY => no auto-render, just the move's line
+  const rb = gtg(repo, ['back', 'proj-a']);
+  assert.equal(rb.status, 0, rb.stderr);
+  assert.match(rb.stdout, /Parked: Project A/);
+  assert.doesNotMatch(rb.stdout, /active gtg project/,
+    'a piped move must not dump the list — that is the wasted-context case');
+
+  // --list forces the full render even when piped
+  const ra = gtg(repo, ['active', 'proj-a', '--list']);
+  assert.equal(ra.status, 0, ra.stderr);
+  assert.match(ra.stdout, /Activated: Project A/);
+  assert.match(ra.stdout, /active gtg project/, '--list must force the render');
+  assert.match(ra.stdout, /Project B/, 'forced render shows the current active list');
+
+  // --no-list suppresses it explicitly
+  const rn = gtg(repo, ['back', 'proj-a', '--no-list']);
+  assert.equal(rn.status, 0, rn.stderr);
+  assert.doesNotMatch(rn.stdout, /active gtg project/);
+  console.log('ok 36 - auto-list: off when piped, forced by --list, muted by --no-list');
 }
 
 console.log('ALL PASS');
