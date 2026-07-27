@@ -43,7 +43,12 @@ function commit(paths, message) {
   const opts = { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] };
   try {
     execFileSync('git', ['add', ...paths], opts);
-    execFileSync('git', ['commit', '-q', '-m', message], opts);
+    // Name the paths on the COMMIT too, not just the add. A pathspec-less `git commit`
+    // takes the WHOLE index, so anything a concurrent session staged between our add and
+    // our commit rides along in ours — on 2026-07-27 a `gtg resume` swallowed an unrelated
+    // spec file that another session had just staged. `--` keeps a path that starts with
+    // a dash from being read as a flag.
+    execFileSync('git', ['commit', '-q', '-m', message, '--', ...paths], opts);
   } catch (e) {
     const out = `${e.stdout || ''}${e.stderr || ''}`;
     if (/nothing to commit|no changes added/i.test(out)) return; // identical content — files already on disk
