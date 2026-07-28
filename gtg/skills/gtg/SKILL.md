@@ -56,7 +56,7 @@ If it's embedded in a longer message ("gotta go soon, but first…"), reply one 
 
 ### 2. Identify the project + commit in-progress work
 Name the active project from context (**never ask**). Before slugifying fresh, run `gtg.mjs list <candidate-name>` — if exactly one existing entry matches, **reuse its slug** so the handoff updates that entry in place instead of minting a duplicate. Zero or multiple matches: slugify fresh (e.g. "Payments refactor" → `payments-refactor`). If the trigger was `gtg [project]`, use that slug verbatim and skip the `gtg.mjs list <candidate-name>` reuse-check.
-If the working tree has uncommitted changes that belong to the work: `git add <files> && git commit -m "wip: gtg checkpoint — <brief>"`. Skip if clean.
+If the working tree has uncommitted changes that belong to the work: `git add <files> && git commit <files> -m "wip: gtg checkpoint — <brief>"`. Skip if clean. **Name the files on the commit too, not just the add** — a pathspec-less `git commit` takes the whole index, so in a checkout shared by concurrent sessions another session's staged work rides along in yours. Commit only files that belong to *this* work; `gtg.mjs` commits only its own ledger (since 1.6.1 it names exact paths), so nothing sweeps the index for you.
 
 ### 3. Estimate the Next Action's ETA
 Rough **duration remaining** to finish this project's Next Action, from your read of the
