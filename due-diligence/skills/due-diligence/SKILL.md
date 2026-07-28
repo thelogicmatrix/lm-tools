@@ -100,18 +100,18 @@ pools, chosen the same way:
 
 | Tag | Domain lenses added |
 |---|---|
-| code | security-secrets, dependency-supply-chain, reproducibility-portability, performance-efficiency, maintainability, error-handling, test-coverage, concurrency-safety, resilience, api-contract |
+| code | security-secrets, dependency-supply-chain, reproducibility-portability, performance-efficiency, maintainability, error-handling, test-coverage, concurrency-safety, resilience, api-contract, interface-state-coverage |
 | config | security-secrets, homelab-ops |
-| data-export | security-secrets, data-privacy, data-quality |
-| llm-pipeline | prompt-injection, output-grounding, cost-token-efficiency, resilience, llm-eval |
-| rendered-ui | visual-ui-ux, deep-accessibility, brand-consistency |
-| data-analysis | statistical-soundness, data-quality, data-privacy |
+| data-export | security-secrets, data-privacy, data-quality, agency-preservation |
+| llm-pipeline | prompt-injection, output-grounding, cost-token-efficiency, resilience, llm-eval, inference-legibility, absent-user-handoff, agency-preservation |
+| rendered-ui | visual-ui-ux, deep-accessibility, brand-consistency, interface-state-coverage, inference-legibility, agency-preservation |
+| data-analysis | statistical-soundness, data-quality, data-privacy, agency-preservation |
 | multi-file, doc-describes-code | cross-artifact-consistency, api-contract |
-| deploy, migration, infra | rollback-blast-radius, reproducibility-portability, observability, backup-recovery, homelab-ops |
-| pipeline, cron, infra | idempotency-rerun-safety, observability, concurrency-safety, resilience, homelab-ops |
+| deploy, migration, infra | rollback-blast-radius, reproducibility-portability, observability, backup-recovery, homelab-ops, absent-user-handoff |
+| pipeline, cron, infra | idempotency-rerun-safety, observability, concurrency-safety, resilience, homelab-ops, absent-user-handoff, attention-cost, interface-state-coverage |
 | runbook | reproducibility-portability |
-| external-send | compliance-policy, data-privacy |
-| proposal, plan, recommendation | assumptions-risk, alternatives-considered |
+| external-send | compliance-policy, data-privacy, attention-cost |
+| proposal, plan, recommendation | assumptions-risk, alternatives-considered, agency-preservation |
 | educational | pedagogy |
 
 A tag appearing in two rows contributes both lenses — e.g. an `infra` artifact surfaces
