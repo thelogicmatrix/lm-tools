@@ -47,7 +47,7 @@ you own that survives updates.
 
 | Tier | Where | Updates? |
 |---|---|---|
-| **Core** | the plugin's `references/lenses/` + `res_*.md` (the 39 shipped) | with the tool |
+| **Core** | the plugin's `references/lenses/` + `res_*.md` (the 44 shipped) | with the tool |
 | **Yours** | `.dd/` in *your* repo | never touched by a plugin update |
 
 **Add your own lens** — drop a checklist in `.dd/lenses/<name>.md` in your repo (same shape

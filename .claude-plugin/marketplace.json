@@ -11,6 +11,11 @@
       "name": "due-diligence",
       "source": "./due-diligence",
       "description": "Due Diligence — adversarial pre-ship review + build-to-standard construction (cdd): a modular 44-lens framework you extend with your own lenses to fit your work."
+    },
+    {
+      "name": "logical-research",
+      "source": "./logical-research",
+      "description": "Logical Research — turn a bounded corpus (a channel, a book, a doc set) into reusable context: a synthesis with evidence-graded claims, per-item notes, and a traceable bibliography. Extend it with your own reading angles."
     }
   ]
 }
