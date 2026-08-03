@@ -1202,6 +1202,17 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const widget = fams.find((f) => f.parent === 'widget');
   assert.equal(widget.subProjects, 2, 'widget-stats + widget-data');
   assert.equal(widget.shipped, 1);
+  assert.equal(widget.first, '2026-07-02', 'earliest born date across the family');
+  assert.equal(widget.latest, '2026-07-12', 'latest activity across the family');
+  assert.equal(widget.totalHours, 0, 'no effort passed → no hours claimed');
+
+  // effort join: rows carry minutes off the REAL slug, families sum them exactly
+  const effort = { bySlug: { 'widget-stats': [45, 45], 'widget-data': [30] } };
+  const timed = H.perProject(ev, sessions, active, backlog, effort);
+  timed.forEach((r) => { if (r.slug.startsWith('widget')) r.parent = 'widget'; });
+  assert.equal(timed.find((r) => r.slug === 'widget-stats').minutes, 90);
+  assert.equal(timed.find((r) => r.slug === 'old-idea').minutes, null, 'untimed → null, not 0');
+  assert.equal(H.families(timed).find((f) => f.parent === 'widget').totalHours, 2, '120min across the family');
 
   const hl = H.health(ev, rows);
   assert.equal(hl.resurrectionRate, 1, 'one activate, one park → 1.0');
@@ -1274,9 +1285,20 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.deepEqual(d.bySlug.p.sort((a, b) => a - b), [45, 90]);
   assert.deepEqual(d.bySlug.q, [30]);
 
+  // derived roll-ups
+  assert.equal(d.avgSessionMin, 55, '(45+90+30)/3');
+  assert.equal(d.longestSessionMin, 90);
+  assert.equal(d.hoursBySlug.p, 2.3, '135min -> 2.3h (1dp)');
+  const weekHours = Object.values(d.hoursByWeek).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(weekHours - 165 / 60) < 0.11, 'weekly buckets account for the whole total');
+
   // no git → empty, no throw
   const bare = mkdtempSync(join(tmpdir(), 'gtg-nod-'));
-  assert.deepEqual(H.readDurations(bare), { bySlug: {}, total: 0, sessionsTimed: 0 });
+  const bareResult = H.readDurations(bare);
+  assert.equal(bareResult.total, 0);
+  assert.equal(bareResult.sessionsTimed, 0);
+  assert.deepEqual(bareResult.bySlug, {});
+  assert.equal(bareResult.avgSessionMin, null, 'no data → null, never 0');
 
   // walk-up guard: a non-repo subdir nested in an outer repo that HAS committed
   // durations (tracked at a path that lines up with cwd-relative pathspec
@@ -1297,10 +1319,36 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
     if (prevCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
     else process.env.GIT_CEILING_DIRECTORIES = prevCeiling;
   }
-  assert.deepEqual(subResult, { bySlug: {}, total: 0, sessionsTimed: 0 },
-    'non-repo subdir of a real repo must degrade, not inherit outer durations');
+  assert.equal(subResult.total, 0, 'non-repo subdir of a real repo must degrade, not inherit outer durations');
+  assert.deepEqual(subResult.bySlug, {});
 
   console.log('ok 32 - effort durations');
+}
+
+// --- 32b. effort: a non-handoff commit that re-adds an entry must NOT re-bill
+// its duration. `gtg activate` (backlog -> active) and `gtg undo` both rewrite
+// the whole entry with duration_min unchanged; counting those double-billed
+// sessions that only ever happened once. ---
+{
+  const H = await import('../skills/gtg/extensions/lib/history.mjs');
+  const repo = tempRepo();
+  mkdirSync(join(repo, 'docs/handoffs'), { recursive: true });
+  const write = (obj) => writeFileSync(join(repo, 'docs/handoffs/_active.json'), JSON.stringify(obj, null, 2) + '\n');
+  const entry = { project: 'R', slug: 'r', duration_min: 60 };
+
+  write({ handoffs: [entry] });
+  execSync('git add -A && git commit -q -m "handoff: R — session 1"', { cwd: repo });
+  write({ handoffs: [] });                                   // shelved to the backlog
+  execSync('git add -A && git commit -q -m "gtg backlog: park R"', { cwd: repo });
+  write({ handoffs: [entry] });                              // reactivated, same duration
+  execSync('git add -A && git commit -q -m "gtg activate: R"', { cwd: repo });
+
+  const d = H.readDurations(repo);
+  assert.equal(d.total, 60, 'one real session, counted once — the activate re-add must not re-bill it');
+  assert.equal(d.sessionsTimed, 1);
+  assert.deepEqual(d.bySlug.r, [60]);
+
+  console.log('ok 32b - effort ignores non-handoff re-adds');
 }
 
 // --- 33. buildReport assembler + report/stats commands ---
