@@ -124,9 +124,9 @@ nothing is inferred by a model. Top-level keys:
 | `counts` | active / backlog |
 | `habit` | activity grid, current & longest streak, weekday & hour distribution |
 | `throughput` | shipped (total/7d/30d), parked, resumed, ship rate, days-to-ship |
-| `effort` | `total` minutes + `bySlug` from committed `duration_min` (`gtg stats` shows hours); accrues over time, empty at first |
-| `families` | per-parent rollup: sub-projects, shipped, active, sessions |
-| `perProject` | one row per project: born, sessions, days alive, days-to-ship, status |
+| `effort` | from committed `duration_min`: `total` minutes, `bySlug`, `hoursBySlug`, `hoursByWeek`, `avgSessionMin`, `longestSessionMin`. Counts handoff commits only — a `gtg activate`/`undo` re-adds an entry unchanged and must not re-bill the session. Accrues over time, empty at first |
+| `families` | per-parent rollup: sub-projects, shipped, active, sessions, `totalHours`, first & latest activity |
+| `perProject` | one row per project: born, last seen, sessions, minutes, worktree, days alive, days-to-ship, status |
 | `health` | resurrection & abandonment rate, WIP-over-time, aging |
 | `fun` | best week, longest-lived shipped project, most-resumed, velocity label |
 
