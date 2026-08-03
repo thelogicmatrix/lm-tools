@@ -86,6 +86,13 @@ same true-count fallback the CLI itself uses when an entry's `sessions` field is
 entries), so an extension doesn't have to re-implement the file-count logic to avoid the same
 hardcoded-`1` bug.
 
+A command whose output's **first line** starts with `GTG-DIRECTIVE:` is not relayed to you —
+the skill follows the instruction on that line instead. That lets a custom command hand control
+back to a skill procedure rather than just printing, e.g.
+`console.log('GTG-DIRECTIVE: resume my-project — read references/resume.md and follow it.')`
+makes `gtg <yourverb> <arg>` resolve an argument to a slug and then run the real Resume Procedure,
+consume step and hooks included, instead of reimplementing it.
+
 **2. Procedure hooks** — the exit and resume flows load markdown hooks if present, so you
 can add project-specific steps without forking the skill:
 
