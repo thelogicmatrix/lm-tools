@@ -410,11 +410,14 @@ function help() {
   gtg remove <n|slug>          drop an entry (active first, then backlog)
   gtg resume <n|slug>          consume an entry on pick-up (NOT a ship)
   gtg undo                     revert the last change to the active list
+  gtg stats                    one-screen scoreboard: streak, ships, sessions, effort
+  gtg report                   full report JSON -> docs/handoffs/_report.json
 After a move (back/active/remove/resume/undo) the updated list auto-prints when
 stdout is a terminal; it stays silent when piped (so an AI wastes no context).
 Force either way with --list / --no-list.
 Storage root: GTG_HUB env var if set, else the enclosing git repo.
-Unknown commands dispatch to <root>/.gtg/commands/<name>.mjs — see README "Extending gtg".`);
+stats/report ship bundled; unknown commands dispatch to <root>/.gtg/commands/<name>.mjs,
+which overrides a bundled one of the same name — see README "Extending gtg".`);
 }
 
 // --- back / active / remove / undo --------------------------------------------

@@ -100,6 +100,7 @@ export function nowMs() { return Date.now(); }
 
 const ACTIVE_TYPES = new Set(['handoff', 'park', 'shelve', 'autoshelf', 'activate', 'prune', 'resume']);
 const dayNum = (d) => Math.floor(Date.parse(d) / 86400000);
+const round1 = (n) => Math.round(n * 10) / 10;
 
 // Pure: streaks, weekday/hour distribution, and a day-by-day grid over the
 // span of active days. "Active" = any handoff/park/resume/prune/shelve/activate.
@@ -182,7 +183,10 @@ export function throughput(events) {
 // entry resolves it; canonical key stays internal.
 // ponytail: two distinct projects that happen to slugify to the same key
 // would merge into one row; rare, acceptable.
-export function perProject(events, sessions, activeEntries, backlogEntries) {
+// `effort` is readDurations' output, optional: rows carry `minutes` only where a
+// project has timed sessions. Untimed projects get null, NOT 0 — pre-1.4.0 work
+// took real time nobody recorded, and a 0 would read as "this was free".
+export function perProject(events, sessions, activeEntries, backlogEntries, effort) {
   const active = new Map((activeEntries || []).map((e) => [slugify(e.project), e]));
   const backlog = new Map((backlogEntries || []).map((e) => [slugify(e.project), e]));
   const slugs = new Set([
@@ -210,9 +214,14 @@ export function perProject(events, sessions, activeEntries, backlogEntries) {
     for (let i = 1; i < dnums.length; i++) gap = Math.max(gap, dnums[i] - dnums[i - 1]);
     const firstHandoff = evs.filter((e) => e.type === 'handoff').map((e) => e.date).sort()[0];
     const daysToShip = ship && firstHandoff ? dayNum(ship.date) - dayNum(firstHandoff) : null;
+    // effort keys on the store's real slug (that's what a handoff commits), so
+    // join on realSlug — never the canonical slugify(project) key used above.
+    const minutes = (effort?.bySlug?.[realSlug] || []).reduce((a, b) => a + b, 0);
     rows.push({
       slug: realSlug, project: name, parent: active.get(slug)?.parent ?? backlog.get(slug)?.parent,
-      born, sessions: sessCount, longestGapDays: gap,
+      born, lastSeen: dates.length ? dates[dates.length - 1].slice(0, 10) : null,
+      sessions: sessCount, longestGapDays: gap,
+      minutes: minutes || null, worktree: storeEntry?.worktree,
       daysAlive: dates.length ? dayNum(dates[dates.length - 1]) - dayNum(dates[0]) : 0,
       daysToShip, status,
       updated: active.get(slug)?.updated ?? backlog.get(slug)?.updated,
@@ -227,13 +236,22 @@ export function families(rows) {
   const byParent = new Map();
   for (const r of rows) {
     if (!r.parent) continue;
-    const f = byParent.get(r.parent) || { parent: r.parent, subProjects: 0, shipped: 0, active: 0, totalSessions: 0 };
+    const f = byParent.get(r.parent)
+      || { parent: r.parent, subProjects: 0, shipped: 0, active: 0, totalSessions: 0, totalMinutes: 0, first: null, latest: null };
     f.subProjects++; f.totalSessions += r.sessions;
+    if (r.minutes) f.totalMinutes += r.minutes;
+    if (r.born && (!f.first || r.born < f.first)) f.first = r.born;
+    const last = r.lastSeen || r.born;
+    if (last && (!f.latest || last > f.latest)) f.latest = last;
     if (r.status === 'shipped') f.shipped++;
     if (r.status === 'active') f.active++;
     byParent.set(r.parent, f);
   }
-  return [...byParent.values()].sort((a, b) => b.subProjects - a.subProjects);
+  // totalMinutes is summed exactly then converted once — rounding per row first
+  // would drift a family's hours by up to 0.05h per sub-project.
+  return [...byParent.values()]
+    .map(({ totalMinutes, ...f }) => ({ ...f, totalHours: round1(totalMinutes / 60) }))
+    .sort((a, b) => b.subProjects - a.subProjects);
 }
 
 // Pure: resurrection/abandonment rates, day-by-day WIP count, and aging of
@@ -303,28 +321,48 @@ function isoWeek(dateStr) {
   return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
-// Effort. duration_min is committed onto the _active.json entry each handoff;
-// one `git log -p` pass recovers every duration ever written. Within a diff, a
-// duration is attributed to the nearest preceding slug among ADDED lines.
-// ponytail: an added block that changes a NON-duration field re-adds the whole
-// entry, so a duration can be counted on a commit that didn't re-time — rare,
-// and it only ever double-counts a value already real. Acceptable for a stat.
+// Effort. duration_min is THIS session's length (not a running total), rewritten
+// onto the _active.json entry at each handoff; one `git log -p` pass recovers
+// every duration ever committed. Within a diff, a duration is attributed to the
+// nearest preceding slug among ADDED lines, and to the commit's author date.
+//
+// Only HANDOFF commits count. `gtg activate` moves a backlog entry back into
+// _active.json and `gtg undo` restores a removed one — both re-add the entry
+// with its duration_min unchanged, which billed the same session a second time
+// (~6% of the total on the live store before this guard). A handoff is the only
+// commit that actually re-times anything, so the subject is the exact filter.
+// Fresh object per return path: callers may mutate the result.
+const noDurations = () => ({
+  bySlug: {}, hoursBySlug: {}, hoursByWeek: {},
+  total: 0, sessionsTimed: 0, avgSessionMin: null, longestSessionMin: null,
+});
 export function readDurations(root) {
   let out;
   try {
-    out = execFileSync('git', ['-C', root, 'log', '-p', '--format=%H', '--', 'docs/handoffs/_active.json'],
+    out = execFileSync('git', ['-C', root, 'log', '-p', '--format=%aI%x1f%s', '--', 'docs/handoffs/_active.json'],
       { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', timeout: 15000, maxBuffer: 64 * 1024 * 1024 });
-  } catch { return { bySlug: {}, total: 0, sessionsTimed: 0 }; }
+  } catch { return noDurations(); }
   // Same walk-up guard as readEvents: if root isn't itself a repo but is nested
   // inside one, git resolves to the enclosing repo and would report ITS durations.
   try {
     const top = execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'],
       { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', timeout: 10000 }).trim();
-    if (!samePath(top, root)) return { bySlug: {}, total: 0, sessionsTimed: 0 };
-  } catch { return { bySlug: {}, total: 0, sessionsTimed: 0 }; }
-  const bySlug = {}; let total = 0, sessionsTimed = 0;
-  let curSlug = null;
+    if (!samePath(top, root)) return noDurations();
+  } catch { return noDurations(); }
+  const bySlug = {}; const minutesByWeek = {}; let total = 0, sessionsTimed = 0;
+  let curSlug = null, curDate = null, counting = false;
   for (const line of out.split('\n')) {
+    // Commit header. Only a --format line can carry the unit separator after an
+    // ISO date at column 0; every diff line starts with +, -, space, or a header
+    // keyword, so this can't collide with file content.
+    const hm = line.match(/^(\d{4}-\d{2}-\d{2}T[^\x1f]*)\x1f(.*)$/);
+    if (hm) {
+      curDate = hm[1];
+      counting = classify(hm[2]).type === 'handoff';
+      curSlug = null;                                  // slug context never crosses commits
+      continue;
+    }
+    if (!counting) continue;
     if (line.startsWith('-')) continue;                // removed lines never inform current state
     // slug tracking reads context (' ') AND added ('+') lines: a commit that only
     // re-times a session (duration_min changes, slug doesn't) leaves "slug" as an
@@ -337,9 +375,20 @@ export function readDurations(root) {
     if (dm && curSlug) {
       const n = Number(dm[1]);
       (bySlug[curSlug] ||= []).push(n); total += n; sessionsTimed++;
+      const w = isoWeek(curDate.slice(0, 10));
+      minutesByWeek[w] = (minutesByWeek[w] || 0) + n;
     }
   }
-  return { bySlug, total, sessionsTimed };
+  const all = Object.values(bySlug).flat();
+  const hoursBySlug = {};
+  for (const [s, arr] of Object.entries(bySlug)) hoursBySlug[s] = round1(arr.reduce((a, b) => a + b, 0) / 60);
+  const hoursByWeek = {};
+  for (const [w, m] of Object.entries(minutesByWeek)) hoursByWeek[w] = round1(m / 60);
+  return {
+    bySlug, hoursBySlug, hoursByWeek, total, sessionsTimed,
+    avgSessionMin: all.length ? Math.round(total / all.length) : null,
+    longestSessionMin: all.length ? Math.max(...all) : null,
+  };
 }
 
 // Pure: the scoreboard stats. Takes events + perProject rows only (no habit).
@@ -372,7 +421,8 @@ export function buildReport(root, readStore) {
   const sessions = readSessions(root);
   const active = readStore('docs/handoffs/_active.json')?.handoffs ?? [];
   const backlog = readStore('docs/handoffs/_backlog.json')?.backlog ?? [];
-  const rows = perProject(events, sessions, active, backlog);
+  const effort = readDurations(root);
+  const rows = perProject(events, sessions, active, backlog, effort);
   const tp = throughput(events);
   const denom = tp.shipped + tp.resumed + active.length;
   tp.shipRate = denom ? Number((tp.shipped / denom).toFixed(3)) : null;
@@ -381,7 +431,7 @@ export function buildReport(root, readStore) {
     counts: { active: active.length, backlog: backlog.length },
     habit: habit(events, sessions),
     throughput: tp,
-    effort: readDurations(root),
+    effort,
     families: families(rows),
     perProject: rows,
     health: health(events, rows),

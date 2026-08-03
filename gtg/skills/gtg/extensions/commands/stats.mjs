@@ -20,8 +20,17 @@ export default ({ root, readStore }) => {
     console.log(`⏱  ${r.perProject.reduce((n, p) => n + p.sessions, 0)} sessions · deepest: ${deepest.project} (${deepest.sessions})` +
       (h.byHour.some((n) => n) ? ` · peak ${peakHour}:00` : ''));
   }
-  if (r.effort.sessionsTimed) {
-    console.log(`⌛ ${Math.round(r.effort.total / 60)}h timed across ${r.effort.sessionsTimed} sessions`);
+  const e = r.effort;
+  if (e.sessionsTimed) {
+    const hm = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}` : `${m}m`);
+    console.log(`⌛ ${Math.round(e.total / 60)}h timed across ${e.sessionsTimed} sessions` +
+      ` · avg ${hm(e.avgSessionMin)} · longest ${hm(e.longestSessionMin)}`);
+    const week = Object.entries(e.hoursByWeek).sort().pop(); // newest ISO week
+    const heaviest = r.perProject.filter((p) => p.minutes).sort((a, b) => b.minutes - a.minutes)[0];
+    if (week) {
+      console.log(`📅 ${week[1]}h in ${week[0]}` +
+        (heaviest ? ` · heaviest: ${heaviest.project} (${e.hoursBySlug[heaviest.slug]}h)` : ''));
+    }
   }
   if (t.resumed) console.log(`🅿️  ${t.parked} parked · ${t.resumed} resumes`);
   if (r.fun.velocity) console.log(`\n${r.fun.velocity}${r.fun.bestWeek ? ` — best week ${r.fun.bestWeek.week} (${r.fun.bestWeek.ships} ships)` : ''}`);
