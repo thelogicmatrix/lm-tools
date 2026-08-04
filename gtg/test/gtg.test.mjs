@@ -31,10 +31,17 @@ function tempRepoNoIdentity() {
 // so the dev machine's own hub setting can't leak into the tests.
 // GIT_CEILING_DIRECTORIES pins git's upward repo search at tmpdir so a bare
 // temp dir can't resolve to an enclosing repo (e.g. a git-tracked home dir).
+// opts.session pins the session id undo scopes itself to: a string names one, null
+// strips it entirely (the no-identity case). Defaulted rather than inherited so a run
+// inside a Claude session and a run in CI behave identically — a real
+// CLAUDE_CODE_SESSION_ID leaking in would make undo pass locally and fail in CI.
 function gtg(cwd, args, opts = {}) {
   const env = { ...process.env, ...(opts.env || {}) };
   delete env.GTG_HUB;
+  delete env.CLAUDE_CODE_SESSION_ID;
   env.GIT_CEILING_DIRECTORIES = tmpdir();
+  if (opts.session === null) delete env.GTG_SESSION_ID;
+  else env.GTG_SESSION_ID = opts.session || 'test-session';
   if (opts.hub) env.GTG_HUB = opts.hub;
   return spawnSync(process.execPath, [CLI, ...args], {
     cwd, env, encoding: 'utf8', input: opts.input ?? '',
@@ -1606,6 +1613,89 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(nothing.status, 2);
   assert.match(nothing.stderr, /No project or parent reference matching/);
   console.log('ok 41 - rename repairs a stale parent reference when nothing carries that slug');
+}
+
+// --- 42. undo is scoped to the calling session ---
+// The 2026-07-14 hazard: session A removes an entry, session B parks something,
+// A's undo reverted B's park and left A's entry gone. Two concurrent sessions on
+// one checkout is the normal setup here, so this is the default case, not an edge.
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY, session: 'sess-A' });
+  gtg(repo, HANDOFF_ARGS('proj-b', 'Project B'), { input: BODY, session: 'sess-B' });
+
+  // B's handoff is the tip, so A has a change in history but not the latest one.
+  const crossA = gtg(repo, ['undo'], { session: 'sess-A' });
+  assert.equal(crossA.status, 2, 'undo must refuse when another session committed after ours');
+  assert.match(crossA.stderr, /another session changed the store after yours/);
+  assert.equal(active(repo).handoffs.length, 2, 'a refused undo must not touch the stores');
+
+  // A session that never mutated anything has nothing of its own to revert.
+  const stranger = gtg(repo, ['undo'], { session: 'sess-C' });
+  assert.equal(stranger.status, 2, 'undo must refuse a session with no change of its own');
+  assert.match(stranger.stderr, /no change from this session to undo/);
+  assert.equal(active(repo).handoffs.length, 2, 'a refused undo must not touch the stores');
+
+  // No session identity at all: refuse rather than revert a stranger's commit.
+  const anon = gtg(repo, ['undo'], { session: null });
+  assert.equal(anon.status, 2, 'undo must refuse without a session id');
+  assert.match(anon.stderr, /no session id/);
+  assert.equal(active(repo).handoffs.length, 2, 'a refused undo must not touch the stores');
+
+  // B owns the tip, so B's undo is the one that goes through.
+  const ownB = gtg(repo, ['undo'], { session: 'sess-B' });
+  assert.equal(ownB.status, 0, ownB.stderr);
+  const slugs = active(repo).handoffs.map((e) => e.slug);
+  assert.deepEqual(slugs, ['proj-a'], 'B\'s undo must revert B\'s own handoff only');
+  console.log('ok 42 - undo is scoped to the calling session');
+}
+
+// --- 43. supersede is neither a ship nor an abandonment ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('slice-1', 'Slice One'), { input: BODY });
+  gtg(repo, HANDOFF_ARGS('parent-proj', 'Parent Proj'), { input: BODY });
+
+  assert.equal(gtg(repo, ['supersede']).status, 2, 'supersede needs a target');
+  assert.equal(gtg(repo, ['supersede', 'slice-1', '--into']).status, 2, '--into needs a value');
+  assert.equal(gtg(repo, ['supersede', 'nope']).status, 2, 'an unknown project is a usage error');
+  assert.equal(gtg(repo, ['supersede', 'slice-1', '--into', 'slice-1']).status, 2,
+    'an entry cannot supersede itself');
+
+  const r = gtg(repo, ['supersede', 'slice-1', '--into', 'parent-proj']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Superseded: Slice One -> Parent Proj/);
+  assert.deepEqual(active(repo).handoffs.map((e) => e.slug), ['parent-proj'], 'entry not removed');
+
+  const subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
+  assert.equal(subject, 'gtg supersede: Slice One into Parent Proj');
+
+  // The point of the verb: the roll-up must not read as a ship or an abandonment.
+  const { classify } = await import('../skills/gtg/extensions/lib/history.mjs');
+  const c = classify(subject);
+  assert.equal(c.type, 'supersede');
+  assert.equal(c.project, 'Slice One');
+  assert.equal(c.into, 'Parent Proj');
+  assert.equal(classify('gtg supersede: Filed In Error').type, 'supersede');
+  assert.equal(classify('gtg supersede: Filed In Error').into, undefined);
+  console.log('ok 43 - supersede is neither a ship nor an abandonment');
+}
+
+// --- 44. a superseded slug stops counting as abandoned ---
+{
+  const { classifyEvents, health } = await import('../skills/gtg/extensions/lib/history.mjs');
+  const raw = [
+    { date: '2026-07-25T12:12:00+08:00', subject: 'gtg supersede: Slice One into Parent Proj' },
+    { date: '2026-07-25T12:00:00+08:00', subject: 'gtg backlog: new Slice One — session 1' },
+    { date: '2026-07-25T11:00:00+08:00', subject: 'gtg backlog: new Dropped Thing — session 1' },
+  ];
+  const events = classifyEvents(raw);
+  // No rows: both slugs were parked and then left the stores, which is exactly the
+  // shape that used to report every consolidated slice as abandoned forever.
+  // 2 parked slugs, 1 of them genuinely dropped. Before the fix this read 1.0.
+  const { abandonmentRate } = health(events, []);
+  assert.equal(abandonmentRate, 0.5, 'only the genuinely dropped slug should count as abandoned');
+  console.log('ok 44 - a superseded slug stops counting as abandoned');
 }
 
 console.log('ALL PASS');

@@ -20,7 +20,7 @@ otherwise read as a verb.
 | Session start | `gtg <project>` | Resume that project (= `gtg resume <project>`; brackets optional — verb-check disambiguates) |
 | Mid-session | `gtg` | Depart (Exit Procedure), slug inferred from context |
 | Mid-session | `gtg [project]` | Depart, but **force the handoff slug** to `project` (brackets **required**) |
-| Anytime | `gtg <verb>` | Handle per the router table below — the verb (`list`, `backlog`, `back`, `active`, `prune`, `remove`, `peek`, `resume`, `undo`, `stats`, `help`) routes to its row; some are `gtg.mjs` CLI calls, others (`peek`, `resume`) are skill-handled |
+| Anytime | `gtg <verb>` | Handle per the router table below — the verb (`list`, `backlog`, `back`, `active`, `prune`, `remove`, `supersede`, `peek`, `resume`, `undo`, `stats`, `help`) routes to its row; some are `gtg.mjs` CLI calls, others (`peek`, `resume`) are skill-handled |
 
 Disambiguation: a bracketed token is always a project; otherwise a token matching a known
 verb is a command; else (session start only) it's a project name to resume. When a
@@ -37,7 +37,8 @@ The CLI: `node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs"` — referred to as `g
 | "gtg list" / "what's active" | Run `gtg.mjs list` and relay its output. Stop. |
 | "gtg backlog" / "gtg back &lt;n\|slug&gt;" / "gtg active &lt;n\|slug&gt;" | Run `gtg.mjs backlog` / `back <n|slug>` / `active <n|slug>` verbatim (each commits itself). Relay output. Stop. |
 | "gtg backlog &lt;idea&gt;" (an idea named, not bare) | Park a long-horizon idea — see "Backlog Park" below. |
-| "gtg prune" / "gtg remove &lt;n\|slug&gt;" | The project **shipped**. Run `gtg.mjs remove <n\|slug>`. `gtg.mjs undo` reverts. Stop. |
+| "gtg prune" / "gtg remove &lt;n\|slug&gt;" | The project **shipped**. Run `gtg.mjs remove <n\|slug>`. `gtg.mjs undo` reverts your own last change. Stop. |
+| "gtg supersede &lt;n\|slug&gt;" / "this rolled up into X" / "I filed that one in error" | The entry was **neither shipped nor abandoned**. Run `gtg.mjs supersede <n\|slug> [--into <n\|slug>]`. Reach for it whenever consolidating several entries into one parent, or clearing an entry that should never have existed: `remove` would write a phantom ship and `back` reads as shelved-for-later, and both corrupt throughput. Pass `--into` whenever another entry absorbed it. Stop. |
 | "gtg peek &lt;project&gt;" | Find the entry in `docs/handoffs/_active.json` (or `_backlog.json`), read its `file` verbatim, relay the content. **Do not consume** — no store mutation. |
 | "gtg resume &lt;project&gt;" / "let's continue &lt;project&gt;" | The project was **picked back up**, not shipped. Read `references/resume.md`, follow it. **Never** use `remove` for this: `remove` means shipped, `resume` means picked back up, and conflating them makes throughput history meaningless. |
 | "gtg rename &lt;n\|slug&gt; &lt;new&gt;" | Run `gtg.mjs rename <n\|slug> <new-slug>`. It re-points any sub-project whose `parent` named the old slug, and leaves past handoff filenames alone because those record what the project was called then. The **portfolio** slug is separate: relay the `projects rename` line it prints rather than assuming both moved. Stop. |

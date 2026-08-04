@@ -47,7 +47,8 @@ Requires Node.js ≥ 18 and git on PATH.
 | "gtg list" | Active handoffs (idle >7d auto-shelf to the backlog) |
 | "gtg backlog <idea>" | Park a long-horizon idea on the shelf |
 | "gtg back <n\|slug>" / "gtg active <n\|slug>" | Shelf / reactivate an entry |
-| "gtg remove <n>" / undo via "gtg undo" | Prune; git history is the undo stack |
+| "gtg remove <n>" / undo via "gtg undo" | Prune; git history is the undo stack, scoped to your own session |
+| "gtg supersede <n\|slug> [--into <n\|slug>]" | Rolled up into another entry, or filed in error — neither a ship nor an abandonment |
 | "gtg rename <n\|slug> <new>" | Change a slug, re-pointing any sub-projects that named it as their parent. Given a slug no entry carries, it repairs a stale `parent` reference instead, which is what a rename on the portfolio side leaves behind |
 | "gtg log [n\|slug]" | What happened, read from git rather than a ledger |
 
@@ -158,6 +159,16 @@ Each entry in `docs/handoffs/_active.json` / `_backlog.json`:
 it is ignored on read and never rewritten. `sessions` and `created` backfill from
 the handoff files already on disk, so no migration is needed.
 
-**`gtg resume <n|slug>` vs `gtg remove <n|slug>`** — `resume` consumes a handoff
-when you pick a project back up; `remove` (alias `prune`) means it shipped. They
-commit different subjects, which is what makes the git log a usable history.
+**`gtg resume <n|slug>` vs `gtg remove <n|slug>` vs `gtg supersede <n|slug>`** —
+`resume` consumes a handoff when you pick a project back up, `remove` (alias
+`prune`) means it shipped, and `supersede` means it was rolled up into another
+entry or filed in error. They commit different subjects, which is what makes the
+git log a usable history. Borrowing the wrong one writes a phantom ship or a
+phantom abandonment, and the stats read straight off those subjects.
+
+**`gtg undo` reverts your own last change, not the newest one.** Every gtg commit
+carries a `gtg-session:` trailer (from `GTG_SESSION_ID`, or `CLAUDE_CODE_SESSION_ID`
+under Claude Code), and undo will only revert a commit bearing the calling session's
+id *and* still sitting at the tip of store history. Anything else refuses and names
+what it found. Two sessions sharing one checkout is the normal setup, and undo used
+to revert whichever of them committed last. A session with no id set cannot undo.
