@@ -9,5 +9,6 @@ jobs:
         with:
           node-version: 20
       - run: node gtg/test/gtg.test.mjs
+      - run: node gtg/test/issues.test.mjs
       - run: node projects/test/projects.test.mjs
       - run: node projects/test/projects-index-guard.test.mjs
