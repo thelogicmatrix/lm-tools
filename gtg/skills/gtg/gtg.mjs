@@ -409,6 +409,8 @@ function help() {
   gtg active <n|slug>          reactivate a backlog entry
   gtg remove <n|slug>          drop an entry (active first, then backlog)
   gtg resume <n|slug>          consume an entry on pick-up (NOT a ship)
+  gtg rename <n|slug> <new>    change a slug, re-pointing any sub-projects
+  gtg log [n|slug] [-n N]      what happened, read from git rather than a ledger
   gtg undo                     revert the last change to the active list
   gtg stats                    one-screen scoreboard: streak, ships, sessions, effort
   gtg report                   full report JSON -> docs/handoffs/_report.json
@@ -453,6 +455,69 @@ function activate(argv) {
   commit([REL_ACTIVE, REL_BACKLOG], `gtg activate: ${match.project}`);
   const hint = displayOrder(act).indexOf(match) + 1; // active list is display-ordered
   console.log(`Activated: ${match.project}. Shelve again: gtg back ${hint}`);
+}
+
+// The slug is what every other verb takes, and it is ALSO how a sub-project names its family
+// via `parent`. So a rename has to re-point the children in the same operation, on both
+// shelves, or the family silently splits into orphans that list as standalone.
+//
+// Handoff FILES keep the old slug in their names, deliberately. A past handoff records what the
+// project was called at the time, and renaming those files would rewrite that record and break
+// the `file` field every entry carries. gtg log still finds them: commit subjects carry the
+// project NAME, which a slug rename does not touch.
+function rename(argv) {
+  const [from, to] = argv;
+  if (!from || !to) { console.error('Usage: gtg rename <number|slug> <new-slug>'); process.exit(2); }
+  // Same constraint --slug is held to, and for the same reason: a slug becomes a path segment.
+  if (!/^[A-Za-z0-9_-]+$/.test(to)) {
+    console.error('gtg rename: <new-slug> must match [A-Za-z0-9_-]'); process.exit(2);
+  }
+  const act = entries(REL_ACTIVE, 'handoffs');
+  const bl = entries(REL_BACKLOG, 'backlog');
+  // Active wins a collision, the same precedence resume uses.
+  const match = resolveEntry(act, from, displayOrder) ?? resolveEntry(bl, from);
+  if (!match) { console.error(`No project matching '${from}'. Try 'gtg list'.`); process.exit(2); }
+  const old = match.slug;
+  if (old === to) { console.error(`gtg rename: '${to}' is already its slug`); process.exit(2); }
+  if ([...act, ...bl].some((e) => e.slug === to)) {
+    console.error(`gtg rename: '${to}' is already used by another project`); process.exit(2);
+  }
+  match.slug = to;
+  let kids = 0;
+  for (const e of [...act, ...bl]) if (e.parent === old) { e.parent = to; kids++; }
+  // Both stores every time. The entry sits on one shelf but a child can sit on the other.
+  saveEntries(REL_ACTIVE, 'handoffs', act);
+  saveEntries(REL_BACKLOG, 'backlog', bl);
+  commit([REL_ACTIVE, REL_BACKLOG], `gtg rename: ${old} to ${to}`);
+  console.log(`Renamed: ${match.project} (${old} -> ${to})${
+    kids ? `, re-pointed ${kids} sub-project(s)` : ''}`);
+  console.log(`The portfolio slug is separate. Match it with: projects rename ${old} ${to}`);
+}
+
+// The record IS git. Every verb here commits with a descriptive subject, so the two stores
+// already carry the whole history and a written ledger would be a second, thinner copy of it.
+// Subjects carry the project NAME rather than the slug, so filtering resolves the entry first.
+function log(argv) {
+  const t = argv.find((a) => !a.startsWith('-'));
+  const i = argv.indexOf('-n');
+  const n = i === -1 ? '20' : (argv[i + 1] ?? '20');
+  const filter = [];
+  if (t) {
+    const match = resolveEntry(entries(REL_ACTIVE, 'handoffs'), t, displayOrder)
+      ?? resolveEntry(entries(REL_BACKLOG, 'backlog'), t);
+    if (!match) { console.error(`No project matching '${t}'. Try 'gtg list'.`); process.exit(2); }
+    // --fixed-strings: a project name is free text and can hold regex metacharacters.
+    filter.push('--fixed-strings', '--grep', match.project);
+  }
+  let out = '';
+  try {
+    out = execFileSync('git', ['log', `-n${n}`, '--date=short', '--format=%h %ad %s',
+      ...filter, '--', REL_ACTIVE, REL_BACKLOG],
+    { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] }).toString();
+  } catch {
+    console.error('gtg log: no git history here'); process.exit(1);
+  }
+  process.stdout.write(out || 'gtg log: nothing recorded yet\n');
 }
 
 function remove(argv) {
@@ -565,16 +630,20 @@ function maybeAutoList(argv) {
   if (a['no-list']) return;
   if (a.list || process.stdout.isTTY) renderList([]);
 }
-const MOVE_CMDS = new Set(['back', 'active', 'remove', 'rm', 'prune', 'resume', 'undo']);
+const MOVE_CMDS = new Set(['back', 'active', 'remove', 'rm', 'prune', 'resume', 'undo', 'rename']);
 
 // --- dispatch -----------------------------------------------------------------
 const [cmd, ...rest] = process.argv.slice(2);
 const builtins = {
   handoff, backlog, list, help, '--help': help, '-h': help,
   back, active: activate, remove, rm: remove, prune: remove, resume: resumeConsume, undo,
+  rename, log,
 };
 if (!cmd) { list([]); }
-else if (builtins[cmd]) {
+// hasOwn, not truthiness: every inherited Object key resolved here, so `gtg constructor` and
+// `gtg toString` called something that is not a verb instead of falling through to the
+// extension lookup and then the unknown-command error.
+else if (Object.hasOwn(builtins, cmd)) {
   await builtins[cmd](rest);
   if (MOVE_CMDS.has(cmd)) maybeAutoList(rest);
 }

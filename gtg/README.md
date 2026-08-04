@@ -48,6 +48,8 @@ Requires Node.js ≥ 18 and git on PATH.
 | "gtg backlog <idea>" | Park a long-horizon idea on the shelf |
 | "gtg back <n\|slug>" / "gtg active <n\|slug>" | Shelf / reactivate an entry |
 | "gtg remove <n>" / undo via "gtg undo" | Prune; git history is the undo stack |
+| "gtg rename <n\|slug> <new>" | Change a slug, re-pointing any sub-projects that named it as their parent |
+| "gtg log [n\|slug]" | What happened, read from git rather than a ledger |
 
 Handoffs live in *your repo* (`<repo>/docs/handoffs/`), committed to *your* history.
 
