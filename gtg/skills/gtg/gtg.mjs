@@ -24,6 +24,19 @@ const REL_BACKLOG = 'docs/handoffs/_backlog.json';
 // Directory of this CLI file — bundled extensions ship alongside it under extensions/.
 const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 
+// gtg add-ons come in two kinds. An EXTENSION owns entries in the handoff store and renders
+// its own separated list, so its entries are excluded from `list` and `backlog`. A MOD owns
+// no entries and only adds a view (stats, report), so mods are absent from this map.
+//
+// Command name -> the `parent` namespace it owns. Filtering is on the existing `parent` field
+// and adds no new one on purpose: writeHandoff rebuilds every entry as a fresh literal and
+// silently drops fields it does not know, so a marker field would survive exactly until the
+// next wrap. Same constraint that put issue-package membership in the issue file.
+const EXTENSIONS = { issues: 'issues', learn: 'learning' };
+const EXTENSION_PARENTS = new Set(Object.values(EXTENSIONS));
+const isExtensionEntry = (e) => EXTENSION_PARENTS.has(e?.parent);
+const userVisible = (arr) => arr.filter((e) => !isExtensionEntry(e));
+
 // Who is mutating the store. Every gtg commit carries this as a trailer so `undo`
 // can tell its own change from a concurrent session's — two sessions sharing one
 // checkout is the normal setup, and undo used to revert whichever session
@@ -92,7 +105,18 @@ function ago(iso) {
   if (!Number.isFinite(h)) return '?';
   return h < 48 ? `${Math.floor(h)}h ago` : `${Math.floor(h / 24)}d ago`;
 }
-function sortByProject(arr) { return [...arr].sort((a, b) => a.project.localeCompare(b.project)); }
+// Ordering doubles as numbering: `gtg back <n>` and `gtg active b<n>` resolve a number
+// against the same order the rows were rendered in, so the extension exclusion belongs in
+// this one shared ordering helper rather than at each console.log. A number on screen then
+// cannot address a different entry than the one the user typed back. Slug and name lookups
+// are untouched, so an extension entry stays reachable by slug.
+//
+// ponytail: filtered at render, NOT at read. `list` is the path that runs autoShelf, so
+// filtering earlier would stop extension entries ever auto-shelving and silently empty
+// `gtg learn`'s shelved section.
+function sortByProject(arr) {
+  return userVisible(arr).sort((a, b) => a.project.localeCompare(b.project));
+}
 // The exact top-to-bottom order `list` renders active entries in: each family
 // (parent) alphabetical, its members alphabetical within, then standalone. ONE
 // canonical order so a number on screen, `gtg back <n>`, and the "gtg back <hint>"
@@ -318,7 +342,8 @@ function renderList(argv) {
   // order rows actually appear (see displayOrder), and `gtg back <n>` resolves
   // against this same order.
   const allAct = displayOrder(entries(REL_ACTIVE, 'handoffs'));
-  const blCount = entries(REL_BACKLOG, 'backlog').length;
+  // userVisible, so the "+N backlogged" pointer counts the rows `gtg backlog` will show.
+  const blCount = userVisible(entries(REL_BACKLOG, 'backlog')).length;
   const shown = filter
     ? allAct.filter((e) => e.slug === filter || e.project.toLowerCase().includes(filter.toLowerCase()))
     : allAct;
@@ -400,7 +425,9 @@ function renderList(argv) {
 }
 
 function backlogList() {
-  const bl = entries(REL_BACKLOG, 'backlog');
+  // Excluded up front, not just in the sortByProject call below, so the header count and the
+  // empty-shelf message describe the rows actually rendered.
+  const bl = userVisible(entries(REL_BACKLOG, 'backlog'));
   if (!bl.length) {
     console.log("Backlog is empty. Shelf an active entry with 'gtg back <n>', or park an idea with 'gtg backlog --project ...'.");
     return;
@@ -772,7 +799,22 @@ else {
     try {
       const mod = await import(pathToFileURL(ext).href);
       if (typeof mod.default !== 'function') throw new Error('no default export function');
-      await mod.default({ root: ROOT, args: rest, readStore, writeStore, commit, countHandoffFiles });
+      const ownParent = EXTENSIONS[cmd] ?? null;
+      // Both stores, always. An entry idle over 7 days is auto-shelved onto the backlog by
+      // `list`, so an active-only read reports a live package as missing.
+      const ownEntries = () => {
+        const grab = (rel, key) => {
+          if (!ownParent) return [];
+          const store = readStore(rel);
+          const all = Array.isArray(store?.[key]) ? store[key].filter(Boolean) : [];
+          return all.filter((e) => e.parent === ownParent);
+        };
+        return {
+          active: grab(REL_ACTIVE, 'handoffs'),
+          shelved: grab(REL_BACKLOG, 'backlog'),
+        };
+      };
+      await mod.default({ root: ROOT, args: rest, readStore, writeStore, commit, countHandoffFiles, ownEntries });
     } catch (e) {
       console.error(`gtg: extension '${cmd}' failed: ${(e?.message || String(e)).split('\n')[0]}`);
       process.exit(1);

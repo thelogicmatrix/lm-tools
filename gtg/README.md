@@ -84,11 +84,25 @@ export default async ({ root, args, readStore, writeStore, commit, countHandoffF
 };
 ```
 
-`ctx` = `{ root, args, readStore(path), writeStore(path, data), commit(paths, message), countHandoffFiles(slug) }`.
+`ctx` = `{ root, args, readStore(path), writeStore(path, data), commit(paths, message), countHandoffFiles(slug), ownEntries() }`.
 `countHandoffFiles(slug)` returns how many `docs/handoffs/*.md` files exist for that slug — the
 same true-count fallback the CLI itself uses when an entry's `sessions` field is absent (legacy
 entries), so an extension doesn't have to re-implement the file-count logic to avoid the same
 hardcoded-`1` bug.
+
+`ownEntries()` returns `{ active, shelved }`, this command's own handoff entries, read from
+`_active.json` and `_backlog.json` and filtered to the `parent` namespace it owns. Both shelves
+every time, because `gtg list` auto-shelves anything idle over 7 days and an active-only read
+would report a live package as missing. A command that owns no namespace gets two empty arrays.
+
+**Extensions vs mods.** An *extension* owns entries in the handoff store and renders its own
+separated list, so its entries are excluded from `gtg list` and `gtg backlog` (and from their
+counts) to avoid listing the same work twice. `issues` and `learn` are extensions, owning the
+`issues` and `learning` parent namespaces. A *mod* owns no entries and only adds a view, so it
+sees the whole store: `stats` and `report` are mods and their counts stay whole-store totals.
+Membership is read off the existing `parent` field rather than a new marker field, because
+`gtg handoff` rebuilds each entry as a fresh literal and drops fields it does not know.
+Registering a new namespace means editing `EXTENSIONS` in `gtg.mjs`.
 
 **2. Procedure hooks** — the exit and resume flows load markdown hooks if present, so you
 can add project-specific steps without forking the skill:
@@ -135,7 +149,9 @@ nothing is inferred by a model. Top-level keys:
 | `fun` | best week, longest-lived shipped project, most-resumed, velocity label |
 
 `gtg stats` prints a few of these as terminal lines. Both are read-only — unlike
-`gtg list`, they never touch the store.
+`gtg list`, they never touch the store. Both are mods, so their `counts.active`
+covers every entry including the extension namespaces, which is why it can read
+higher than the number of rows `gtg list` shows.
 
 ### Entry fields
 

@@ -1698,4 +1698,106 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 44 - a superseded slug stops counting as abandoned');
 }
 
+// --- 45. an entry in a registered extension namespace does not render in `list` ---
+// Extensions (issues, learn) own handoff entries and render their own separated
+// list, so leaving them in `gtg list` shows the same work twice and buries the
+// projects the list exists for. Asserted on the project NAME, which is what the
+// renderer prints, not the slug.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('learning-go', 'Learning: Go'), '--parent', 'learning'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('real-project', 'Real Project'), '--parent', 'gtg'], { input: BODY });
+  const r = gtg(repo, ['list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!r.stdout.includes('Issues P9: x'), 'issue package leaked into gtg list');
+  assert.ok(!r.stdout.includes('Learning: Go'), 'learning sprint leaked into gtg list');
+  assert.ok(r.stdout.includes('Real Project'), 'a real project was wrongly excluded');
+  // The families the header counts must not include the excluded namespaces either.
+  assert.doesNotMatch(r.stdout, /▸ issues/, 'an extension namespace rendered as a family group');
+  assert.doesNotMatch(r.stdout, /▸ learning/, 'an extension namespace rendered as a family group');
+  console.log('ok 45 - an extension namespace does not render in list');
+}
+
+// --- 46. the same exclusion applies to `backlog` ---
+{
+  const repo = tempRepo();
+  gtg(repo, ['backlog', '--project', 'Issues P8: y', '--slug', 'issues-p8-y',
+    '--next', 'TBD', '--parent', 'issues'], { input: '## The Idea\nsomething\n' });
+  gtg(repo, ['backlog', '--project', 'Parked Idea', '--slug', 'parked-idea',
+    '--next', 'TBD'], { input: '## The Idea\nsomething\n' });
+  const r = gtg(repo, ['backlog']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!r.stdout.includes('Issues P8: y'), 'issue package leaked into gtg backlog');
+  assert.ok(r.stdout.includes('Parked Idea'), 'a real backlog item was wrongly excluded');
+  assert.match(r.stdout, /^1 backlogged project\b/m, 'the shelf count still includes extension entries');
+  // b<n> is what `gtg active <n>` resolves, so it has to number the rows shown.
+  assert.match(r.stdout, /b1\. Parked Idea/, 'shelf numbering must run 1..N over the rows rendered');
+  console.log('ok 46 - the exclusion applies to backlog too');
+}
+
+// --- 47. the count in the rendered summary agrees with what was rendered ---
+// A banner or header saying 17 while the rows show 12 is the whole defect this
+// exclusion exists to prevent.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('real-project', 'Real Project'), '--parent', 'gtg'], { input: BODY });
+  const r = gtg(repo, ['list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /1 active gtg project\b/, 'the count still includes extension entries');
+  console.log('ok 47 - the rendered count agrees with the rendered rows');
+}
+
+// --- 48. autoShelf still acts on extension entries even though list hides them ---
+// The regression guard for filtering at READ time instead of render time: `list` is
+// the only path that runs the 7-day sweep, so an early filter would stop extension
+// entries ever auto-shelving and silently empty `gtg learn`'s shelved section.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
+  const ap = join(repo, 'docs/handoffs/_active.json');
+  const data = JSON.parse(readFileSync(ap, 'utf8'));
+  data.handoffs[0].updated = new Date(Date.now() - 9 * 86400000).toISOString();
+  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+  const r = gtg(repo, ['list']);
+  assert.equal(r.status, 0, r.stderr);
+  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  assert.ok(bl.some((e) => e.slug === 'issues-p9-x'),
+    'an idle extension entry was not auto-shelved, so filtering happened before autoShelf');
+  assert.equal(active(repo).handoffs.length, 0, 'the shelved entry is gone from active');
+  console.log('ok 48 - autoShelf still sees extension entries');
+}
+
+// --- 49. ctx.ownEntries hands an extension both its shelves, and only its own ---
+// The interface the issues and learn extensions read their own entries through. A
+// user extension stands in for them here so this tests the ctx rather than either
+// extension's output.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('real-project', 'Real Project'), '--parent', 'gtg'], { input: BODY });
+  gtg(repo, ['backlog', '--project', 'Issues P8: y', '--slug', 'issues-p8-y',
+    '--next', 'TBD', '--parent', 'issues'], { input: '## The Idea\nsomething\n' });
+  gtg(repo, ['backlog', '--project', 'Parked Idea', '--slug', 'parked-idea',
+    '--next', 'TBD'], { input: '## The Idea\nsomething\n' });
+  const probe = 'export default async ({ ownEntries }) => {\n'
+    + '  const { active, shelved } = ownEntries();\n'
+    + '  console.log(JSON.stringify({ active: active.map((e) => e.slug), shelved: shelved.map((e) => e.slug) }));\n'
+    + '};\n';
+  mkdirSync(join(repo, '.gtg/commands'), { recursive: true });
+  writeFileSync(join(repo, '.gtg/commands/issues.mjs'), probe);
+  const r = gtg(repo, ['issues']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout.trim()), { active: ['issues-p9-x'], shelved: ['issues-p8-y'] },
+    'ownEntries must return only the calling command\'s namespace, from BOTH stores');
+  // A command that owns no namespace gets two empty arrays, never undefined.
+  writeFileSync(join(repo, '.gtg/commands/nomad.mjs'), probe);
+  const r2 = gtg(repo, ['nomad']);
+  assert.equal(r2.status, 0, r2.stderr);
+  assert.deepEqual(JSON.parse(r2.stdout.trim()), { active: [], shelved: [] },
+    'a command that owns no namespace must get empty arrays');
+  console.log('ok 49 - ctx.ownEntries returns the calling extension\'s own entries');
+}
+
 console.log('ALL PASS');
