@@ -1,0 +1,10 @@
+{
+  "name": "projects",
+  "version": "1.0.0",
+  "description": "Portfolio layer for Claude Code: generated project index plus per-project narrative pages.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node test/projects.test.mjs && node test/projects-index-guard.test.mjs"
+  }
+}

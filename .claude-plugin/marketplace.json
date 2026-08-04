@@ -11,6 +11,11 @@
       "name": "due-diligence",
       "source": "./due-diligence",
       "description": "Due Diligence — adversarial pre-ship review + build-to-standard construction (cdd): a modular 44-lens framework you extend with your own lenses to fit your work."
+    },
+    {
+      "name": "projects",
+      "source": "./projects",
+      "description": "projects — the portfolio layer: a generated index of everything you have going, one narrative page per project, and a sync that checks every row against reality instead of trusting a table a model maintained."
     }
   ]
 }
