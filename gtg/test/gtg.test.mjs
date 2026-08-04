@@ -1577,4 +1577,35 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 40 - an inherited Object key is not a verb');
 }
 
+
+// --- 41. rename repairs a stale parent reference when nothing carries that slug ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('bali-trip', 'Bali Trip'), { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('bali-shopping', 'Bali Shopping'), '--parent', 'bali-trip-2026'],
+    { input: BODY });
+  // Simulate what a PORTFOLIO rename leaves behind: entries pointing at a portfolio slug that no
+  // longer exists, while no gtg entry carries that slug itself.
+  const store = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_active.json'), 'utf8'));
+  for (const e of store.handoffs) if (e.slug === 'bali-trip') e.parent = 'bali-trip-2026';
+  writeFileSync(join(repo, 'docs/handoffs/_active.json'), JSON.stringify(store, null, 2));
+
+  const r = gtg(repo, ['rename', 'bali-trip-2026', 'bali-trip', '--no-list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Re-pointed 2 entries from parent 'bali-trip-2026' to 'bali-trip'/);
+  const after = active(repo).handoffs;
+  assert.equal(after.filter((e) => e.parent === 'bali-trip-2026').length, 0, 'no dangle left');
+  assert.equal(after.filter((e) => e.parent === 'bali-trip').length, 2);
+  // The target already existing as a slug is normal here, and must NOT be refused: that is the
+  // opposite of what renaming an entry requires.
+  assert.equal(after.filter((e) => e.slug === 'bali-trip').length, 1, 'no slug was harmed');
+  assert.equal(after.filter((e) => e.slug === 'bali-shopping').length, 1);
+
+  // A slug that is neither an entry nor any parent is still an error.
+  const nothing = gtg(repo, ['rename', 'not-a-thing-anywhere', 'whatever']);
+  assert.equal(nothing.status, 2);
+  assert.match(nothing.stderr, /No project or parent reference matching/);
+  console.log('ok 41 - rename repairs a stale parent reference when nothing carries that slug');
+}
+
 console.log('ALL PASS');

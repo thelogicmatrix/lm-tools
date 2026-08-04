@@ -409,7 +409,8 @@ function help() {
   gtg active <n|slug>          reactivate a backlog entry
   gtg remove <n|slug>          drop an entry (active first, then backlog)
   gtg resume <n|slug>          consume an entry on pick-up (NOT a ship)
-  gtg rename <n|slug> <new>    change a slug, re-pointing any sub-projects
+  gtg rename <n|slug> <new>    change a slug, re-pointing any sub-projects. With a slug nothing
+                               here carries, it repairs a stale parent reference instead
   gtg log [n|slug] [-n N]      what happened, read from git rather than a ledger
   gtg undo                     revert the last change to the active list
   gtg stats                    one-screen scoreboard: streak, ships, sessions, effort
@@ -476,7 +477,27 @@ function rename(argv) {
   const bl = entries(REL_BACKLOG, 'backlog');
   // Active wins a collision, the same precedence resume uses.
   const match = resolveEntry(act, from, displayOrder) ?? resolveEntry(bl, from);
-  if (!match) { console.error(`No project matching '${from}'. Try 'gtg list'.`); process.exit(2); }
+  if (!match) {
+    // No entry carries this slug, but `parent` names a slug in the PORTFOLIO, not here. So a
+    // rename over there leaves references here pointing at something that no longer exists, and
+    // repairing them is what `projects rename` tells the caller to run this for. Exact match
+    // only, never resolveEntry's fuzzy name matching: a parent is always a slug.
+    //
+    // No collision check on `to` on this path. The new parent SHOULD normally be a slug that
+    // already exists, which is the exact opposite of what the entry case requires.
+    const kids = [...act, ...bl].filter((e) => e.parent === from);
+    if (!kids.length) {
+      console.error(`No project or parent reference matching '${from}'. Try 'gtg list'.`);
+      process.exit(2);
+    }
+    for (const e of kids) e.parent = to;
+    saveEntries(REL_ACTIVE, 'handoffs', act);
+    saveEntries(REL_BACKLOG, 'backlog', bl);
+    commit([REL_ACTIVE, REL_BACKLOG], `gtg rename: parent ${from} to ${to}`);
+    console.log(`Re-pointed ${kids.length} entr${kids.length === 1 ? 'y' : 'ies'} from parent '${
+      from}' to '${to}'. Nothing here carries '${from}' as its own slug.`);
+    return;
+  }
   const old = match.slug;
   if (old === to) { console.error(`gtg rename: '${to}' is already its slug`); process.exit(2); }
   if ([...act, ...bl].some((e) => e.slug === to)) {
