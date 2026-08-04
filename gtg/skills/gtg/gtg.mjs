@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// gtg — zero-model bookkeeping CLI for the gtg pause/resume skill.
+// gtg - zero-model bookkeeping CLI for the gtg pause/resume skill.
 // Storage root: GTG_HUB env var if set, else the current git repo's root.
 // Unknown subcommands dispatch to <root>/.gtg/commands/<name>.mjs (see README).
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
@@ -21,7 +21,7 @@ function resolveRoot() {
 const ROOT = resolveRoot();
 const REL_ACTIVE = 'docs/handoffs/_active.json';
 const REL_BACKLOG = 'docs/handoffs/_backlog.json';
-// Directory of this CLI file — bundled extensions ship alongside it under extensions/.
+// Directory of this CLI file - bundled extensions ship alongside it under extensions/.
 const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 
 // gtg add-ons come in two kinds. An EXTENSION owns entries in the handoff store and renders
@@ -38,7 +38,7 @@ const isExtensionEntry = (e) => EXTENSION_PARENTS.has(e?.parent);
 const userVisible = (arr) => arr.filter((e) => !isExtensionEntry(e));
 
 // Who is mutating the store. Every gtg commit carries this as a trailer so `undo`
-// can tell its own change from a concurrent session's — two sessions sharing one
+// can tell its own change from a concurrent session's - two sessions sharing one
 // checkout is the normal setup, and undo used to revert whichever session
 // committed last (2026-07-14: one session's undo silently reverted another's
 // park). Must be stable ACROSS processes, since the mutation and the later undo
@@ -68,7 +68,7 @@ function commit(paths, message) {
     execFileSync('git', ['add', ...paths], opts);
     // Name the paths on the COMMIT too, not just the add. A pathspec-less `git commit`
     // takes the WHOLE index, so anything a concurrent session staged between our add and
-    // our commit rides along in ours — on 2026-07-27 a `gtg resume` swallowed an unrelated
+    // our commit rides along in ours - on 2026-07-27 a `gtg resume` swallowed an unrelated
     // spec file that another session had just staged. `--` keeps a path that starts with
     // a dash from being read as a flag.
     // The trailer goes in a second -m so it lands in the BODY, leaving the subject
@@ -77,9 +77,9 @@ function commit(paths, message) {
     execFileSync('git', ['commit', '-q', ...msg, '--', ...paths], opts);
   } catch (e) {
     const out = `${e.stdout || ''}${e.stderr || ''}`;
-    if (/nothing to commit|no changes added/i.test(out)) return; // identical content — files already on disk
+    if (/nothing to commit|no changes added/i.test(out)) return; // identical content - files already on disk
     // Don't let a real git failure masquerade as success: the files are written, but say so.
-    console.error(`gtg: git commit failed, changes are on disk but uncommitted — ${(e.stderr || e.message || '').toString().trim().split('\n')[0]}`);
+    console.error(`gtg: git commit failed, changes are on disk but uncommitted - ${(e.stderr || e.message || '').toString().trim().split('\n')[0]}`);
   }
 }
 function entries(rel, key) {
@@ -87,7 +87,7 @@ function entries(rel, key) {
   return Array.isArray(d?.[key]) ? d[key].filter(Boolean) : [];
 }
 function saveEntries(rel, key, items) { writeStore(rel, { [key]: items }); }
-// Local UTC-offset suffix e.g. "+08:00" for the given Date — shared by nowIso()
+// Local UTC-offset suffix e.g. "+08:00" for the given Date - shared by nowIso()
 // and firstHandoffDate() so both emit the same aware-datetime format (a bare
 // vs offset-suffixed stamp otherwise makes Python's fromisoformat raise when
 // comparing them).
@@ -120,7 +120,7 @@ function sortByProject(arr) {
 // The exact top-to-bottom order `list` renders active entries in: each family
 // (parent) alphabetical, its members alphabetical within, then standalone. ONE
 // canonical order so a number on screen, `gtg back <n>`, and the "gtg back <hint>"
-// hints all mean the same row. (Backlog has no families — it stays sortByProject.)
+// hints all mean the same row. (Backlog has no families - it stays sortByProject.)
 function displayOrder(arr) {
   const sorted = sortByProject(arr);
   const families = [...new Set(sorted.map((e) => e.parent).filter(Boolean))].sort();
@@ -147,7 +147,7 @@ function parseFlags(argv) {
   return a;
 }
 
-// Handoff docs are named YYYY-MM-DD-HHMM-<slug>.md. They ARE the session record —
+// Handoff docs are named YYYY-MM-DD-HHMM-<slug>.md. They ARE the session record -
 // counting files is why `sessions` needs no stored counter and backfills for
 // projects that predate this field.
 function handoffFilesFor(slug) {
@@ -166,7 +166,7 @@ function firstHandoffDate(slug) {
   return `${datePart}T00:00:00${localOffsetSuffix(new Date(y, m - 1, day))}`;
 }
 
-// Family grouping. The parent already exists as a docs/projects/ page — the
+// Family grouping. The parent already exists as a docs/projects/ page - the
 // projects skill owns that hierarchy, gtg only points at it.
 // Resolution order: the flag the skill passes from session context, then a
 // slug-prefix match against INDEX.md page slugs. Never asks; an unresolved
@@ -193,7 +193,7 @@ function inferParent(slug, explicit) {
 // per-cwd map { sessions: { <cwd>: ISO } }; git only knows when a handoff was
 // WRITTEN, never how long the work took. Keying by cwd is what stops two
 // concurrent worktree sessions from clobbering each other's clock through the
-// one shared hub file — this handoff reads only ITS OWN session's start.
+// one shared hub file - this handoff reads only ITS OWN session's start.
 // A stale stamp (machine left on overnight) would report a 3-day session, so
 // anything over 24h is discarded rather than believed.
 // ponytail: a clear/compact mid-session restamps this cwd, so the duration is a
@@ -212,12 +212,12 @@ function writeHandoff(argv, { storeRel, key, verb }) {
   const a = parseFlags(argv);
   const missing = ['project', 'slug', 'next'].filter((k) => !a[k]);
   if (missing.length) { console.error(`gtg ${verb}: missing --${missing.join(', --')}`); process.exit(2); }
-  // slug becomes a filename and a git-add arg — constrain it so it can't traverse paths or inject shell.
+  // slug becomes a filename and a git-add arg - constrain it so it can't traverse paths or inject shell.
   if (!/^[A-Za-z0-9_-]+$/.test(a.slug)) { console.error(`gtg ${verb}: --slug must match [A-Za-z0-9_-]`); process.exit(2); }
   const body = readFileSync(0, 'utf8').trim(); // stdin
   if (!body) { console.error(`gtg ${verb}: empty body on stdin`); process.exit(2); }
   // ROOT is the storage hub, NOT the project. A project in its own worktree has
-  // its own branch — detect there, or the hub's branch gets recorded for everyone.
+  // its own branch - detect there, or the hub's branch gets recorded for everyone.
   const worktree = a.worktree || 'repo root';
   let branch = a.branch;
   if (!branch) {
@@ -253,7 +253,7 @@ Say: "let's continue ${a.project}"
     worktree, branch,
     // --parent is stable family metadata only the calling skill can know
     // (inferParent's slug-prefix fallback can't deduce e.g.
-    // sub-project -> atlas) — carry it forward when the flag is
+    // sub-project -> atlas) - carry it forward when the flag is
     // omitted instead of silently dropping the project out of its family.
     parent: inferParent(a.slug, a.parent) ?? prior?.parent,
     duration_min: sessionDurationMin(),
@@ -270,17 +270,17 @@ Say: "let's continue ${a.project}"
   const items = entries(storeRel, key).filter((e) => e.slug !== a.slug); // dedupe by slug
   items.push(entry);
   saveEntries(storeRel, key, items);
-  // 'backlog' here means "park a NEW idea" (writeHandoff's other caller) — distinct
+  // 'backlog' here means "park a NEW idea" (writeHandoff's other caller) - distinct
   // from `back` (below), which SHELVES an already-active entry and keeps its own
   // 'gtg backlog: park <project>' subject unchanged; historical commits use that
   // one and must stay parsable.
   const subject = verb === 'backlog'
-    ? `gtg backlog: new ${a.project} — session ${sessions}`
-    : `${verb}: ${a.project} — session ${sessions}`;
+    ? `gtg backlog: new ${a.project} - session ${sessions}`
+    : `${verb}: ${a.project} - session ${sessions}`;
   commit([relFile, storeRel], subject);
   console.log(relFile);
   console.log(verb === 'backlog'
-    ? `PARKED on backlog: "${a.project}" — reactivate with 'gtg active <n>' or "let's continue ${a.project}"`
+    ? `PARKED on backlog: "${a.project}" - reactivate with 'gtg active <n>' or "let's continue ${a.project}"`
     : `RESUME: "let's continue ${a.project}"`);
 }
 const handoff = (argv) => writeHandoff(argv, { storeRel: REL_ACTIVE, key: 'handoffs', verb: 'handoff' });
@@ -311,7 +311,7 @@ function autoShelf() {
 }
 
 // Live uncommitted-file count for a worktree. A SessionEnd hook that recorded
-// this was retired 2026-07-11 for MISSING dirty worktrees — it only fired on
+// this was retired 2026-07-11 for MISSING dirty worktrees - it only fired on
 // exit behind narrow filters. Checking live at list time has neither flaw.
 // ponytail: 2s timeout per distinct worktree; a slow or absent one renders '?'
 // rather than hanging the list.
@@ -323,13 +323,13 @@ function dirtyCount(dir) {
     return out ? out.split('\n').length : 0;
   } catch { return null; }
 }
-// Where an entry's checkout actually lives — the hub itself for 'repo root'/legacy
+// Where an entry's checkout actually lives - the hub itself for 'repo root'/legacy
 // (undefined) entries, else the recorded worktree path. One definition, two call
-// sites (dirty-count grouping and per-entry rendering) — they must stay identical.
+// sites (dirty-count grouping and per-entry rendering) - they must stay identical.
 function resolveDir(e) { return (!e.worktree || e.worktree === 'repo root') ? ROOT : e.worktree; }
 
 // `list` = the 7-day shelf sweep THEN render. Split out so a move command can
-// re-render (maybeAutoList) without re-running autoShelf — which would re-park a
+// re-render (maybeAutoList) without re-running autoShelf - which would re-park a
 // just-restored stale entry the moment `undo` brought it back.
 function list(argv) {
   autoShelf();
@@ -376,7 +376,7 @@ function renderList(argv) {
 
   if (!shown.length) {
     console.log(`No active gtg projects${filter ? ` matching '${filter}'` : ''}.` +
-      (blCount ? ` (+${blCount} backlogged — gtg backlog)` : ''));
+      (blCount ? ` (+${blCount} backlogged - gtg backlog)` : ''));
     printShelved();
     return;
   }
@@ -386,13 +386,13 @@ function renderList(argv) {
     `${families.length ? ` in ${families.length + (shown.some((e) => !e.parent) ? 1 : 0)} group(s)` : ''}` +
     `${filter ? ` matching '${filter}'` : ''}:`);
 
-  // Only entries with an explicit worktree of their own get a dirty flag — a
+  // Only entries with an explicit worktree of their own get a dirty flag - a
   // 'repo root'/legacy-undefined entry resolves to the storage hub itself, which
   // in real use carries 150+ uncommitted files unrelated to any one project;
   // attributing that count to the entry would falsely implicate it.
   const hasOwnWorktree = (e) => !!e.worktree && e.worktree !== 'repo root';
 
-  // One git call per distinct worktree, not per project — several projects
+  // One git call per distinct worktree, not per project - several projects
   // commonly share one checkout, which is exactly what the warning below is for.
   const dirty = new Map();
   for (const e of shown) {
@@ -413,7 +413,7 @@ function renderList(argv) {
     // and `gtg back <n>` from ever disagreeing about what 3 means.
     const label = n ? c('1', n + '.') : c('2', e.slug + ':');
     const d = hasOwnWorktree(e) ? dirty.get(resolveDir(e)) : undefined;
-    // null = worktree unreachable / dirtyCount failed — render the '?' the spec
+    // null = worktree unreachable / dirtyCount failed - render the '?' the spec
     // promises, distinct from a genuinely clean (0) worktree, which renders nothing.
     const dirtyTag = d === null ? c('33', ' ● ? uncommitted') : d ? c('33', ` ● ${d} uncommitted`) : '';
     const loc = e.branch && e.branch !== '?' ? c('2', ` ${e.branch}`) : '';
@@ -438,21 +438,21 @@ function renderList(argv) {
   // Several active projects in one checkout on one branch is how work gets
   // tangled. Nothing else in gtg could see this before worktree/branch existed.
   // Tolerant migration: entries with no `worktree` at all (pre-Task-4) would
-  // otherwise all collapse onto one '? @ repo root' key and falsely "collide" —
+  // otherwise all collapse onto one '? @ repo root' key and falsely "collide" -
   // skip them, only entries with a real recorded location are compared.
   const byLocation = new Map();
   const BASE_BRANCHES = new Set(['master', 'main']);
   for (const e of shown) {
     if (!e.worktree) continue;
     // master/main @ repo root is the SANCTIONED shared home for docs/meta work
-    // (home-repo doctrine — meta paths commit straight to master), not a tangle.
+    // (home-repo doctrine - meta paths commit straight to master), not a tangle.
     // Only a real feature-branch collision (or a shared non-root worktree) warns.
     if (e.worktree === 'repo root' && BASE_BRANCHES.has(e.branch)) continue;
     const key = `${e.branch || '?'} @ ${e.worktree}`;
     byLocation.set(key, [...(byLocation.get(key) || []), e.project]);
   }
   for (const [key, names] of byLocation) {
-    if (names.length > 1) console.log(`\n${c('33', `⚠ ${names.length} projects share ${key} — ${names.join(', ')}`)}`);
+    if (names.length > 1) console.log(`\n${c('33', `⚠ ${names.length} projects share ${key} - ${names.join(', ')}`)}`);
   }
 
   // BOTH exits, not just the empty one. A query that matches active work AND a shelved extension
@@ -482,7 +482,7 @@ function backlogList() {
 }
 
 function help() {
-  console.log(`gtg — pause/resume + backlog bookkeeping
+  console.log(`gtg - pause/resume + backlog bookkeeping
   gtg handoff --project --slug --next [--eta] [--parent] [--worktree] [--branch] [--dry-run]   (body on stdin)
   gtg backlog [same flags]     park on the backlog shelf (body on stdin); bare = list the shelf
   gtg list [project]           active handoffs (+ 7-day auto-shelf sweep); optional filter
@@ -503,7 +503,7 @@ stdout is a terminal; it stays silent when piped (so an AI wastes no context).
 Force either way with --list / --no-list.
 Storage root: GTG_HUB env var if set, else the enclosing git repo.
 stats/report ship bundled; unknown commands dispatch to <root>/.gtg/commands/<name>.mjs,
-which overrides a bundled one of the same name — see README "Extending gtg".`);
+which overrides a bundled one of the same name - see README "Extending gtg".`);
 }
 
 // --- back / active / remove / undo --------------------------------------------
@@ -640,7 +640,7 @@ function remove(argv) {
     console.log(`Removed: ${match.project}`);
     return;
   }
-  // not in active — try the backlog (lets resume-consume clear a pulled backlog item)
+  // not in active - try the backlog (lets resume-consume clear a pulled backlog item)
   const bl = entries(REL_BACKLOG, 'backlog');
   const blMatch = resolveEntry(bl, t.replace(/^[bB](?=\d+$)/, ''));
   if (blMatch) {
@@ -699,7 +699,7 @@ function resumeConsume(argv) {
   const match = resolveEntry(act, t, displayOrder);
   if (match) {
     saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
-    commit([REL_ACTIVE], `gtg resume: ${match.project} — handoff consumed`);
+    commit([REL_ACTIVE], `gtg resume: ${match.project} - handoff consumed`);
     console.log(`Consumed: ${match.project}`);
     return;
   }
@@ -707,7 +707,7 @@ function resumeConsume(argv) {
   const blMatch = resolveEntry(bl, t.replace(/^[bB](?=\d+$)/, ''));
   if (blMatch) {
     saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== blMatch));
-    commit([REL_BACKLOG], `gtg resume: ${blMatch.project} — backlog handoff consumed`);
+    commit([REL_BACKLOG], `gtg resume: ${blMatch.project} - backlog handoff consumed`);
     console.log(`Consumed from backlog: ${blMatch.project}`);
     return;
   }
@@ -722,7 +722,7 @@ function resumeConsume(argv) {
 //
 // Finding C1: the anchor commit used to be picked from _active.json alone. Two
 // mutations write _backlog.json ONLY (`gtg backlog --project ...` parking a new
-// idea, and `gtg resume <backlog-slug>`) — anchoring on _active.json skips right
+// idea, and `gtg resume <backlog-slug>`) - anchoring on _active.json skips right
 // past those, lands on an unrelated older active-list commit, reverts THAT
 // instead, and (since the restore code still ran against a mismatched parent)
 // silently deleted the backlog. Fix: the anchor considers both paths, and each
@@ -772,16 +772,16 @@ function undo() {
   const subject = mine.subject;
 
   // Restore one store from `${last}^`. Returns whether it changed anything.
-  // If the file didn't exist at last^ but exists now, this commit created it —
+  // If the file didn't exist at last^ but exists now, this commit created it -
   // undoing means removing it. (Undoing the very first-ever handoff commit is
   // exactly this case: _active.json had no `last^` at all, so it goes away
-  // entirely — correct, not an error.)
+  // entirely - correct, not an error.)
   const restoreOne = (rel) => {
     const path = join(ROOT, rel);
     const existedBefore = existsSync(path);
     let prev = null;
     try { prev = execFileSync('git', ['show', `${last}^:${rel}`], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); }
-    catch { /* absent at last^ — never existed yet at that point in history */ }
+    catch { /* absent at last^ - never existed yet at that point in history */ }
     if (prev !== null) { writeFileSync(path, prev); return true; }
     if (existedBefore) { rmSync(path); return true; }
     return false;
@@ -795,7 +795,7 @@ function undo() {
 
   const paths = [...(activeTouched ? [REL_ACTIVE] : []), ...(backlogTouched ? [REL_BACKLOG] : [])];
   commit(paths, `gtg undo: revert '${subject}'`);
-  // Report what came back without re-running list() — list() calls autoShelf(),
+  // Report what came back without re-running list() - list() calls autoShelf(),
   // which would immediately re-park a still-stale restored entry (and commit again).
   const restored = readStore(REL_ACTIVE) ?? {};
   const names = Array.isArray(restored.handoffs) ? restored.handoffs.map((e) => e.project) : [];
@@ -804,7 +804,7 @@ function undo() {
 }
 
 // After a move (back/active/remove/resume/undo) a HUMAN wants the updated list;
-// an AI does not — gtg runs piped when a tool invokes it (stdout not a TTY), so
+// an AI does not - gtg runs piped when a tool invokes it (stdout not a TTY), so
 // TTY-gating suppresses the render for models with zero wasted context, no flag
 // needed. --list / --no-list force it either way. renderList (not list) so undo's
 // just-restored stale entry isn't immediately re-shelved by autoShelf.
@@ -833,7 +833,7 @@ else if (Object.hasOwn(builtins, cmd)) {
 else {
   // Extension dispatch, in resolution order: user <root>/.gtg/commands/<cmd>.mjs FIRST
   // (user overrides bundled), then the plugin's own extensions/commands/<cmd>.mjs
-  // (bundled, ships active). cmd becomes a path segment — constrain it the same way
+  // (bundled, ships active). cmd becomes a path segment - constrain it the same way
   // --slug is, so it can't traverse paths. ctx is a STABILITY CONTRACT (additive-only).
   const safe = /^[A-Za-z0-9_-]+$/.test(cmd);
   const userExt = safe ? join(ROOT, '.gtg', 'commands', `${cmd}.mjs`) : null;
@@ -866,7 +866,7 @@ else {
       process.exit(1);
     }
   } else {
-    console.error(`gtg: unknown command '${cmd}' — try 'gtg help'`);
+    console.error(`gtg: unknown command '${cmd}' - try 'gtg help'`);
     process.exit(2);
   }
 }
