@@ -36,9 +36,11 @@ const run = (root, args = []) => {
     issues({
       root,
       args,
-      readStore: (rel) => {
-        try { return JSON.parse(readFileSync(join(root, rel), 'utf8')); } catch { return null; }
-      },
+      // Throws on purpose, same as writeStore. The command must reach entries ONLY through
+      // ownEntries, so the parent-namespace string stays in gtg.mjs. A working readStore here
+      // would let a future edit quietly reintroduce a hand-rolled store read plus parent
+      // filter, and the suite would pass. This makes that an enforced invariant.
+      readStore: () => { throw new Error('read entries through ownEntries, not readStore'); },
       // Mirrors gtg.mjs: both stores, already filtered to this command's own parent
       // namespace, so the command never sees the namespace string itself.
       ownEntries: () => {
@@ -431,6 +433,18 @@ const LOOSE = {
   const blank = run(both, ['   ']);
   assert.doesNotMatch(blank.out, /GTG-DIRECTIVE/);
   assert.match(blank.out, /No issue package matches/);
+
+  // The WRITER half of the same finding. `pack`'s duplicate check calls this same resolve, so
+  // `pack p1` used to be refused with `p1 already exists: issues-p10-dns`. Asserted here and
+  // not left to the shared call site, because case 12 only asserts the POSITIVE refusal (p1
+  // while p1 really exists). Inline that check as its own pn scan and the reader cases above
+  // keep passing while the writer half regresses unseen. This pack refuses on the spawn target
+  // (case 24), which is fine: the point is that `already exists` is NOT among the reasons.
+  const packRoot = setup(LOOSE, [P10]);
+  const before = snapshot(packRoot);
+  const refused = run(packRoot, ['pack', 'p1', '--name', 'X', '--next', 'Y', 'rtk-grep-flag-mangle']);
+  assert.ok(!/already exists/.test(refused.out), 'pack p1 was refused because p10 exists');
+  assertUntouched(packRoot, before, 'pack p1 against a p10 store');
 }
 
 // 26. An entry in this namespace whose slug carries no pN is not a package. `gtg-issues-layer`
