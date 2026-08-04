@@ -1913,7 +1913,27 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.ok(!rr.stdout.includes('real-shelved'),
     'the generic shelved-project case is deliberately unchanged');
 
-  // FAIL-PRE-FIX: the command the shelved line printed has to work.
+  // The co-occurrence case, and the one that was missing: a query matching ACTIVE work AND a
+  // shelved extension entry. printShelved was called only on the `!shown.length` branch, so any
+  // query that also hit active work silently dropped the shelved entry, which is exactly when
+  // SKILL.md's "reuse the slug if EXACTLY ONE matches" rule does damage: two matches look like
+  // one, and it is the wrong one. Live example: `gtg list Issues` matched an active package plus
+  // two shelved ones and printed only the active rows.
+  gtg(repo, [...HANDOFF_ARGS('issues-tracker-rewrite', 'Issues Tracker Rewrite'), '--parent', 'gtg'],
+    { input: BODY });
+  const rc = gtg(repo, ['list', 'Issues']);
+  assert.equal(rc.status, 0, rc.stderr);
+  // GUARD: the active match still renders as a numbered row on the normal path.
+  assert.match(rc.stdout, /1\. Issues Tracker Rewrite/,
+    'the active match must still render as a numbered row');
+  // FAIL-PRE-FIX: the shelved hit must survive a query that also matched active work.
+  assert.ok(rc.stdout.includes('Issues P9: shelved'),
+    'a shelved extension entry was dropped because the query also matched active work');
+  assert.match(rc.stdout, /gtg active issues-p9-shelved/,
+    'the shelved line must still name its bring-back command on the non-empty path');
+
+  // GUARD: `activate` resolves by slug and always did, so this only pins that the command the
+  // shelved line advertises is a real one.
   const ra = gtg(repo, ['active', 'issues-p9-shelved', '--no-list']);
   assert.equal(ra.status, 0, ra.stderr);
   assert.match(ra.stdout, /Activated: Issues P9: shelved/);

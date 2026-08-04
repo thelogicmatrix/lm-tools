@@ -455,6 +455,13 @@ function renderList(argv) {
     if (names.length > 1) console.log(`\n${c('33', `⚠ ${names.length} projects share ${key} — ${names.join(', ')}`)}`);
   }
 
+  // BOTH exits, not just the empty one. A query that matches active work AND a shelved extension
+  // entry takes this path, and printing only on the empty branch silently dropped the shelved hit
+  // exactly when the reuse probe is most likely to go wrong: SKILL.md reuses a slug only when
+  // EXACTLY ONE entry matches, so a dropped hit turns two matches into one wrong one.
+  if (shelvedHits.length) console.log('');
+  printShelved();
+
   if (blCount) console.log(`\n+ ${blCount} backlogged - gtg backlog`);
 }
 

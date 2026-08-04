@@ -112,7 +112,8 @@ against. Use the slug, which every verb accepts, and which is what the bring-bac
 these entries for the same reason.
 
 A targeted query also reaches a **shelved** extension entry, printed as its own `shelved:` line
-rather than as a numbered row, since it is not active work. That case is not an edge: an issue
+rather than as a numbered row, since it is not active work, and printed whether or not the same
+query also matched active work. That case is not an edge: an issue
 package sits idle between fix sessions, so the 7-day auto-shelf catches it routinely, and without
 this the exit procedure's reuse probe would go blind again the moment a package was parked. This is
 deliberately narrower than the general rule that `gtg list` never shows backlog items: a shelved
