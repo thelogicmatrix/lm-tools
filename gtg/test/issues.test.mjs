@@ -42,7 +42,11 @@ const run = (root, args = []) => {
       // Throws on purpose, same as writeStore. The command must reach entries ONLY through
       // ownEntries, so the parent-namespace string stays in gtg.mjs. A working readStore here
       // would let a future edit quietly reintroduce a hand-rolled store read plus parent
-      // filter, and the suite would pass. This makes that an enforced invariant.
+      // filter, and the suite would pass.
+      // SCOPE, measured rather than assumed: this enforces "not through ctx.readStore". It does
+      // NOT enforce "only through ownEntries". The same regression hand-rolled at the FS level,
+      // JSON.parse(readFileSync(...)) bypassing ctx entirely, is NOT caught, and readIssues
+      // already readFileSyncs under root so that route is available to a future edit.
       readStore: () => { throw new Error('read entries through ownEntries, not readStore'); },
       // Mirrors gtg.mjs: both stores, already filtered to this command's own parent
       // namespace, so the command never sees the namespace string itself.
