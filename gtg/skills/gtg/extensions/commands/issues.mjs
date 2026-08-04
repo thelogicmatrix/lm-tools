@@ -303,6 +303,14 @@ ${members.map((m) => `- docs/issues/${m.file}`).join('\n')}
 ## Next Action
 ${next}
 `;
+  // This 'issues' is a PAYLOAD, not a namespace comparison, so it is the one place the
+  // namespace string still lives outside gtg.mjs. It MUST agree with EXTENSIONS.issues, or
+  // newly packed packages park under a parent their own reader does not read and go invisible
+  // to gtg issues, gtg list and gtg backlog at once. Task 6's park test now pins this literal
+  // in the child argv and gtg.test.mjs pins EXTENSIONS.issues, so a one-sided edit fails CI,
+  // but a coordinated rename that forgets this line would not.
+  // See docs/issues/2026-08-04-gtg-pack-parent-must-agree-with-extensions-map.md: the cheap
+  // collapse is passing gtg.mjs's already-computed ownParent through the ctx.
   const backlogArgs = [
     'backlog', '--project', name, '--slug', slug, '--next', next, '--parent', 'issues',
     ...(eta ? ['--eta', eta] : []),
