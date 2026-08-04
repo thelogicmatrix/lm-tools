@@ -24,6 +24,16 @@ const REL_BACKLOG = 'docs/handoffs/_backlog.json';
 // Directory of this CLI file — bundled extensions ship alongside it under extensions/.
 const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 
+// Who is mutating the store. Every gtg commit carries this as a trailer so `undo`
+// can tell its own change from a concurrent session's — two sessions sharing one
+// checkout is the normal setup, and undo used to revert whichever session
+// committed last (2026-07-14: one session's undo silently reverted another's
+// park). Must be stable ACROSS processes, since the mutation and the later undo
+// are separate invocations, which is exactly what a harness session id gives us.
+// GTG_SESSION_ID is the portable override for other harnesses and for tests.
+const SESSION_ID = process.env.GTG_SESSION_ID || process.env.CLAUDE_CODE_SESSION_ID || '';
+const SESSION_TRAILER = 'gtg-session';
+
 // --- color (TTY-gated, NO_COLOR-aware; raw ANSI, no dependency) ---------------
 const COLOR = process.stdout.isTTY && !process.env.NO_COLOR;
 const c = (code, s) => (COLOR ? `\x1b[${code}m${s}\x1b[0m` : String(s));
@@ -48,7 +58,10 @@ function commit(paths, message) {
     // our commit rides along in ours — on 2026-07-27 a `gtg resume` swallowed an unrelated
     // spec file that another session had just staged. `--` keeps a path that starts with
     // a dash from being read as a flag.
-    execFileSync('git', ['commit', '-q', '-m', message, '--', ...paths], opts);
+    // The trailer goes in a second -m so it lands in the BODY, leaving the subject
+    // (which history.mjs classifies on) byte-identical to what it always was.
+    const msg = SESSION_ID ? ['-m', message, '-m', `${SESSION_TRAILER}: ${SESSION_ID}`] : ['-m', message];
+    execFileSync('git', ['commit', '-q', ...msg, '--', ...paths], opts);
   } catch (e) {
     const out = `${e.stdout || ''}${e.stderr || ''}`;
     if (/nothing to commit|no changes added/i.test(out)) return; // identical content — files already on disk
@@ -409,9 +422,12 @@ function help() {
   gtg active <n|slug>          reactivate a backlog entry
   gtg remove <n|slug>          drop an entry (active first, then backlog)
   gtg resume <n|slug>          consume an entry on pick-up (NOT a ship)
-  gtg rename <n|slug> <new>    change a slug, re-pointing any sub-projects
+  gtg supersede <n|slug> [--into <n|slug>]
+                               rolled up or created in error (neither ship nor abandon)
+  gtg rename <n|slug> <new>    change a slug, re-pointing any sub-projects. With a slug nothing
+                               here carries, it repairs a stale parent reference instead
   gtg log [n|slug] [-n N]      what happened, read from git rather than a ledger
-  gtg undo                     revert the last change to the active list
+  gtg undo                     revert THIS SESSION'S last change to the stores
   gtg stats                    one-screen scoreboard: streak, ships, sessions, effort
   gtg report                   full report JSON -> docs/handoffs/_report.json
 After a move (back/active/remove/resume/undo) the updated list auto-prints when
@@ -476,7 +492,27 @@ function rename(argv) {
   const bl = entries(REL_BACKLOG, 'backlog');
   // Active wins a collision, the same precedence resume uses.
   const match = resolveEntry(act, from, displayOrder) ?? resolveEntry(bl, from);
-  if (!match) { console.error(`No project matching '${from}'. Try 'gtg list'.`); process.exit(2); }
+  if (!match) {
+    // No entry carries this slug, but `parent` names a slug in the PORTFOLIO, not here. So a
+    // rename over there leaves references here pointing at something that no longer exists, and
+    // repairing them is what `projects rename` tells the caller to run this for. Exact match
+    // only, never resolveEntry's fuzzy name matching: a parent is always a slug.
+    //
+    // No collision check on `to` on this path. The new parent SHOULD normally be a slug that
+    // already exists, which is the exact opposite of what the entry case requires.
+    const kids = [...act, ...bl].filter((e) => e.parent === from);
+    if (!kids.length) {
+      console.error(`No project or parent reference matching '${from}'. Try 'gtg list'.`);
+      process.exit(2);
+    }
+    for (const e of kids) e.parent = to;
+    saveEntries(REL_ACTIVE, 'handoffs', act);
+    saveEntries(REL_BACKLOG, 'backlog', bl);
+    commit([REL_ACTIVE, REL_BACKLOG], `gtg rename: parent ${from} to ${to}`);
+    console.log(`Re-pointed ${kids.length} entr${kids.length === 1 ? 'y' : 'ies'} from parent '${
+      from}' to '${to}'. Nothing here carries '${from}' as its own slug.`);
+    return;
+  }
   const old = match.slug;
   if (old === to) { console.error(`gtg rename: '${to}' is already its slug`); process.exit(2); }
   if ([...act, ...bl].some((e) => e.slug === to)) {
@@ -544,6 +580,43 @@ function remove(argv) {
   process.exit(2);
 }
 
+// supersede = this entry was rolled up or created in error, NOT shipped and NOT
+// given up on. `remove` writes a phantom ship and `back` reads as shelved-for-later,
+// so consolidating N slices into one parent used to corrupt whichever stat you
+// borrowed (2026-07-25: 7 slices reported as abandoned forever, 12 minutes after
+// being consolidated into a live sub-project). Its own subject gives history.mjs a
+// type to exclude from both ships and abandonments, and --into records which entry
+// absorbed it rather than leaving the roll-up implicit.
+function supersede(argv) {
+  const [t, ...rest] = argv;
+  if (!t) { console.error('Usage: gtg supersede <number|slug> [--into <number|slug>]'); process.exit(2); }
+  const i = rest.indexOf('--into');
+  if (i !== -1 && !rest[i + 1]) { console.error('gtg supersede: --into needs a target'); process.exit(2); }
+  const intoArg = i === -1 ? null : rest[i + 1];
+
+  const act = entries(REL_ACTIVE, 'handoffs');
+  const bl = entries(REL_BACKLOG, 'backlog');
+  const stripB = (s) => s.replace(/^[bB](?=\d+$)/, '');
+  // Active wins a collision, the same precedence resume and rename use.
+  const match = resolveEntry(act, t, displayOrder) ?? resolveEntry(bl, stripB(t));
+  if (!match) { console.error(`No project matching '${t}'. Try 'gtg list' or 'gtg backlog'.`); process.exit(2); }
+
+  // The absorbing entry is usually a gtg entry, but it can equally be a docs/projects
+  // page no entry exists for, so an unresolvable target passes through as text rather
+  // than being rejected.
+  let into = null;
+  if (intoArg) {
+    const target = resolveEntry(act, intoArg, displayOrder) ?? resolveEntry(bl, stripB(intoArg));
+    if (target === match) { console.error('gtg supersede: an entry cannot supersede itself'); process.exit(2); }
+    into = target ? target.project : intoArg;
+  }
+
+  saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
+  saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== match));
+  commit([REL_ACTIVE, REL_BACKLOG], `gtg supersede: ${match.project}${into ? ` into ${into}` : ''}`);
+  console.log(`Superseded: ${match.project}${into ? ` -> ${into}` : ' (created in error)'}`);
+}
+
 // resume-consume: same removal as prune, DIFFERENT commit subject. Keeping these
 // distinct is what lets history tell "shipped" apart from "picked back up".
 function resumeConsume(argv) {
@@ -569,8 +642,10 @@ function resumeConsume(argv) {
   process.exit(2);
 }
 
-// undo = restore BOTH stores from before the last commit that touched either one;
-// repeats to step further back.
+// undo = restore BOTH stores from before THIS SESSION'S last commit that touched
+// either one; repeats to step further back. Two refusals guard the concurrent case,
+// both of them loud: no change of ours to undo, and our change no longer being the
+// tip. Before 2026-08-04 undo took whatever commit was last and reverted it.
 //
 // Finding C1: the anchor commit used to be picked from _active.json alone. Two
 // mutations write _backlog.json ONLY (`gtg backlog --project ...` parking a new
@@ -581,12 +656,47 @@ function resumeConsume(argv) {
 // store is restored independently against ITS OWN state at `last^`, tolerating
 // "didn't exist at last^" per file rather than assuming both existed.
 function undo() {
-  let last;
-  try {
-    last = execFileSync('git', ['log', '-1', '--format=%H', '--', REL_ACTIVE, REL_BACKLOG], { cwd: ROOT }).toString().trim();
-  } catch { last = ''; }
-  if (!last) { console.error('No gtg history to undo.'); process.exit(2); }
-  const subject = execFileSync('git', ['log', '-1', '--format=%s', last], { cwd: ROOT }).toString().trim();
+  const storeLog = (extra = []) => {
+    try {
+      return execFileSync('git', ['log', '-1', '--format=%H%x1f%s%x1f%ar', ...extra, '--', REL_ACTIVE, REL_BACKLOG],
+        { cwd: ROOT }).toString().trim();
+    } catch { return ''; }
+  };
+  const parse = (line) => { const [sha, subject, age] = line.split('\x1f'); return { sha, subject, age }; };
+
+  const tipLine = storeLog();
+  if (!tipLine) { console.error('No gtg history to undo.'); process.exit(2); }
+  const tip = parse(tipLine);
+
+  // Undo means "revert MY last change", which is how it has always been advertised.
+  // Without a session id there is no way to tell whose change is whose, so refuse
+  // rather than revert a stranger's (see SESSION_ID above).
+  if (!SESSION_ID) {
+    console.error('gtg undo: no session id, so gtg cannot tell your change from another session\'s.');
+    console.error(`  Last store commit: '${tip.subject}' (${tip.age}, ${tip.sha.slice(0, 8)})`);
+    console.error('  Set GTG_SESSION_ID to scope undo, or revert that commit by hand if it is yours.');
+    process.exit(2);
+  }
+  const mineLine = storeLog(['-F', '--grep', `${SESSION_TRAILER}: ${SESSION_ID}`]);
+  if (!mineLine) {
+    console.error('gtg undo: no change from this session to undo.');
+    console.error(`  Last store commit: '${tip.subject}' (${tip.age}, ${tip.sha.slice(0, 8)}) - not this session's.`);
+    process.exit(2);
+  }
+  const mine = parse(mineLine);
+
+  // Scoping the ANCHOR is not enough on its own: the restore below rewinds each
+  // store to the anchor's PARENT, which would also throw away anything committed
+  // after it. So the change being undone has to still be the tip of store history.
+  if (mine.sha !== tip.sha) {
+    console.error(`gtg undo: another session changed the store after yours - undoing would discard their work.`);
+    console.error(`  Yours:  '${mine.subject}' (${mine.age})`);
+    console.error(`  Theirs: '${tip.subject}' (${tip.age}, ${tip.sha.slice(0, 8)})`);
+    process.exit(2);
+  }
+
+  const last = mine.sha;
+  const subject = mine.subject;
 
   // Restore one store from `${last}^`. Returns whether it changed anything.
   // If the file didn't exist at last^ but exists now, this commit created it —
@@ -630,14 +740,14 @@ function maybeAutoList(argv) {
   if (a['no-list']) return;
   if (a.list || process.stdout.isTTY) renderList([]);
 }
-const MOVE_CMDS = new Set(['back', 'active', 'remove', 'rm', 'prune', 'resume', 'undo', 'rename']);
+const MOVE_CMDS = new Set(['back', 'active', 'remove', 'rm', 'prune', 'resume', 'undo', 'rename', 'supersede']);
 
 // --- dispatch -----------------------------------------------------------------
 const [cmd, ...rest] = process.argv.slice(2);
 const builtins = {
   handoff, backlog, list, help, '--help': help, '-h': help,
   back, active: activate, remove, rm: remove, prune: remove, resume: resumeConsume, undo,
-  rename, log,
+  rename, log, supersede,
 };
 if (!cmd) { list([]); }
 // hasOwn, not truthiness: every inherited Object key resolved here, so `gtg constructor` and

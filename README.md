@@ -16,6 +16,7 @@ Then install whichever tools you want — they're independent:
 /plugin install gtg@lm-tools
 /plugin install due-diligence@lm-tools
 /plugin install logical-research@lm-tools
+/plugin install projects@lm-tools
 ```
 
 Prefer a frozen, non-updating copy? Each tool is also a plain skill you can copy into
@@ -46,6 +47,15 @@ The reading itself is deliberately not delegated — cross-item connections only
 reader holds the whole corpus.
 **Extend it:** drop recurring reading angles in `.lr/angles/*.md` in your repo — the pipeline
 reads them instead of you re-explaining the angle each run. → [logical-research/README.md](logical-research/README.md)
+
+### [projects](projects/README.md)
+The portfolio layer above gtg: a **generated** index of everything you have going, one
+narrative page per project, and **`projects sync`** — which checks every row against
+reality (skeleton pages, a status older than the repo's last commit, a checkout that no
+longer exists) instead of trusting a table a model maintained. A CLI owns every mechanical
+field and a write-guard hook denies hand-edits to the generated files.
+**No extension point yet**, deliberately: nothing was cut from this one, so a seam would be
+speculative. Ask if you want one. → [projects/README.md](projects/README.md)
 
 ## The shared contract
 
