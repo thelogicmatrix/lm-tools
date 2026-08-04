@@ -1734,3 +1734,21 @@ test('set does not bump lastTouched', () => {
   // Bookkeeping is not work on the project, same reasoning as rename.
   assert.equal(readStore(root).projects[0].lastTouched, '2026-07-01');
 });
+
+test('SKILL.md frontmatter carries no unquoted colon-space', () => {
+  // A plain YAML scalar cannot contain ": ", so the unquoted description that shipped in 1.0.0
+  // made the whole frontmatter unparseable and Claude Code dropped the skill from its registry
+  // without a word: the plugin installed, the hook and the CLI worked, and only the skill was
+  // missing (2026-08-04). Regex rather than a YAML parser because this package has no
+  // dependencies and this is the only failure mode that has bitten. Quote it, or keep ": " out.
+  const fm = readFileSync(fileURLToPath(new URL('../skills/projects/SKILL.md', import.meta.url)), 'utf8')
+    .replaceAll('\r\n', '\n').split('---')[1];
+  const keys = [];
+  for (const line of fm.split('\n')) {
+    const m = /^(\w+):\s*(.*)$/.exec(line);
+    if (!m) continue;
+    keys.push(m[1]);
+    assert.ok(/^['"]/.test(m[2]) || !m[2].includes(': '), `${m[1]} holds ": " and is not quoted`);
+  }
+  assert.deepEqual(keys, ['name', 'description'], 'both keys are still there to check');
+});
