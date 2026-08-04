@@ -1,14 +1,13 @@
-// gtg issues — the issue layer (personal convention, not shipped publicly).
-// Joins two sources it does not own: packages are gtg entries with parent 'issues',
-// membership is the **Package:** field in each docs/issues/ file. Neither side has to
-// be kept in step. Fix an issue, delete its file, it leaves the package.
+// gtg issues - a bundled gtg extension over docs/issues/, shipped with the skill.
+// Joins two sources it does not own: packages are the gtg entries in this command's own
+// parent namespace, membership is the **Package:** field in each docs/issues/ file.
+// Neither side has to be kept in step. Fix an issue, delete its file, and it leaves the
+// package. A worked-around issue KEEPS its file on purpose, so its row stays and carries
+// the Check that would prove the class is really fixed.
 // Spec: docs/superpowers/specs/2026-08-04-gtg-issues-layer-design.md
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, join } from 'node:path';
-
-const ACTIVE = 'docs/handoffs/_active.json';
-const BACKLOG = 'docs/handoffs/_backlog.json';
 
 // Fields sit on one `·`-separated line, so stop at the separator rather than
 // taking the rest of the line and splitting afterwards.
@@ -48,16 +47,19 @@ const readIssues = (root) => {
 
 const pnNum = (pn) => (pn ? Number.parseInt(pn.slice(1), 10) : Number.MAX_SAFE_INTEGER);
 
-// BOTH stores, always: an entry idle >7d is auto-shelved by `gtg list`, so an
-// active-only read would report a live package as missing.
-const readPackages = (readStore) => {
-  const grab = (rel, key, shelved) => {
-    const store = readStore(rel);
-    const all = Array.isArray(store?.[key]) ? store[key].filter(Boolean) : [];
-    return all.filter((e) => e.parent === 'issues').map((e) => ({ ...e, shelved }));
-  };
-  return [...grab(ACTIVE, 'handoffs', false), ...grab(BACKLOG, 'backlog', true)]
+// ctx.ownEntries reads BOTH stores and owns the parent-namespace filter, so the namespace
+// string lives only in gtg.mjs. The shelved flag is set here because pkgHeader renders it.
+const readPackages = (ownEntries) => {
+  const { active, shelved } = ownEntries();
+  return [
+    ...active.map((e) => ({ ...e, shelved: false })),
+    ...shelved.map((e) => ({ ...e, shelved: true })),
+  ]
     .map((e) => ({ ...e, pn: (String(e.slug).match(/^issues-(p\d+)-/) ?? [])[1] ?? null }))
+    // A pN-less entry in this namespace is tooling filed under the wrong parent, not a
+    // package. `gtg-issues-layer` rendered as one for a whole session, with membership
+    // unstamped. Tooling belongs to parent: gtg.
+    .filter((e) => e.pn)
     .sort((a, b) => pnNum(a.pn) - pnNum(b.pn) || String(a.slug).localeCompare(b.slug));
 };
 
@@ -70,11 +72,13 @@ const days = (iso) => {
 // them would invent a precision the field does not carry.
 const ORDER = ['minutes', 'hour', 'session'];
 
-// Effort is free text in practice — 13 of 21 live files carry a parenthetical, so bucketing
-// on the exact string gave ~16 buckets of one. Bucket on the LEADING keyword instead. The
-// lookahead deliberately excludes a range (`minutes-hours (upstream)` → `?`): a range is not
-// a bucket and picking an end would invent data. memberLine still prints the raw value, so
-// the nuance is kept out of the count rather than lost.
+// Effort is free text in practice, and most live files carry a parenthetical, so bucketing on
+// the exact string gave close to one bucket per file. Bucket on the LEADING keyword instead.
+// No live file count here on purpose: the folder grows most weeks, so a count baked into a
+// comment is stale by the next session. The lookahead deliberately excludes a range
+// (`minutes-hours (upstream)` → `?`): a range is not a bucket and picking an end would invent
+// data. memberLine still prints the raw value, so the nuance is kept out of the count rather
+// than lost.
 const bucketOf = (effort) => (String(effort).match(/^(minutes|hour|session)(?=$|[\s(])/i)?.[1] ?? '?').toLowerCase();
 
 const rollup = (members) => {
@@ -92,19 +96,26 @@ const memberLine = (i) => {
   const flags = [];
   if (i.blocked) flags.push(`BLOCKED: ${i.blocked}`);
   if (i.workedAround) flags.push(`WORKED-AROUND${i.workaround ? `: ${i.workaround}` : ''}`);
-  const tail = flags.length ? ` — ${flags.join(' — ')}` : '';
+  const tail = flags.length ? ` - ${flags.join(' - ')}` : '';
   return `  • [${i.effort}] ${i.slug}${tail}${i.check ? '' : ' (no Check)'}`;
 };
 
 const pkgHeader = (p, members) => {
   const state = p.shelved ? `shelved ${days(p.updated)}d` : 'active';
   const tail = members.length ? rollup(members) : 'membership unstamped';
-  return `${p.project} [${p.slug}] (${state}) — ${tail}`;
+  return `${p.project} [${p.slug}] (${state}) - ${tail}`;
 };
 
-// Shared with `pack`, which lists the same loose set before proposing batches.
+const RULE = '='.repeat(55);
+
+// Shared with `pack`, which lists the same loose set before proposing batches, so this
+// block lands in both callers at once. The unpackaged remainder is the one thing in this
+// output that needs a decision, so it gets a named block rather than a count. `Loose (N):`
+// read as one more group heading.
 const printLoose = (loose) => {
-  console.log(`Loose (${loose.length}):`);
+  console.log(RULE);
+  console.log(`UNPACKAGED (${loose.length}) - in no package, untriaged`);
+  console.log(RULE);
   for (const area of [...new Set(loose.map((i) => i.area))].sort()) {
     const group = loose.filter((i) => i.area === area);
     console.log(`  ${area} (${group.length}):`);
@@ -147,17 +158,20 @@ const listPackages = (packages) => {
   }
 };
 
-// Exact pN or slug first, substring second, so `p1` can never be dragged into a
-// multi-match by a project name that happens to contain it.
+// A pN query is exact, full stop. `p1` substring-matches `issues-p10-dns`, returns it as a
+// lone match, and the router then resumes p10 when p1 was asked for. Silent and certain once
+// pack reaches double digits, so pN never falls through to the substring pass. Free text still
+// does, which is the useful half.
 const resolve = (packages, query) => {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const exact = packages.filter((p) => p.pn === q || String(p.slug).toLowerCase() === q);
   if (exact.length) return exact;
+  if (/^p\d+$/.test(q)) return [];
   return packages.filter((p) => `${p.slug} ${p.project}`.toLowerCase().includes(q));
 };
 
-// ponytail: a flag reader, not a parser library — but the flag set is CLOSED and a
+// ponytail: a flag reader, not a parser library, but the flag set is CLOSED and a
 // value that looks like another flag is refused, never guessed. An open reader let
 // `--name --dry-run` swallow the boolean and commit for real, and let a `--dryrun`
 // typo eat the slug after it. Upgrade path: none until a flag legitimately takes a
@@ -171,7 +185,7 @@ const parseFlags = (argv) => {
     const a = argv[i];
     if (!a.startsWith('--')) { pos.push(a); continue; }
     const k = a.slice(2);
-    if (!FLAGS.has(k)) { bad.push(`unknown flag "${a}" — expected --name, --next, --eta or --dry-run`); continue; }
+    if (!FLAGS.has(k)) { bad.push(`unknown flag "${a}" - expected --name, --next, --eta or --dry-run`); continue; }
     if (k === 'dry-run') { flags[k] = true; continue; }
     const val = argv[i + 1];
     if (val === undefined || val.startsWith('--')) { bad.push(`${a} needs a value`); continue; }
@@ -239,7 +253,7 @@ const pack = ({ root, commit }, argv, issues, packages) => {
   // invocation cannot leave stamped files behind at all. --dry-run never spawns, so it is
   // exempt and stays usable from any harness.
   if (!flags['dry-run'] && basename(process.argv[1] ?? '') !== 'gtg.mjs') {
-    errs.push(`pack parks the entry by re-invoking gtg, but the running program is "${basename(process.argv[1] ?? '(none)')}", not gtg.mjs — run it as \`gtg issues pack ...\` (add --dry-run to preview from anywhere)`);
+    errs.push(`pack parks the entry by re-invoking gtg, but the running program is "${basename(process.argv[1] ?? '(none)')}", not gtg.mjs - run it as \`gtg issues pack ...\` (add --dry-run to preview from anywhere)`);
   }
 
   const members = [];
@@ -272,7 +286,7 @@ const pack = ({ root, commit }, argv, issues, packages) => {
     return;
   }
 
-  const subject = `issues: pack ${pn} — ${name} (${members.length} issue${members.length === 1 ? '' : 's'})`;
+  const subject = `issues: pack ${pn} - ${name} (${members.length} issue${members.length === 1 ? '' : 's'})`;
   const writes = members
     .filter((m) => m.pkg !== pn) // idempotent: an already-stamped member is left alone
     .map((m) => {
@@ -295,7 +309,7 @@ ${next}
   ];
 
   if (flags['dry-run']) {
-    console.log(`DRY RUN — would stamp ${writes.length} file(s):`);
+    console.log(`DRY RUN - would stamp ${writes.length} file(s):`);
     writes.forEach((w) => console.log(`  ${w.rel}: ${w.line}`));
     console.log(`  commit: ${subject}`);
     console.log(`  then: node <gtg.mjs> ${backlogArgs.join(' ')}`);
@@ -304,7 +318,7 @@ ${next}
 
   writes.forEach((w) => writeFileSync(join(root, w.rel), w.text));
   if (writes.length) commit(writes.map((w) => w.rel), subject);
-  // process.argv[1] is the running gtg.mjs — checked above, not assumed, so there is no path
+  // process.argv[1] is the running gtg.mjs, checked above and not assumed, so there is no path
   // to configure. execPath + argv array, never a shell string: --name is free text.
   const r = spawnSync(process.execPath, [process.argv[1], ...backlogArgs], {
     input: body,
@@ -326,9 +340,9 @@ ${next}
   }
 };
 
-export default ({ root, args, readStore, commit }) => {
+export default ({ root, args, ownEntries, commit }) => {
   const issues = readIssues(root);
-  const packages = readPackages(readStore);
+  const packages = readPackages(ownEntries);
   const [verb, ...rest] = args ?? [];
   const v = (verb ?? '').toLowerCase();
 
@@ -339,11 +353,11 @@ export default ({ root, args, readStore, commit }) => {
     // One line, nothing else: gtg's router follows a GTG-DIRECTIVE line instead of
     // relaying it, so anything printed alongside it is never seen.
     if (hits.length === 1) {
-      console.log(`GTG-DIRECTIVE: resume ${hits[0].slug} — read references/resume.md and follow it.`);
+      console.log(`GTG-DIRECTIVE: resume ${hits[0].slug} - read references/resume.md and follow it.`);
       return;
     }
     if (hits.length > 1) {
-      console.log(`"${v}" matches ${hits.length} packages — name one:`);
+      console.log(`"${v}" matches ${hits.length} packages - name one:`);
       hits.forEach((p) => console.log(`  • ${p.project} [${p.slug}]`));
       return;
     }

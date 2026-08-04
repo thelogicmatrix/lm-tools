@@ -1,4 +1,5 @@
-// Self-check for .gtg/commands/issues.mjs. Run: node .gtg/commands/issues.test.mjs
+// Self-check for gtg/skills/gtg/extensions/commands/issues.mjs.
+// Run: node gtg/test/issues.test.mjs
 // ponytail: no framework, no fixtures dir. A temp root plus a stubbed ctx is the
 // whole harness. Reach for node:test only if this grows past a dozen cases.
 import assert from 'node:assert/strict';
@@ -38,6 +39,21 @@ const run = (root, args = []) => {
       readStore: (rel) => {
         try { return JSON.parse(readFileSync(join(root, rel), 'utf8')); } catch { return null; }
       },
+      // Mirrors gtg.mjs: both stores, already filtered to this command's own parent
+      // namespace, so the command never sees the namespace string itself.
+      ownEntries: () => {
+        const grab = (rel, key) => {
+          try {
+            const store = JSON.parse(readFileSync(join(root, rel), 'utf8'));
+            const all = Array.isArray(store?.[key]) ? store[key].filter(Boolean) : [];
+            return all.filter((e) => e.parent === 'issues');
+          } catch { return []; }
+        };
+        return {
+          active: grab('docs/handoffs/_active.json', 'handoffs'),
+          shelved: grab('docs/handoffs/_backlog.json', 'backlog'),
+        };
+      },
       writeStore: () => { throw new Error('writeStore must not be used'); },
       commit: (paths, msg) => commits.push({ paths, msg }),
       countHandoffFiles: () => 1,
@@ -51,7 +67,7 @@ const run = (root, args = []) => {
 };
 
 // `commits.length === 0` only proves ctx commit() was never called, and writeFileSync
-// runs BEFORE it — so a write-then-fail passes that check. Byte-compare every issue
+// runs BEFORE it, so a write-then-fail passes that check. Byte-compare every issue
 // file instead, which also catches one case contaminating the next.
 const snapshot = (root) => Object.fromEntries(
   readdirSync(join(root, 'docs/issues')).map((f) => [f, readFileSync(join(root, 'docs/issues', f), 'utf8')]),
@@ -89,7 +105,7 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
 {
   const root = setup({}, [P1]);
   const { out } = run(root);
-  assert.match(out, /\[issues-p1-hooks\] \(active\) — membership unstamped/);
+  assert.match(out, /\[issues-p1-hooks\] \(active\) - membership unstamped/);
 }
 
 // 4. An unstamped issue is loose, grouped by area, and a missing Area reads unfiled.
@@ -99,7 +115,7 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
     '2026-07-28-reborn-audit.md': issue('No field line here at all.'),
   });
   const { out } = run(root);
-  assert.match(out, /Loose \(2\):/);
+  assert.match(out, /UNPACKAGED \(2\) - in no package, untriaged/);
   assert.match(out, /claude-stack \(1\):\n\s+• \[hour\] memory-orphan-files/);
   assert.match(out, /unfiled \(1\):\n\s+• \[\?\] reborn-audit/);
 }
@@ -111,8 +127,8 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
     '2026-07-02-dangling-volumes.md': issue('**Area:** obelisk · **Effort:** hour · **Blocked on:** none'),
   });
   const { out } = run(root);
-  assert.match(out, /• \[session\] sdd-review-tier — BLOCKED: Nathan's call/);
-  assert.doesNotMatch(out, /dangling-volumes — BLOCKED/);
+  assert.match(out, /• \[session\] sdd-review-tier - BLOCKED: Nathan's call/);
+  assert.doesNotMatch(out, /dangling-volumes - BLOCKED/);
   assert.match(out, /· 1 blocked/);
 }
 
@@ -146,7 +162,7 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
     ),
   }, [P1]);
   const { out } = run(root);
-  assert.match(out, /• \[hour\] model-guard-fp — WORKED-AROUND: dispatch as Plan instead/);
+  assert.match(out, /• \[hour\] model-guard-fp - WORKED-AROUND: dispatch as Plan instead/);
   assert.match(out, /1 worked-around/);
   assert.doesNotMatch(out, /model-guard-fp.*\(no Check\)/);
 }
@@ -175,14 +191,14 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
 {
   const root = setup({}, [P1]);
   const { out } = run(root, ['p1']);
-  assert.equal(out, 'GTG-DIRECTIVE: resume issues-p1-hooks — read references/resume.md and follow it.');
+  assert.equal(out, 'GTG-DIRECTIVE: resume issues-p1-hooks - read references/resume.md and follow it.');
 }
 
 // 9. A full slug and a substring of the project name both resolve, and like case 8 the
-// directive is the SOLE output — gtg's router only acts on a directive it sees first.
+// directive is the SOLE output. gtg's router only acts on a directive it sees first.
 {
   const root = setup({}, [P1], [P3]);
-  const only = 'GTG-DIRECTIVE: resume issues-p3-obelisk-housekeeping — read references/resume.md and follow it.';
+  const only = 'GTG-DIRECTIVE: resume issues-p3-obelisk-housekeeping - read references/resume.md and follow it.';
   assert.equal(run(root, ['issues-p3-obelisk-housekeeping']).out, only);
   assert.equal(run(root, ['housekeeping']).out, only);
 }
@@ -213,7 +229,7 @@ const LOOSE = {
   const { out, commits } = run(root, ['pack']);
   assert.match(out, /^GTG-DIRECTIVE: propose themed batches from the loose issues below/);
   assert.match(out, /gtg issues pack <pN> --name/);
-  assert.match(out, /Loose \(2\):/);
+  assert.match(out, /UNPACKAGED \(2\) - in no package, untriaged/);
   assert.equal(commits.length, 0);
 }
 
@@ -273,7 +289,7 @@ const LOOSE = {
 // idempotent: there is nothing left to stamp, and it is NOT refused, so the real run
 // would go on to retry the park. (This case stops at --dry-run, which returns before
 // the spawn, so the park itself is out of reach here.) This is the partial-failure
-// recovery path, the only way a member can already carry the pN being packed — a
+// recovery path, the only way a member can already carry the pN being packed, and a
 // resolving pN is refused outright by case 12.
 {
   const root = setup({
@@ -346,8 +362,9 @@ const LOOSE = {
 }
 
 // 22. Free-text Effort buckets on its LEADING keyword, so a parenthetical does not become
-// its own bucket. Measured on the live folder, 13 of 21 files carry one, and bucketing on
-// the exact string produced ~16 buckets of one.
+// its own bucket. Measured on the live folder when this was written, most files carried one
+// and bucketing on the exact string produced close to one bucket per file. No file count
+// recorded here on purpose: the folder grows most weeks, so the count would be stale.
 {
   const root = setup({
     '2026-07-03-a-plain.md': issue('**Area:** misc · **Effort:** minutes · **Package:** p1'),
@@ -373,10 +390,10 @@ const LOOSE = {
 }
 
 // 24. A real pack refuses when the program that would be re-invoked to park the entry is not
-// gtg.mjs — here it is this test file, which is exactly the hazard: spawning it would exit 0
+// gtg.mjs. Here it is this test file, which is exactly the hazard: spawning it would exit 0
 // on args it ignores and pack would report a park that never happened. Refused BEFORE any
 // write, so a wrong invocation leaves nothing stamped. This is the only honest assertion
-// about the park path available from this file; see the warning on `run` above.
+// about the park path available from this file. See the warning on `run` above.
 {
   const root = setup(LOOSE, [P1]);
   const before = snapshot(root);
@@ -386,6 +403,59 @@ const LOOSE = {
   assert.equal(commits.length, 0);
   assert.equal(code, 1);
   assertUntouched(root, before, 'wrong spawn target');
+}
+
+// 25. A pN query is EXACT. `p1` against a store holding only p10 used to substring-match
+// `issues-p10-dns`, return it as a lone match, and make the router resume the wrong package.
+// Free text still substring-matches, which is the useful half.
+{
+  const P10 = pkg({ project: 'Issues P10: dns', slug: 'issues-p10-dns' });
+  const only10 = setup({}, [P10]);
+  const wrong = run(only10, ['p1']);
+  assert.doesNotMatch(wrong.out, /GTG-DIRECTIVE/,
+    'p1 substring-matched p10 and would resume the wrong package');
+  assert.match(wrong.out, /No issue package matches "p1"/);
+  // An exact pN still reaches its own package.
+  assert.equal(run(only10, ['p10']).out,
+    'GTG-DIRECTIVE: resume issues-p10-dns - read references/resume.md and follow it.',
+    'an exact pN query stopped matching its own package');
+  // Free text keeps substring matching.
+  assert.equal(run(only10, ['dns']).out,
+    'GTG-DIRECTIVE: resume issues-p10-dns - read references/resume.md and follow it.',
+    'substring matching on free text was wrongly removed');
+  // p1 resolves to p1 when p1 exists, with p10 sitting alongside it.
+  const both = setup({}, [P1, P10]);
+  assert.equal(run(both, ['p1']).out,
+    'GTG-DIRECTIVE: resume issues-p1-hooks - read references/resume.md and follow it.');
+  // A whitespace-only query is empty, not match-everything.
+  const blank = run(both, ['   ']);
+  assert.doesNotMatch(blank.out, /GTG-DIRECTIVE/);
+  assert.match(blank.out, /No issue package matches/);
+}
+
+// 26. An entry in this namespace whose slug carries no pN is not a package. `gtg-issues-layer`
+// was gtg tooling filed under parent: issues, and it rendered as a package with membership
+// unstamped for a whole session.
+{
+  const root = setup({}, [P1, pkg({ project: 'gtg issues layer', slug: 'gtg-issues-layer' })]);
+  const { out } = run(root);
+  assert.match(out, /\[issues-p1-hooks\]/);
+  assert.doesNotMatch(out, /gtg-issues-layer/,
+    'a pN-less entry in the issues namespace rendered as a package');
+  assert.match(out, /0 issues · 1 packages/);
+}
+
+// 27. The unpackaged remainder is a named class, not one more group heading, and packages
+// still lead the output.
+{
+  const root = setup(LOOSE, [P1]);
+  const { out } = run(root);
+  assert.match(out, /^={10,}$/m, 'no rule line above the unpackaged block');
+  assert.match(out, /UNPACKAGED \(\d+\) - in no package, untriaged/,
+    'the unpackaged heading does not say what unpackaged means');
+  assert.ok(!/^Loose \(/m.test(out), 'the old Loose heading survived');
+  assert.ok(out.indexOf('issues-p1-hooks') < out.indexOf('UNPACKAGED'),
+    'packages no longer lead the output');
 }
 
 console.log('issues.mjs: all checks passed');
