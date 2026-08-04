@@ -341,11 +341,18 @@ function renderList(argv) {
   // displayOrder, not sortByProject: numbering must run 1..N top-to-bottom in the
   // order rows actually appear (see displayOrder), and `gtg back <n>` resolves
   // against this same order.
-  const allAct = displayOrder(entries(REL_ACTIVE, 'handoffs'));
+  const act = entries(REL_ACTIVE, 'handoffs');
+  const allAct = displayOrder(act);
   // userVisible, so the "+N backlogged" pointer counts the rows `gtg backlog` will show.
   const blCount = userVisible(entries(REL_BACKLOG, 'backlog')).length;
+  // Decluttering is not lookup. The BARE listing hides extension entries, which is the whole
+  // point, but an explicit query is the user naming the thing they want, so it searches every
+  // entry (`act`, not `allAct`). SKILL.md's exit procedure probes with `list <candidate>` before
+  // slugifying and reuses the matched entry's slug, so a blind probe would mint a second entry
+  // beside a live issue package instead of updating it.
   const shown = filter
-    ? allAct.filter((e) => e.slug === filter || e.project.toLowerCase().includes(filter.toLowerCase()))
+    ? act.filter((e) => e.slug === filter || e.project.toLowerCase().includes(filter.toLowerCase()))
+      .sort((a, b) => a.project.localeCompare(b.project))
     : allAct;
   if (!shown.length) {
     console.log(`No active gtg projects${filter ? ` matching '${filter}'` : ''}.` +
@@ -378,6 +385,12 @@ function renderList(argv) {
     // the screen and `gtg back <n>` (resolveEntry over displayOrder) targets this
     // same row even when a filter hides some entries.
     const n = allAct.indexOf(e) + 1;
+    // A number is a position in the canonical list, and an extension entry has none: it only
+    // ever appears here via an explicit query, and allAct excludes it, so indexOf gives 0.
+    // Label it with the slug that DOES address it rather than a number that would address a
+    // different row. This is what keeps a queried listing and `gtg back <n>` from ever
+    // disagreeing about what 3 means.
+    const label = n ? c('1', n + '.') : c('2', e.slug + ':');
     const d = hasOwnWorktree(e) ? dirty.get(resolveDir(e)) : undefined;
     // null = worktree unreachable / dirtyCount failed — render the '?' the spec
     // promises, distinct from a genuinely clean (0) worktree, which renders nothing.
@@ -386,7 +399,7 @@ function renderList(argv) {
     const idle = (Date.now() - Date.parse(e.updated)) / 86400000;
     const shelf = idle > 6 ? c('31', ` ⚠ shelves in ${Math.max(0, Math.round((7 - idle) * 24))}h`) : '';
     const sessions = e.sessions ?? countHandoffFiles(e.slug); // legacy entries predate the field
-    console.log(`  ${c('1', n + '.')} ${c('1;36', e.project)} ${c('2', 's' + sessions)} [${c('32', e.eta || '?')}] ${c('2', '(' + ago(e.updated) + ')')}${loc}${dirtyTag}${shelf}`);
+    console.log(`  ${label} ${c('1;36', e.project)} ${c('2', 's' + sessions)} [${c('32', e.eta || '?')}] ${c('2', '(' + ago(e.updated) + ')')}${loc}${dirtyTag}${shelf}`);
     console.log(`     → ${e.next}`);
   };
 

@@ -96,13 +96,19 @@ every time, because `gtg list` auto-shelves anything idle over 7 days and an act
 would report a live package as missing. A command that owns no namespace gets two empty arrays.
 
 **Extensions vs mods.** An *extension* owns entries in the handoff store and renders its own
-separated list, so its entries are excluded from `gtg list` and `gtg backlog` (and from their
-counts) to avoid listing the same work twice. `issues` and `learn` are extensions, owning the
+separated list, so its entries are excluded from the bare `gtg list` and `gtg backlog` (and from
+their counts) to avoid listing the same work twice. `issues` and `learn` are extensions, owning the
 `issues` and `learning` parent namespaces. A *mod* owns no entries and only adds a view, so it
 sees the whole store: `stats` and `report` are mods and their counts stay whole-store totals.
 Membership is read off the existing `parent` field rather than a new marker field, because
 `gtg handoff` rebuilds each entry as a fresh literal and drops fields it does not know.
 Registering a new namespace means editing `EXTENSIONS` in `gtg.mjs`.
+
+**Decluttering is not lookup.** Only the *bare* listing hides extension entries. `gtg list
+<name-or-slug>` is you naming what you want, so it searches every entry and will surface an issue
+package or a learning sprint. A queried extension entry is labelled with its slug instead of a row
+number, because row numbers index the bare listing and that is the order `gtg back <n>` resolves
+against. Use the slug, which every verb accepts.
 
 **2. Procedure hooks** — the exit and resume flows load markdown hooks if present, so you
 can add project-specific steps without forking the skill:

@@ -1800,4 +1800,64 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 49 - ctx.ownEntries returns the calling extension\'s own entries');
 }
 
+// --- 50. an explicit query finds an extension entry, the bare listing still hides it ---
+// Decluttering is not lookup. SKILL.md's exit procedure probes with `list <candidate>` before
+// slugifying and reuses the matched entry's slug, so a blind probe would mint a SECOND entry
+// beside a live issue package rather than updating it in place. The bare listing must still
+// hide them, and the row numbers on a queried listing must keep meaning the same rows that
+// `gtg back <n>` resolves, which is why a queried extension entry carries its slug instead of
+// a number it has no claim to.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('alpha-widget', 'Alpha Widget'), '--parent', 'gtg'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('beta-widget', 'Beta Widget'), '--parent', 'gtg'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-widget', 'Issues P9: widget'), '--parent', 'issues'],
+    { input: BODY });
+
+  // Exact slug, the form the reuse probe and every other verb use.
+  const rs = gtg(repo, ['list', 'issues-p9-widget']);
+  assert.equal(rs.status, 0, rs.stderr);
+  assert.ok(rs.stdout.includes('Issues P9: widget'),
+    'an exact-slug query must find an extension entry');
+  assert.match(rs.stdout, /1 active gtg project\b.*matching 'issues-p9-widget'/,
+    'a queried extension entry must be counted in the header it appears under');
+
+  // Fuzzy project name, the form the exit procedure actually probes with.
+  const rn = gtg(repo, ['list', 'Issues P9']);
+  assert.equal(rn.status, 0, rn.stderr);
+  assert.ok(rn.stdout.includes('Issues P9: widget'),
+    'a project-name query must find an extension entry');
+
+  // A query matching both kinds: real entries keep their canonical numbers, the extension
+  // entry is labelled by slug because it has no position in the list those numbers index.
+  const rq = gtg(repo, ['list', 'widget']);
+  assert.equal(rq.status, 0, rq.stderr);
+  assert.match(rq.stdout, /1\. Alpha Widget/, 'a queried real entry keeps its canonical number');
+  assert.match(rq.stdout, /2\. Beta Widget/, 'a queried real entry keeps its canonical number');
+  assert.match(rq.stdout, /issues-p9-widget: Issues P9: widget/,
+    'a queried extension entry must be labelled by slug');
+  assert.doesNotMatch(rq.stdout, /\d+\. Issues P9: widget/,
+    'a queried extension entry must NOT carry a row number, it would address a different row');
+
+  // The bare listing is unchanged: still hidden, still numbered the same way.
+  const rb = gtg(repo, ['list']);
+  assert.equal(rb.status, 0, rb.stderr);
+  assert.ok(!rb.stdout.includes('Issues P9: widget'), 'the bare listing must still hide it');
+  assert.match(rb.stdout, /1\. Alpha Widget/, 'bare and queried numbering must agree');
+  assert.match(rb.stdout, /2\. Beta Widget/, 'bare and queried numbering must agree');
+
+  // The consistency that matters: `<n>` resolves to the row the listing numbered <n>.
+  const rback = gtg(repo, ['back', '2', '--no-list']);
+  assert.equal(rback.status, 0, rback.stderr);
+  assert.match(rback.stdout, /Parked: Beta Widget/,
+    'back <n> must target the row both listings numbered <n>');
+
+  // And an extension entry stays reachable by slug, which is what its label tells you to use.
+  const rbe = gtg(repo, ['back', 'issues-p9-widget', '--no-list']);
+  assert.equal(rbe.status, 0, rbe.stderr);
+  assert.match(rbe.stdout, /Parked: Issues P9: widget/,
+    'an extension entry must stay reachable by slug');
+  console.log('ok 50 - an explicit query finds an extension entry, the bare listing hides it');
+}
+
 console.log('ALL PASS');
