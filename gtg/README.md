@@ -108,7 +108,16 @@ Registering a new namespace means editing `EXTENSIONS` in `gtg.mjs`.
 <name-or-slug>` is you naming what you want, so it searches every entry and will surface an issue
 package or a learning sprint. A queried extension entry is labelled with its slug instead of a row
 number, because row numbers index the bare listing and that is the order `gtg back <n>` resolves
-against. Use the slug, which every verb accepts.
+against. Use the slug, which every verb accepts, and which is what the bring-back hints print for
+these entries for the same reason.
+
+A targeted query also reaches a **shelved** extension entry, printed as its own `shelved:` line
+rather than as a numbered row, since it is not active work. That case is not an edge: an issue
+package sits idle between fix sessions, so the 7-day auto-shelf catches it routinely, and without
+this the exit procedure's reuse probe would go blind again the moment a package was parked. This is
+deliberately narrower than the general rule that `gtg list` never shows backlog items: a shelved
+*normal* project is still invisible to a query, because widening that is a behaviour change rather
+than a fix.
 
 **2. Procedure hooks** — the exit and resume flows load markdown hooks if present, so you
 can add project-specific steps without forking the skill:

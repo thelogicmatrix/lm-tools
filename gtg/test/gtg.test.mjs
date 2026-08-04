@@ -1857,7 +1857,95 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(rbe.status, 0, rbe.stderr);
   assert.match(rbe.stdout, /Parked: Issues P9: widget/,
     'an extension entry must stay reachable by slug');
+  // The hint on that same line must name something that resolves. sortByProject is filtered, so
+  // indexOf is -1 and the number would be a 0 that `gtg active` cannot resolve.
+  assert.match(rbe.stdout, /Bring back: gtg active issues-p9-widget/,
+    'the bring-back hint must name the slug, not the 0 the filtered order yields');
+  assert.doesNotMatch(rbe.stdout, /gtg active 0\b/, 'a 0 hint is not a resolvable target');
   console.log('ok 50 - an explicit query finds an extension entry, the bare listing hides it');
+}
+
+// --- 51. a targeted query reaches a SHELVED extension entry ---
+// autoShelf parks anything idle over 7 days (case 48), which is normal for an issue package
+// between fix sessions, and `backlog` hides extension entries. So without this, the moment a
+// package is shelved no builtin listing shows it, `list <candidate>` goes blind again, and a
+// departure mints the duplicate case 50 exists to prevent.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-shelved', 'Issues P9: shelved'), '--parent', 'issues'],
+    { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('real-shelved', 'Real Shelved'), '--parent', 'gtg'], { input: BODY });
+  // Backdate both past the 7-day cutoff, then let `list` run the sweep (same trick as case 2b).
+  const ap = join(repo, 'docs/handoffs/_active.json');
+  const data = JSON.parse(readFileSync(ap, 'utf8'));
+  for (const e of data.handoffs) e.updated = new Date(Date.now() - 9 * 86400000).toISOString();
+  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+  gtg(repo, ['list']);
+  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  assert.equal(bl.length, 2, 'setup: both entries must be on the shelf');            // GUARD
+  assert.equal(active(repo).handoffs.length, 0, 'setup: nothing left active');       // GUARD
+
+  // The "No active gtg projects matching '<filter>'" line echoes the query back, so each
+  // assertion below deliberately looks for the OTHER identifier: querying by slug asserts on the
+  // project name, querying by name asserts on the slug. Asserting on the echoed one would pass
+  // with no fix at all.
+  // FAIL-PRE-FIX: exact slug, the form the reuse probe uses.
+  const rs = gtg(repo, ['list', 'issues-p9-shelved']);
+  assert.equal(rs.status, 0, rs.stderr);
+  assert.ok(rs.stdout.includes('Issues P9: shelved'),
+    'a targeted query must reach a shelved extension entry');
+  assert.match(rs.stdout, /gtg active issues-p9-shelved/,
+    'the shelved line must name the command that brings it back');
+  // FAIL-PRE-FIX: fuzzy project name, the form the exit procedure probes with.
+  const rn = gtg(repo, ['list', 'Issues P9']);
+  assert.equal(rn.status, 0, rn.stderr);
+  assert.ok(rn.stdout.includes('issues-p9-shelved'),
+    'a project-name query must reach a shelved extension entry');
+
+  // GUARD: the bare listing is still the decluttered view and says nothing is active.
+  const rb = gtg(repo, ['list']);
+  assert.match(rb.stdout, /No active gtg projects/, 'the bare listing must not gain shelved rows');
+  assert.ok(!rb.stdout.includes('issues-p9-shelved'), 'the bare listing must not name it');
+
+  // GUARD, and the scope boundary: a shelved NORMAL project is still invisible to a query. That
+  // hole predates the extension model and widening it is a documented-behaviour change.
+  const rr = gtg(repo, ['list', 'Real Shelved']);
+  assert.ok(!rr.stdout.includes('real-shelved'),
+    'the generic shelved-project case is deliberately unchanged');
+
+  // FAIL-PRE-FIX: the command the shelved line printed has to work.
+  const ra = gtg(repo, ['active', 'issues-p9-shelved', '--no-list']);
+  assert.equal(ra.status, 0, ra.stderr);
+  assert.match(ra.stdout, /Activated: Issues P9: shelved/);
+  console.log('ok 51 - a targeted query reaches a shelved extension entry');
+}
+
+// --- 52. the hints back and active print are runnable for an extension entry ---
+// Not a cosmetic bug: the README now tells you to address an extension entry by slug, so this is
+// the documented flow. Before the fix `back <slug>` printed 'gtg active 0', and running it exits
+// 2 because resolveEntry indexes arr[-1]. The test executes whatever the hint printed rather than
+// asserting a shape, so it cannot pass while the advice is unrunnable.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-round', 'Issues P9: round'), '--parent', 'issues'],
+    { input: BODY });
+
+  const rb = gtg(repo, ['back', 'issues-p9-round', '--no-list']);
+  assert.equal(rb.status, 0, rb.stderr);
+  const backHint = /Bring back: gtg (\S+ \S+)/.exec(rb.stdout);
+  assert.ok(backHint, 'back must print a bring-back hint');                          // GUARD
+  // FAIL-PRE-FIX: pre-fix this runs `gtg active 0` and exits 2.
+  const ra = gtg(repo, [...backHint[1].split(' '), '--no-list']);
+  assert.equal(ra.status, 0, `the printed hint 'gtg ${backHint[1]}' failed: ${ra.stderr}`);
+  assert.match(ra.stdout, /Activated: Issues P9: round/);
+
+  const activeHint = /Shelve again: gtg (\S+ \S+)/.exec(ra.stdout);
+  assert.ok(activeHint, 'active must print a shelve-again hint');                    // GUARD
+  // FAIL-PRE-FIX: the mirror-image bug in activate(), 'gtg back 0'.
+  const rb2 = gtg(repo, [...activeHint[1].split(' '), '--no-list']);
+  assert.equal(rb2.status, 0, `the printed hint 'gtg ${activeHint[1]}' failed: ${rb2.stderr}`);
+  assert.match(rb2.stdout, /Parked: Issues P9: round/);
+  console.log('ok 52 - the hints back and active print are runnable for an extension entry');
 }
 
 console.log('ALL PASS');

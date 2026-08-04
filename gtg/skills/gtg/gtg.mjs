@@ -350,13 +350,34 @@ function renderList(argv) {
   // entry (`act`, not `allAct`). SKILL.md's exit procedure probes with `list <candidate>` before
   // slugifying and reuses the matched entry's slug, so a blind probe would mint a second entry
   // beside a live issue package instead of updating it.
+  const matches = (e) => e.slug === filter || e.project.toLowerCase().includes(filter.toLowerCase());
   const shown = filter
-    ? act.filter((e) => e.slug === filter || e.project.toLowerCase().includes(filter.toLowerCase()))
-      .sort((a, b) => a.project.localeCompare(b.project))
+    ? act.filter(matches).sort((a, b) => a.project.localeCompare(b.project))
     : allAct;
+
+  // A targeted query has to reach a SHELVED extension entry too, or the reuse probe above is
+  // still blind. autoShelf parks anything idle over 7 days, which is normal for an issue
+  // package (they sit between fix sessions), and `backlog` hides extension entries, so from
+  // that moment no builtin listing shows it and a departure mints the duplicate anyway.
+  // Rendered as its own line rather than as a row, because these are not active and the
+  // header counts active work.
+  // ponytail: extension entries only. A shelved NORMAL project is invisible to a query too,
+  // but that predates the extension model and `list` is documented as never showing backlog
+  // items, so widening it is a design call, not a fix. See README "Decluttering is not lookup".
+  const shelvedHits = filter
+    ? entries(REL_BACKLOG, 'backlog').filter((e) => isExtensionEntry(e) && matches(e))
+    : [];
+  const printShelved = () => {
+    for (const e of shelvedHits) {
+      console.log(`  ${c('33', 'shelved:')} ${c('1;36', e.project)} ${c('2', `(parked ${ago(e.updated)})`)}` +
+        ` - gtg active ${e.slug}`);
+    }
+  };
+
   if (!shown.length) {
     console.log(`No active gtg projects${filter ? ` matching '${filter}'` : ''}.` +
       (blCount ? ` (+${blCount} backlogged — gtg backlog)` : ''));
+    printShelved();
     return;
   }
 
@@ -386,10 +407,10 @@ function renderList(argv) {
     // same row even when a filter hides some entries.
     const n = allAct.indexOf(e) + 1;
     // A number is a position in the canonical list, and an extension entry has none: it only
-    // ever appears here via an explicit query, and allAct excludes it, so indexOf gives 0.
-    // Label it with the slug that DOES address it rather than a number that would address a
-    // different row. This is what keeps a queried listing and `gtg back <n>` from ever
-    // disagreeing about what 3 means.
+    // ever appears here via an explicit query, and allAct excludes it, so indexOf gives -1 and
+    // the `+ 1` above makes that a falsy 0. Label it with the slug that DOES address it rather
+    // than a number that would address a different row. This is what keeps a queried listing
+    // and `gtg back <n>` from ever disagreeing about what 3 means.
     const label = n ? c('1', n + '.') : c('2', e.slug + ':');
     const d = hasOwnWorktree(e) ? dirty.get(resolveDir(e)) : undefined;
     // null = worktree unreachable / dirtyCount failed — render the '?' the spec
@@ -491,7 +512,10 @@ function back(argv) {
   saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
   saveEntries(REL_BACKLOG, 'backlog', bl);
   commit([REL_ACTIVE, REL_BACKLOG], `gtg backlog: park ${match.project}`);
-  const hint = sortByProject(bl).indexOf(match) + 1;
+  // `|| match.slug` for the same reason printEntry substitutes a slug label: an extension entry
+  // has no position in the listing these numbers index, so indexOf is -1 and the hint would read
+  // 'gtg active 0', which resolveEntry turns into arr[-1] and exits 2. Print what actually works.
+  const hint = sortByProject(bl).indexOf(match) + 1 || match.slug;
   console.log(`Parked: ${match.project} -> backlog. Bring back: gtg active ${hint}`);
 }
 
@@ -509,7 +533,9 @@ function activate(argv) {
   saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== match));
   saveEntries(REL_ACTIVE, 'handoffs', act);
   commit([REL_ACTIVE, REL_BACKLOG], `gtg activate: ${match.project}`);
-  const hint = displayOrder(act).indexOf(match) + 1; // active list is display-ordered
+  // active list is display-ordered. `|| match.slug` is the mirror of the one in back(), and for
+  // the same reason: an extension entry has no numbered row, so 'gtg back 0' would exit 2.
+  const hint = displayOrder(act).indexOf(match) + 1 || match.slug;
   console.log(`Activated: ${match.project}. Shelve again: gtg back ${hint}`);
 }
 
