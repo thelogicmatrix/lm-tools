@@ -42,6 +42,7 @@ Requires Node.js ≥ 18 and git on PATH.
 | "gtg" (or any departure phrase) | Handoff written to `docs/handoffs/`, entry pinned, both committed |
 | "let's continue <project>" | Handoff found, read, resumed from its Next Action; entry consumed |
 | "gtg resume <n\|slug>" | Consume a handoff on pick-up — **not** a ship |
+| "gtg <project>" as the first thing you say | Resumes that project. At session start a project name outranks an *extension* verb; if both exist (a project called `issues` **and** your own `gtg issues` command) you get a numbered pick list instead of a guess. Mid-session the verb wins, and core verbs (`list`, `report`, `stats`, …) are always commands |
 | "gtg stats" | A terminal snapshot: streak, shipped count, deepest project, effort, velocity |
 | "gtg report" | Writes `docs/handoffs/_report.json`, then `/reporter` builds an HTML habit-grid report from it |
 | "gtg list" | Active handoffs (idle >7d auto-shelf to the backlog) |

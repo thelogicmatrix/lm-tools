@@ -17,15 +17,56 @@ otherwise read as a verb.
 | Context | Input | Meaning |
 |---|---|---|
 | Session start (message is *only* `gtg…`) | `gtg` | Resume mode: if exactly one active project, resume it; else run `list` and ask which |
-| Session start | `gtg <project>` | Resume that project (= `gtg resume <project>`; brackets optional — verb-check disambiguates) |
+| Session start | `gtg <project>` | Resume that project (= `gtg resume <project>`; brackets optional — the store check below disambiguates) |
 | Mid-session | `gtg` | Depart (Exit Procedure), slug inferred from context |
 | Mid-session | `gtg [project]` | Depart, but **force the handoff slug** to `project` (brackets **required**) |
-| Anytime | `gtg <verb>` | Handle per the router table below — the verb (`list`, `backlog`, `back`, `active`, `prune`, `remove`, `supersede`, `peek`, `resume`, `undo`, `stats`, `help`) routes to its row; some are `gtg.mjs` CLI calls, others (`peek`, `resume`) are skill-handled |
+| Anytime | `gtg <core verb>` | Handle per the router table below — a **core verb** (`list`, `backlog`, `back`, `active`, `prune`, `remove`, `supersede`, `peek`, `resume`, `rename`, `log`, `report`, `stats`, `undo`, `help`) always routes to its command, never to a project; some are `gtg.mjs` CLI calls, others (`peek`, `resume`) are skill-handled |
 
-Disambiguation: a bracketed token is always a project; otherwise a token matching a known
-verb is a command; else (session start only) it's a project name to resume. When a
-mid-session `gtg [project]` gives a slug, Exit step 2 uses it verbatim — skip the
-`list <candidate>` reuse-guess.
+Disambiguation, in this order:
+
+1. A bracketed token is always a project.
+2. A **core verb** (the list in the row above) is always that command — a project sharing
+   the name never shadows it, so `gtg report` reports even with a "Report & Stats" project.
+3. **At session start, any other bare token is a project before it is an extension verb** —
+   gather both readings in one call, then see "Session-start collisions" below:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs" list <token>
+   ls "<storage-root>/.gtg/commands/<token>.mjs" 2>/dev/null
+   ```
+4. Any other token (mid-session, or carrying further args like `gtg issues p1`) goes
+   straight to the CLI as an extension verb.
+
+Step 3 exists because extension verbs and project names share one namespace, and a project
+named after its own tooling (`issues`, `projects`) is exactly the one you resume most — at
+session start the extension's listing is never what you meant. Mid-session the verb wins, so
+the command stays one keystroke away. When a mid-session `gtg [project]` gives a slug, Exit
+step 2 uses it verbatim — skip the `list <candidate>` reuse-guess.
+
+### Session-start collisions — offer the candidates, don't guess
+
+Count the candidates step 3 found: each matching active project, plus the `<token>` command
+if that `.mjs` exists.
+
+| Candidates | Do this |
+|---|---|
+| exactly 1 project, no command file | Resume it (Resume Procedure). No prompt. |
+| 0 projects, command file exists | Run `gtg.mjs <token>` per the router table. No prompt. |
+| 0 projects, no command file | Run `gtg.mjs <token>` anyway and relay its error — the CLI owns the unknown-command message. |
+| anything else (2+ projects, or a project **and** a same-named command) | **Ask.** One numbered list, projects first with their `next` line, the command last, then wait. |
+
+The prompt is the whole feature — a same-named project and command are both real work, and
+picking for the user is what made the command unreachable one way and the project unreachable
+the other. Keep it to one screen:
+
+```
+'issues' is ambiguous:
+  1. Issues P3: Obelisk housekeeping — Fingerprint which container orphans an anonymous volume
+  2. Issues P4: Obelisk audit remediation — Decide the data/media anonymous SMB read question
+  3. run the `issues` command (the issues-layer listing)
+Which?
+```
+
+Answer resolves it: a project number → Resume Procedure; the command → router table.
 
 All bookkeeping (list/remove/back/active/undo) is zero-model: shell out to the CLI, relay its output, don't reason about the JSON. Handoffs are stored at `docs/handoffs/` under the storage root — the current git repo by default, or `$GTG_HUB` if that env var is set (see README "Advanced").
 When *you* (the skill) issue a mutation (`remove`/`back`/`active`), always pass the entry's **`slug`**, never a bare list number — list numbers re-sort as entries move and a stale number silently targets the wrong project. The bare-integer form exists only for a human reading `list`.
