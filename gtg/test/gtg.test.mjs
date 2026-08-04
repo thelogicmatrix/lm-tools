@@ -1477,4 +1477,104 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 36 - auto-list: off when piped, forced by --list, muted by --no-list');
 }
 
+
+// --- 37. rename: slug changes, children re-point, handoff files keep their names ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('fam', 'Family Parent'), { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('kid-one', 'Kid One'), '--parent', 'fam'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('kid-two', 'Kid Two'), '--parent', 'fam'], { input: BODY });
+  const before = active(repo).handoffs.find((e) => e.slug === 'fam').file;
+
+  const r = gtg(repo, ['rename', 'fam', 'family']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Renamed: Family Parent \(fam -> family\)/);
+  assert.match(r.stdout, /re-pointed 2 sub-project/);
+  assert.match(r.stdout, /projects rename fam family/, 'it points at the portfolio half');
+
+  const hs = active(repo).handoffs;
+  assert.equal(hs.filter((e) => e.slug === 'family').length, 1, 'renamed, not duplicated');
+  assert.equal(hs.filter((e) => e.slug === 'fam').length, 0);
+  assert.deepEqual(hs.filter((e) => e.parent === 'family').map((e) => e.slug).sort(),
+    ['kid-one', 'kid-two'], 'both children follow the parent');
+  assert.equal(hs.filter((e) => e.parent === 'fam').length, 0,
+    'no orphan left pointing at the old slug');
+
+  // History is retained: the handoff file keeps the name it was written under, and the entry
+  // still points at a file that exists.
+  const after = hs.find((e) => e.slug === 'family').file;
+  assert.equal(after, before, 'the file field is untouched');
+  assert.match(after, /-fam\.md$/, 'the old slug stays in the filename, which is the record');
+  assert.ok(existsSync(join(repo, after)), 'and that file is still on disk');
+  console.log('ok 37 - rename: slug changes, children re-point, handoff files keep their names');
+}
+
+// --- 38. rename: refusals, and a backlog entry renames too ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
+  gtg(repo, HANDOFF_ARGS('proj-b', 'Project B'), { input: BODY });
+
+  assert.equal(gtg(repo, ['rename']).status, 2, 'no args is a usage error');
+  assert.equal(gtg(repo, ['rename', 'proj-a']).status, 2, 'a missing target is a usage error');
+  const bad = gtg(repo, ['rename', 'proj-a', 'has spaces']);
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /must match/, 'a slug becomes a path segment, so it is constrained');
+  const taken = gtg(repo, ['rename', 'proj-a', 'proj-b']);
+  assert.equal(taken.status, 2);
+  assert.match(taken.stderr, /already used by another project/);
+  const self = gtg(repo, ['rename', 'proj-a', 'proj-a']);
+  assert.equal(self.status, 2);
+  assert.match(self.stderr, /already its slug/);
+  assert.equal(gtg(repo, ['rename', 'nope', 'whatever']).status, 2);
+  assert.deepEqual(active(repo).handoffs.map((e) => e.slug).sort(), ['proj-a', 'proj-b'],
+    'every refusal left both slugs alone');
+
+  // A shelved entry is renameable, since resolve falls through to the backlog.
+  gtg(repo, ['back', 'proj-a', '--no-list']);
+  const shelved = gtg(repo, ['rename', 'proj-a', 'alpha', '--no-list']);
+  assert.equal(shelved.status, 0, shelved.stderr);
+  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  assert.equal(bl.filter((e) => e.slug === 'alpha').length, 1, 'the backlog entry was renamed');
+  console.log('ok 38 - rename: refusals, and a backlog entry renames too');
+}
+
+// --- 39. log reads git, filters by project, and survives a rename ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
+  gtg(repo, HANDOFF_ARGS('proj-b', 'Project B'), { input: BODY });
+  gtg(repo, ['rename', 'proj-a', 'alpha', '--no-list']);
+
+  const all = gtg(repo, ['log']);
+  assert.equal(all.status, 0, all.stderr);
+  assert.match(all.stdout, /gtg rename: proj-a to alpha/);
+  assert.match(all.stdout, /Project B/, 'bare log covers every project');
+
+  // Subjects carry the NAME, not the slug, so filtering by the new slug still finds history
+  // written under the old one. That is why rename leaves names alone.
+  const one = gtg(repo, ['log', 'alpha']);
+  assert.equal(one.status, 0, one.stderr);
+  assert.match(one.stdout, /Project A/);
+  assert.doesNotMatch(one.stdout, /Project B/, 'the filter is per project');
+
+  assert.equal(gtg(repo, ['log', 'nope']).status, 2, 'an unknown project is a usage error');
+  const bounded = gtg(repo, ['log', '-n', '1']);
+  assert.equal(bounded.status, 0, bounded.stderr);
+  assert.equal(bounded.stdout.trim().split('\n').length, 1, '-n bounds the output');
+  console.log('ok 39 - log reads git, filters by project, and survives a rename');
+}
+
+// --- 40. an inherited Object key is not a verb ---
+{
+  const repo = tempRepo();
+  // These resolved up the prototype chain off the builtins literal, so each called something
+  // that is not a verb and reported success instead of reaching the unknown-command error.
+  for (const key of ['constructor', 'toString', 'hasOwnProperty', '__proto__', 'valueOf']) {
+    const r = gtg(repo, [key]);
+    assert.equal(r.status, 2, `${key} must be refused, got ${r.status}`);
+  }
+  console.log('ok 40 - an inherited Object key is not a verb');
+}
+
 console.log('ALL PASS');
