@@ -113,10 +113,10 @@ the symptom was handled, per the Lifecycle below.
    theirs into yours:
 
    ```bash
-   # rows 1 and 3, the class is dead
+   # the class is dead
    git rm docs/issues/<file>.md && git commit docs/issues/<file>.md -m "issues: close <slug>"
 
-   # row 4, the class is live, so the file stays and only Status changes
+   # the class is live, so the file stays and only Status changes
    git add docs/issues/<file>.md && git commit docs/issues/<file>.md -m "issues: <slug> worked around"
    ```
 

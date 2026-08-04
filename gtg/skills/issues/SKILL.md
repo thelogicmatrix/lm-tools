@@ -22,7 +22,8 @@ If `docs/issues/README.md` does not exist, copy it from
 with the issue. Never overwrite an existing one. It is the folder's own conventions and the
 person who wrote it outranks the template.
 
-Home is a shared checkout, so commit with explicit literal paths on both ends of one command:
+Several sessions can stage work in one checkout at once, so commit with explicit literal paths on
+both ends of one command:
 
 ```bash
 git add docs/issues/2026-08-04-my-slug.md && git commit docs/issues/2026-08-04-my-slug.md -m "issues: file my-slug"

@@ -1411,6 +1411,18 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.ok(doc.effort, 'effort section present');
   assert.ok(typeof doc.throughput.shipRate === 'number', 'assembler fills shipRate');
 
+  // The ONLY assertion tying the subject gtg.mjs WRITES to the regex history.mjs PARSES.
+  // Everything above is store-derived or survives a broken parse: counts.active reads the
+  // store, and a prune with no later handoff counts as shipped either way. Case 26 cannot
+  // cover this either, because its subjects are string literals rather than this writer's
+  // output. Break the separator or the session suffix in one place only and the session
+  // number folds into the project NAME, so the handoff joins to no store entry and appears
+  // as an extra phantom row here. That is the corruption the separator sweep existed to
+  // prevent, and the row count is what detects it.
+  assert.equal(doc.perProject.length, 2, 'a phantom project row means the subject no longer parses');
+  assert.ok(doc.perProject.some((p) => p.project === 'Live One' && p.sessions === 1),
+    'the handoff subject did not round-trip from writer to report');
+
   // --json override
   r = gtg(repo, ['report', '--json', join(repo, 'custom.json')]);
   assert.equal(r.status, 0, r.stderr);
