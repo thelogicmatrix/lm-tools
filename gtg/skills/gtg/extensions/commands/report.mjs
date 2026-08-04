@@ -1,4 +1,4 @@
-// gtg report — write the full history object as JSON, print the path. Zero model
+// gtg report - write the full history object as JSON, print the path. Zero model
 // tokens, read-only. /reporter builds the HTML from the JSON (see SKILL.md).
 import { writeFileSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';

@@ -1,4 +1,4 @@
-// gtg stats — a few terminal lines from the history extractor. Read-only.
+// gtg stats - a few terminal lines from the history extractor. Read-only.
 import { buildReport } from '../lib/history.mjs';
 
 export default ({ root, readStore }) => {
@@ -8,7 +8,7 @@ export default ({ root, readStore }) => {
   const h = r.habit, t = r.throughput;
   if (h.activeDays) {
     console.log(`🔥 ${h.currentStreak}-day streak · ${h.activeDays} active days` +
-      (h.longestStreak > h.currentStreak ? ` (best ${h.longestStreak})` : ' — personal best'));
+      (h.longestStreak > h.currentStreak ? ` (best ${h.longestStreak})` : ' - personal best'));
   }
   if (t.shipped) {
     const last = t.lastShip ? ` · last: ${t.lastShip.project} (${t.lastShip.daysAgo === 0 ? 'today' : t.lastShip.daysAgo + 'd ago'})` : '';
@@ -33,5 +33,5 @@ export default ({ root, readStore }) => {
     }
   }
   if (t.resumed) console.log(`🅿️  ${t.parked} parked · ${t.resumed} resumes`);
-  if (r.fun.velocity) console.log(`\n${r.fun.velocity}${r.fun.bestWeek ? ` — best week ${r.fun.bestWeek.week} (${r.fun.bestWeek.ships} ships)` : ''}`);
+  if (r.fun.velocity) console.log(`\n${r.fun.velocity}${r.fun.bestWeek ? ` - best week ${r.fun.bestWeek.week} (${r.fun.bestWeek.ships} ships)` : ''}`);
 };
