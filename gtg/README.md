@@ -67,7 +67,7 @@ gtg has three tiers. You only ever touch the third.
 | Tier | Lives in | Active |
 |---|---|---|
 | **Core** | the plugin's `gtg.mjs` + `SKILL.md` | always |
-| **Bundled** | the plugin's `extensions/` | on by default (`gtg stats`, reattachment hooks) |
+| **Bundled** | the plugin's `extensions/` | on by default (`gtg issues`, `gtg learn`, `gtg stats`, `gtg report`, reattachment hooks) |
 | **Yours** | `<storage-root>/.gtg/` | when you add a file |
 
 Two extension points:
@@ -100,9 +100,19 @@ separated list, so its entries are excluded from the bare `gtg list` and `gtg ba
 their counts) to avoid listing the same work twice. `issues` and `learn` are extensions, owning the
 `issues` and `learning` parent namespaces. A *mod* owns no entries and only adds a view, so it
 sees the whole store: `stats` and `report` are mods and their counts stay whole-store totals.
-Membership is read off the existing `parent` field rather than a new marker field, because
-`gtg handoff` rebuilds each entry as a fresh literal and drops fields it does not know.
-Registering a new namespace means editing `EXTENSIONS` in `gtg.mjs`.
+Adding a third extension is one line in the `EXTENSIONS` map in `gtg.mjs`, and that is the
+whole of it: an extension is a registered `parent` namespace and nothing more. **It must not
+add a field to the entry.** Membership is read off the existing `parent` field precisely
+because `gtg handoff` rebuilds each entry as a fresh literal and drops fields it does not
+know, so a marker field of your own would survive exactly until the next wrap and then go
+missing with no error.
+
+**Seed documents live in `skills/gtg/templates/`.** An extension whose data lives in a folder
+of the user's own needs that folder to explain itself on a fresh install, so the plugin ships
+the starting document rather than pointing at a file that may not exist. `gtg:issues` copies
+`templates/issues-README.md` to `docs/issues/README.md` the first time it files into a folder
+without one, and never overwrites an existing one, because that file is the folder's own
+conventions and whoever wrote it outranks the template.
 
 **Decluttering is not lookup.** Only the *bare* listing hides extension entries. `gtg list
 <name-or-slug>` is you naming what you want, so it searches every entry and will surface an issue
