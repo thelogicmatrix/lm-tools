@@ -22,9 +22,12 @@ const setup = (files, active = [], backlog = []) => {
 
 // Captures stdout/stderr and the exitCode the command sets, then restores both.
 // Restoring exitCode matters: a refusal test would otherwise fail the whole run.
-// ⚠ Every `pack` case here MUST refuse or pass --dry-run. A pack that reaches the park
-// spawns `process.argv[1]`, which under test is THIS FILE, so it re-runs the suite and
-// spawns again, forever. Cover the park by hand, never from here.
+// A `pack` that reaches the park spawns `process.argv[1]`, which is THIS FILE unless you
+// change it, so it would re-run the suite and spawn again, forever. `process.argv[1]` is
+// writable, so cases 29 and 30 point it at a stub named gtg.mjs, which both satisfies the
+// guard and makes the stub the spawn target. That removes the fork hazard by construction
+// rather than by refusal. Every OTHER pack case here refuses or passes --dry-run, so it
+// never reaches the spawn at all.
 const run = (root, args = []) => {
   const out = [];
   const [log, err] = [console.log, console.error];
@@ -154,6 +157,10 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
   assert.doesNotMatch(out, /rtk-grep-flag-mangle/);
 }
 
+// The numbers below are the order cases were ADDED, and the file is ordered by topic, so the
+// two do not line up and nothing is missing at this jump: 16 to 18 are render cases and sit
+// with the other render cases above, and 8 to 15 follow further down.
+
 // 16. A worked-around member is flagged with its workaround, and counted.
 {
   const root = setup({
@@ -187,6 +194,25 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
   const { out } = run(root);
   assert.match(out, /• \[minutes\] clean-one$/m);
   assert.match(out, /0 worked-around · 0 no Check/);
+}
+
+// 28. A bare `worked-around` Status with no parenthetical renders the flag with no value. The
+// parse is `statusRaw.match(/\((.+)\)/)?.[1] ?? null` and the render is a ternary on it, so
+// this is the untested half of the branch case 16 covers from the other side. Anchored at
+// end-of-line on purpose: that is what separates it from case 16's `WORKED-AROUND: <value>`.
+{
+  const root = setup({
+    '2026-07-25-bare-workaround.md': issue(
+      '**Area:** misc · **Effort:** minutes\n'
+      + '**Check:** run the thing\n'
+      + '**Status:** worked-around',
+    ),
+  });
+  const { out } = run(root);
+  assert.match(out, /• \[minutes\] bare-workaround - WORKED-AROUND$/m,
+    'a bare worked-around did not render as a bare flag');
+  assert.doesNotMatch(out, /WORKED-AROUND:/, 'a bare worked-around printed a trailing colon');
+  assert.match(out, /1 worked-around/, 'a bare worked-around was not counted');
 }
 
 // 8. An exact pN hands control back to the skill, as the only output line.
@@ -394,8 +420,9 @@ const LOOSE = {
 // 24. A real pack refuses when the program that would be re-invoked to park the entry is not
 // gtg.mjs. Here it is this test file, which is exactly the hazard: spawning it would exit 0
 // on args it ignores and pack would report a park that never happened. Refused BEFORE any
-// write, so a wrong invocation leaves nothing stamped. This is the only honest assertion
-// about the park path available from this file. See the warning on `run` above.
+// write, so a wrong invocation leaves nothing stamped, and that is this case's whole purpose.
+// The park itself is covered by cases 29 and 30, which satisfy the guard by pointing
+// `process.argv[1]` at a stub named gtg.mjs. See the note on `run` above.
 {
   const root = setup(LOOSE, [P1]);
   const before = snapshot(root);
@@ -405,6 +432,73 @@ const LOOSE = {
   assert.equal(commits.length, 0);
   assert.equal(code, 1);
   assertUntouched(root, before, 'wrong spawn target');
+}
+
+// 29. The park path end to end: stamp, then the commit call, then the real spawn. The run that
+// wrote this file believed the chain untestable from here because the spawn target would be the
+// suite itself. It is not: `process.argv[1]` is writable, so pointing it at a stub named gtg.mjs
+// satisfies the guard case 24 covers AND makes the stub the spawn target, which removes the fork
+// hazard by construction rather than by refusal. What this does NOT cover: `commit` is the
+// recorder from `run`, so this drives the CALL, never a real git commit.
+{
+  const root = setup({ '2026-08-04-scratch.md': issue('**Area:** misc · **Effort:** minutes') }, [P1]);
+  const stub = join(root, 'gtg.mjs');
+  // ESM, not `require`: the guard forces the name gtg.mjs, and a .mjs file is always a module.
+  writeFileSync(stub, [
+    "import { writeFileSync } from 'node:fs';",
+    "let body = '';",
+    "process.stdin.on('data', (d) => { body += d; });",
+    "process.stdin.on('end', () => {",
+    "  writeFileSync(process.argv[1] + '.park.json', JSON.stringify({ argv: process.argv.slice(2), body }));",
+    '});',
+  ].join('\n'));
+  const savedArgv1 = process.argv[1];
+  process.argv[1] = stub;
+  try {
+    const { out, commits, code } = run(root, [
+      'pack', 'p9', '--name', 'Issues P9: DNS flakiness', '--next', 'Reproduce the timeout', 'scratch',
+    ]);
+    // Assert the child SUCCEEDED before reading its record. A stub that throws also fails the
+    // spawn, and it would otherwise surface as a missing record file, which reads like a
+    // product defect rather than a broken fixture.
+    assert.doesNotMatch(out, /parking the entry failed/, 'the park failed, or the stub itself threw');
+    assert.equal(code, 0, 'a successful park still set a failure exit code');
+    const parked = JSON.parse(readFileSync(`${stub}.park.json`, 'utf8'));
+    assert.deepEqual(parked.argv, [
+      'backlog', '--project', 'Issues P9: DNS flakiness', '--slug', 'issues-p9-dns-flakiness',
+      '--next', 'Reproduce the timeout', '--parent', 'issues',
+    ], 'the child was not asked to park this entry');
+    assert.match(parked.body, /## The Package/, 'no handoff body reached the child on stdin');
+    assert.match(parked.body, /- docs\/issues\/2026-08-04-scratch\.md/, 'the body lists no members');
+    assert.match(readFileSync(join(root, 'docs/issues/2026-08-04-scratch.md'), 'utf8'),
+      /\*\*Package:\*\* p9/, 'the member was never stamped');
+    assert.deepEqual(commits, [{
+      paths: ['docs/issues/2026-08-04-scratch.md'],
+      msg: 'issues: pack p9 - Issues P9: DNS flakiness (1 issue)',
+    }], 'the stamp was not handed to commit');
+  } finally {
+    process.argv[1] = savedArgv1;
+  }
+}
+
+// 30. The spawn-failure branch names the exit code and does not claim success. Measured, not
+// assumed: the parent writes the handoff body to a child that has already exited, and that does
+// NOT come back as a spawn error, so `why` really is the exit code and not an EPIPE message.
+{
+  const root = setup({ '2026-08-04-scratch.md': issue('**Area:** misc · **Effort:** minutes') }, [P1]);
+  const stub = join(root, 'gtg.mjs');
+  writeFileSync(stub, 'process.exit(3);');
+  const savedArgv1 = process.argv[1];
+  process.argv[1] = stub;
+  try {
+    const { out, code } = run(root, ['pack', 'p9', '--name', 'X', '--next', 'Y', 'scratch']);
+    assert.match(out, /1 file\(s\) stamped, but parking the entry failed \(exit 3\)/,
+      'the park failure did not report the exit code and the files already stamped');
+    assert.match(out, /re-run the same `gtg issues pack` command/, 'no recovery instruction');
+    assert.equal(code, 1, 'a failed park reported success');
+  } finally {
+    process.argv[1] = savedArgv1;
+  }
 }
 
 // 25. A pN query is EXACT. `p1` against a store holding only p10 used to substring-match
