@@ -35,6 +35,9 @@ export function classify(subject) {
   if ((m = s.match(/^gtg activate: (.+)$/))) return { type: 'activate', project: m[1] };
   if ((m = s.match(/^gtg prune: remove (.+?)(?: from backlog)? - confirmed done$/))) return { type: 'prune', project: m[1] };
   if ((m = s.match(/^gtg resume: (.+?) — (?:backlog )?handoff consumed$/))) return { type: 'resume', project: m[1] };
+  // Neither a ship nor an abandonment: the entry was rolled up, or filed in error.
+  // Lazy first group so the optional " into <target>" tail wins when present.
+  if ((m = s.match(/^gtg supersede: (.+?)(?: into (.+))?$/))) return { type: 'supersede', project: m[1], into: m[2] };
   if (/^gtg undo: /.test(s)) return { type: 'undo', project: undefined };
   return { type: 'noise', project: undefined };
 }
@@ -98,7 +101,9 @@ export function readSessions(root) {
 
 export function nowMs() { return Date.now(); }
 
-const ACTIVE_TYPES = new Set(['handoff', 'park', 'shelve', 'autoshelf', 'activate', 'prune', 'resume']);
+// supersede counts as an active day for the same reason prune does: consolidating
+// entries is deliberate bookkeeping. `undo` and `noise` stay out.
+const ACTIVE_TYPES = new Set(['handoff', 'park', 'shelve', 'autoshelf', 'activate', 'prune', 'resume', 'supersede']);
 const dayNum = (d) => Math.floor(Date.parse(d) / 86400000);
 const round1 = (n) => Math.round(n * 10) / 10;
 
@@ -272,7 +277,13 @@ export function health(events, rows) {
     statusBySlug.set(r.slug, r.status);
     if (r.project) statusBySlug.set(slugify(r.project), r.status);
   }
+  // A superseded slug has no row on either shelf, so it used to fall through to
+  // abandoned and stay there forever, which is the one thing it definitely is not:
+  // it was rolled up into another entry, or filed in error. Excluded by event, not
+  // by status, precisely because the row is gone.
+  const supersededSlugs = new Set(events.filter((e) => e.type === 'supersede').map((e) => e.slug));
   const abandoned = [...parkedSlugs].filter((slug) => {
+    if (supersededSlugs.has(slug)) return false;
     const st = statusBySlug.get(slug);
     return st !== 'active' && st !== 'shipped';
   }).length;
