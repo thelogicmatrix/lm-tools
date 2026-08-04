@@ -32,7 +32,12 @@ Disambiguation, in this order:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs" list <token>
    ls "<storage-root>/.gtg/commands/<token>.mjs" 2>/dev/null
+   ls "${CLAUDE_PLUGIN_ROOT}/skills/gtg/extensions/commands/<token>.mjs" 2>/dev/null
    ```
+   **Both command paths, and the bundled one is not optional.** `issues` and `learn` ship in
+   the plugin now rather than sitting in anyone's `.gtg/commands/`, so probing only the user
+   path finds nothing for exactly the two tokens most likely to collide with a project name,
+   and the collision below is never offered.
 4. Any other token (mid-session, or carrying further args like `gtg issues p1`) goes
    straight to the CLI as an extension verb.
 
@@ -45,7 +50,7 @@ step 2 uses it verbatim — skip the `list <candidate>` reuse-guess.
 ### Session-start collisions — offer the candidates, don't guess
 
 Count the candidates step 3 found: each matching active project, plus the `<token>` command
-if that `.mjs` exists.
+if either `.mjs` exists, bundled or your own.
 
 | Candidates | Do this |
 |---|---|
@@ -86,8 +91,17 @@ The CLI: `node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs"` — referred to as `g
 | a `projects rename` printed a `NOTE:` about dangling parents | Run the `gtg rename <old> <new>` it names. Given a slug no entry here carries, `rename` repairs the stale `parent` reference instead of renaming an entry, which is exactly this case. Stop. |
 | "gtg log" / "when did I last touch &lt;project&gt;" | Run `gtg.mjs log [n\|slug]` and relay it. Read from git, so there is no ledger to keep in step. Stop. |
 | "gtg report" | Run `gtg.mjs report` (writes `docs/handoffs/_report.json`, zero model tokens). Then invoke the **reporter** skill on that JSON to build a self-contained HTML report — a GitHub-style habit grid (from `habit.grid`), throughput and family rollups, per-project arcs, and the fun callouts. Playful tone. Write the HTML to the session scratchpad, not the repo. If `historyAvailable` is false or `effort.sessionsTimed` is 0, say so plainly rather than inventing figures. |
-| "gtg &lt;verb&gt;" not listed above (e.g. "gtg stats", "gtg issues") | Run `gtg.mjs <verb>` and relay its output. Bundled extras ship with the plugin (`stats` — a handoff-store snapshot); a `<storage-root>/.gtg/commands/<verb>.mjs` you've added resolves here too (yours overrides a bundled one of the same name). Unknown → the CLI errors. Stop. |
+| "gtg &lt;verb&gt;" not listed above (e.g. "gtg stats", "gtg issues", "gtg learn") | Run `gtg.mjs <verb>` and relay its output. Four bundled extras ship with the plugin, in two kinds. **Extensions** own entries in the handoff store and render their own separated list: `issues` (the issues-layer listing) and `learn` (learning sprints). **Mods** own no entries and only add a view over the whole store: `stats` (a handoff-store snapshot) and `report`. A `<storage-root>/.gtg/commands/<verb>.mjs` you've added resolves here too, and yours overrides a bundled one of the same name. Unknown → the CLI errors. Stop. |
 | everything else (departure) | Follow the Exit Procedure below. |
+
+**On extension entries:** an extension's own entries are excluded from the bare `gtg.mjs list`
+and `gtg.mjs backlog`, and from their counts, so the same work is not listed twice. That is
+decluttering, not hiding: `gtg.mjs list <name-or-slug>` is you naming what you want, so it
+searches every entry and will surface an issue package or a learning sprint, including a
+shelved one, which is why the Exit Procedure's reuse probe below still works on them. A
+queried extension entry prints with its slug in place of a row number, because row numbers
+index the bare listing and that is the order `back <n>` and `remove <n>` resolve against. Pass
+the slug for these, never a number.
 
 **On effort:** `duration_min` only accrues from sessions run after gtg 1.4.0 went
 live, so `effort` is near-empty at first and fills in over time. The report must
@@ -101,7 +115,7 @@ If it's embedded in a longer message ("gotta go soon, but first…"), reply one 
 
 ### 2. Identify the project + commit in-progress work
 Name the active project from context (**never ask**). Before slugifying fresh, run `gtg.mjs list <candidate-name>` — if exactly one existing entry matches, **reuse its slug** so the handoff updates that entry in place instead of minting a duplicate. Zero or multiple matches: slugify fresh (e.g. "Payments refactor" → `payments-refactor`). If the trigger was `gtg [project]`, use that slug verbatim and skip the `gtg.mjs list <candidate-name>` reuse-check.
-If the working tree has uncommitted changes that belong to the work: `git add <files> && git commit <files> -m "wip: gtg checkpoint — <brief>"`. Skip if clean. **Name the files on the commit too, not just the add** — a pathspec-less `git commit` takes the whole index, so in a checkout shared by concurrent sessions another session's staged work rides along in yours. Commit only files that belong to *this* work; `gtg.mjs` commits only its own ledger (since 1.6.1 it names exact paths), so nothing sweeps the index for you.
+If the working tree has uncommitted changes that belong to the work: `git add <files> && git commit <files> -m "wip: gtg checkpoint - <brief>"`. Skip if clean. **Name the files on the commit too, not just the add** — a pathspec-less `git commit` takes the whole index, so in a checkout shared by concurrent sessions another session's staged work rides along in yours. Commit only files that belong to *this* work; `gtg.mjs` commits only its own ledger (since 1.6.1 it names exact paths), so nothing sweeps the index for you.
 
 ### 3. Estimate the Next Action's ETA
 Rough **duration remaining** to finish this project's Next Action, from your read of the
@@ -174,7 +188,7 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs" backlog \
 BODY
 ```
 
-Relay the `PARKED` line, then stop. Backlog items never show in `gtg.mjs list`; `gtg.mjs backlog` lists them, `gtg.mjs active <n>` reactivates.
+Relay the `PARKED` line, then stop. A backlog item never shows in a bare `gtg.mjs list`. `gtg.mjs backlog` lists them and `gtg.mjs active <n>` reactivates. The one exception is a *queried* `gtg.mjs list <name-or-slug>`, which also reaches a shelved **extension** entry and prints it on its own `shelved:` line, so the reuse probe can still find a parked issue package. A shelved normal project stays invisible to a query.
 
 ## Anti-Patterns
 - **Don't ask clarifying questions on trigger** — Exit step 1's confirmation is the only question.
