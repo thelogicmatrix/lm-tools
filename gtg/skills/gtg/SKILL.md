@@ -32,7 +32,12 @@ Disambiguation, in this order:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs" list <token>
    ls "<storage-root>/.gtg/commands/<token>.mjs" 2>/dev/null
+   ls "${CLAUDE_PLUGIN_ROOT}/skills/gtg/extensions/commands/<token>.mjs" 2>/dev/null
    ```
+   **Both command paths, and the bundled one is not optional.** `issues` and `learn` ship in
+   the plugin now rather than sitting in anyone's `.gtg/commands/`, so probing only the user
+   path finds nothing for exactly the two tokens most likely to collide with a project name,
+   and the collision below is never offered.
 4. Any other token (mid-session, or carrying further args like `gtg issues p1`) goes
    straight to the CLI as an extension verb.
 
@@ -45,7 +50,7 @@ step 2 uses it verbatim — skip the `list <candidate>` reuse-guess.
 ### Session-start collisions — offer the candidates, don't guess
 
 Count the candidates step 3 found: each matching active project, plus the `<token>` command
-if that `.mjs` exists.
+if either `.mjs` exists, bundled or your own.
 
 | Candidates | Do this |
 |---|---|
