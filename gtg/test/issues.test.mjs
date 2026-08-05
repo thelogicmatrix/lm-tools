@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import issues from '../skills/gtg/extensions/commands/issues.mjs';
+import issues, { field } from '../skills/gtg/extensions/commands/issues.mjs';
 
 const setup = (files, active = [], backlog = []) => {
   const root = mkdtempSync(join(tmpdir(), 'gtg-issues-'));
@@ -580,6 +580,49 @@ const LOOSE = {
   assert.ok(!/^Loose \(/m.test(out), 'the old Loose heading survived');
   assert.ok(out.indexOf('issues-p1-hooks') < out.indexOf('UNPACKAGED'),
     'packages no longer lead the output');
+}
+
+// 31. field() reads the two field SHAPES correctly, which no rendered output can show: the
+// view prints presence, never a value, so a truncating or over-reaching reader is invisible
+// from the CLI. Inline fields stop at the separator; Check and Status run to the end of their
+// paragraph; and neither shape may pick up a label from a fence or from prose.
+{
+  const doc = [
+    '# t',
+    '',
+    '**Area:** misc · **Effort:** hours (nuance) · **Package:** p1',
+    '**Check:** run the thing',
+    'and the wrapped half · with a separator in it',
+    '**Status:** worked-around (a name)',
+    '',
+    'Prose mentioning **Package:** p98 mid-sentence.',
+    '',
+    '```markdown',
+    '**Package:** p99 · **Area:** obelisk',
+    '```',
+  ].join('\n');
+
+  assert.equal(field(doc, 'Area'), 'misc', 'an inline field ran past its separator');
+  assert.equal(field(doc, 'Effort'), 'hours (nuance)', 'an inline field lost its parenthetical');
+  assert.equal(field(doc, 'Package'), 'p1',
+    'Package did not come from the real field line - a fenced or prose label won');
+  assert.equal(field(doc, 'Check'), 'run the thing and the wrapped half · with a separator in it',
+    'Check was truncated at the newline, or stopped at the separator, or swallowed Status');
+  assert.equal(field(doc, 'Status'), 'worked-around (a name)', 'Status was not read whole');
+  assert.equal(field(doc, 'Blocked on'), null, 'an absent field did not read as absent');
+}
+
+// 32. Effort accepts either number and canonicalises, because the documented vocabulary is
+// itself inconsistent. A genuine range still refuses to guess an end.
+{
+  const bucket = (e) => {
+    const root = setup({ '2026-01-01-e.md': `# e\n\n**Area:** misc · **Effort:** ${e} · **Package:** p1\n` }, [P1]);
+    return run(root).out;
+  };
+  assert.match(bucket('hours'), /1× hour\b/, '`hours` still buckets to ? instead of hour');
+  assert.match(bucket('minute'), /1× minutes\b/, '`minute` did not canonicalise to minutes');
+  assert.match(bucket('sessions'), /1× session\b/, '`sessions` did not canonicalise to session');
+  assert.match(bucket('minutes-hours (upstream)'), /1× \?/, 'a range invented an end');
 }
 
 console.log('issues.mjs: all checks passed');

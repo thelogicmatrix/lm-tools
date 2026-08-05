@@ -9,11 +9,48 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, join } from 'node:path';
 
-// Fields sit on one `·`-separated line, so stop at the separator rather than
-// taking the rest of the line and splitting afterwards.
-const field = (content, name) => {
-  const m = content.match(new RegExp(`\\*\\*${name}:\\*\\*\\s*([^·\\n]+)`));
-  return m ? m[1].trim() : null;
+// THE anchor, shared by the reader and the writer so they cannot drift apart again. A bold
+// label only counts as a field when it opens a line: quoted in prose, or indented inside a
+// fence, it is documentation. Without this, an issue file could not describe the field syntax
+// without the reader taking the example as that file's own membership - which is exactly how
+// the issue about this bug tripped the reader while being written.
+const isFieldLine = (l) => /^\*\*[A-Za-z ]+:\*\*/.test(l);
+
+// ...and a fence beats the anchor. A field line shown verbatim inside ``` is an EXAMPLE, at
+// column 0 like any other code, and reading it as membership is what stopped this folder
+// documenting its own format. Returns a mask so both callers keep the original line numbers.
+const fieldMask = (lines) => {
+  let fenced = false;
+  return lines.map((l) => {
+    if (/^\s*(```|~~~)/.test(l)) { fenced = !fenced; return false; }
+    return !fenced && isFieldLine(l);
+  });
+};
+
+// Two field shapes that end differently. Area/Effort/Package/Blocked on share one
+// `·`-separated line, so they stop at the separator. Check and Status own their line and wrap
+// freely, so they run to the end of the paragraph: 9 of 24 files wrapped a Check and lost the
+// pass condition to a newline stop, every time the load-bearing half.
+const PARAGRAPH_FIELDS = new Set(['Check', 'Status']);
+
+// Exported for the suite only: nothing in the rendered output shows a field's VALUE, just its
+// presence, so a truncating reader is invisible from the CLI and has to be pinned directly.
+export const field = (content, name) => {
+  const tag = `**${name}:**`;
+  const lines = content.split('\n');
+  const mask = fieldMask(lines);
+  const at = lines.findIndex((l, i) => mask[i] && l.includes(tag));
+  if (at < 0) return null;
+  const head = lines[at].slice(lines[at].indexOf(tag) + tag.length);
+  if (!PARAGRAPH_FIELDS.has(name)) return head.split('·')[0].trim() || null;
+  // A continuation stops at a blank line, the next field, or a fence, so `Check` sitting
+  // directly above `Status` does not swallow it and an example block is never absorbed.
+  const rest = [];
+  for (let i = at + 1; i < lines.length; i += 1) {
+    if (!lines[i].trim() || isFieldLine(lines[i]) || /^\s*(```|~~~)/.test(lines[i])) break;
+    rest.push(lines[i].trim());
+  }
+  return [head.trim(), ...rest].join(' ').trim() || null;
 };
 
 const readIssues = (root) => {
@@ -35,8 +72,8 @@ const readIssues = (root) => {
         effort: field(c, 'Effort') ?? '?',
         pkg: (field(c, 'Package') ?? '').toLowerCase() || null,
         blocked,
-        // ponytail: field() stops at `·`, so a Check containing a literal `·` is truncated.
-        // Upgrade path: read Check to end-of-line if a real check ever needs one.
+        // A paragraph field now, so a `·` inside a Check is kept and a wrapped Check is read
+        // whole. It stops at a blank line or the next field line, never at a separator.
         check: field(c, 'Check'),
         workedAround,
         workaround: workedAround ? (statusRaw.match(/\((.+)\)/)?.[1] ?? null) : null,
@@ -79,7 +116,15 @@ const ORDER = ['minutes', 'hour', 'session'];
 // (`minutes-hours (upstream)` → `?`): a range is not a bucket and picking an end would invent
 // data. memberLine still prints the raw value, so the nuance is kept out of the count rather
 // than lost.
-const bucketOf = (effort) => (String(effort).match(/^(minutes|hour|session)(?=$|[\s(])/i)?.[1] ?? '?').toLowerCase();
+// Either number is accepted and canonicalised. The documented vocabulary is itself
+// inconsistent - `minutes` plural, `hour` and `session` singular - which is what put `hours`
+// in a live file and then counted it as unknown. A range still buckets to `?`: the lookahead
+// rejects `minutes-hours` at the hyphen, because picking an end would invent data.
+const bucketOf = (effort) => {
+  const w = String(effort).match(/^(minutes?|hours?|sessions?)(?=$|[\s(])/i)?.[1]?.toLowerCase();
+  if (!w) return '?';
+  return w.startsWith('minute') ? 'minutes' : w.startsWith('hour') ? 'hour' : 'session';
+};
 
 const rollup = (members) => {
   const counts = new Map();
@@ -109,6 +154,9 @@ const pkgHeader = (p, members) => {
   const tail = members.length ? rollup(members) : `no members - unstamped, or done (\`gtg remove ${p.slug}\`)`;
   return `${p.project} [${p.slug}] (${state}) - ${tail}`;
 };
+
+// docs/issues/README.md's documented set, plus the sentinel an omitted Area reads as.
+const AREAS = new Set(['obelisk', 'claude-stack', 'jobhunt', 'work', 'misc', 'unfiled']);
 
 const RULE = '='.repeat(55);
 
@@ -150,6 +198,14 @@ const list = (issues, packages) => {
   ];
   if (stale.length) bits.push(`${stale.length} stale package ref (${stale.join(', ')})`);
   console.log(bits.join(' · '));
+  // Warns rather than refuses. Both vocabularies degrade silently otherwise - the loose view
+  // groups by Area, so a drifted value quietly fragments into its own one-file heading - but a
+  // typo must never make the folder unreadable, since reading it is how you find the typo.
+  const offArea = [...new Set(issues.map((i) => i.area))].filter((a) => !AREAS.has(a)).sort();
+  if (offArea.length) {
+    const n = (a) => issues.filter((i) => i.area === a).length;
+    console.log(`! ${offArea.length} Area value${offArea.length === 1 ? '' : 's'} outside README's set: ${offArea.map((a) => `${a} (${n(a)})`).join(', ')}`);
+  }
 };
 
 const listPackages = (packages) => {
@@ -205,7 +261,7 @@ const parseFlags = (argv) => {
 // block) is not a field line, and stamping onto it would corrupt the body.
 const stamp = (content, pn) => {
   const lines = content.split('\n');
-  const at = lines.findIndex((l) => /^\*\*[A-Za-z ]+:\*\*/.test(l));
+  const at = fieldMask(lines).findIndex(Boolean);
   if (at >= 0) {
     lines[at] = `${lines[at].trimEnd()} · **Package:** ${pn}`;
     return { text: lines.join('\n'), line: lines[at] };

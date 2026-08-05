@@ -23,8 +23,10 @@ delete the files.
     `gtg issues` rather than an error, so drifting off whatever set this folder already uses
     quietly fragments your own view of it. Agreeing on a small list and keeping to it is the
     only reason the field is worth anything.
-  - **Effort:** start the value with exactly one of `minutes`, `hour` or `session`, with any
-    nuance in a parenthetical after it. The rollup counts by that leading word, so
+  - **Effort:** start the value with one of `minutes`, `hour` or `session`, with any nuance in
+    a parenthetical after it. Either number is read and canonicalised, so `hours` counts with
+    `hour` — the vocabulary is inconsistent enough to invite that, and counting it as unknown
+    was the reader's fault rather than the filer's. The rollup counts by that leading word, so
     `minutes (per occurrence)` counts with `minutes`. Anything else counts as `?`, including a
     hyphenated range like `minutes-hours`, so write the wider end and put the range in the
     parenthetical. Omitted also reads as `?`.
@@ -44,8 +46,14 @@ delete the files.
     still live. Such a file is **never deleted**. Anything else in `Status` is free prose and
     changes nothing.
 
-  `Check` and `Status` get their own lines because a `Check` is usually a command, and the
-  field reader stops at the `·` separator.
+  `Check` and `Status` get their own lines because a `Check` is usually a command. They are
+  **paragraph fields**: they run to the next blank line, the next field line, or a fence, so a
+  long one can wrap freely and a `·` inside one is kept. The `·`-separated line is the other
+  shape, and those fields stop at the separator.
+
+  A field only counts when its **line begins with the bold label**, and never inside a fenced
+  block. So an issue file can quote the field syntax verbatim, in prose or in a ```` ``` ````
+  example, without the reader taking it as that file's own membership.
 - Body: what's wrong, why it matters, and the known fix path or first diagnostic step.
   Link related memory files by name.
 - Keep it short. A few lines is the target, because this is a pointer for a future session
