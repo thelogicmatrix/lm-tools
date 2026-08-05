@@ -15,3 +15,15 @@ All paths below are relative to the storage root: `$GTG_HUB` if set, else the cu
 **Stale handoff:** if the Next Action already looks done (files match, work complete), say so and ask how to proceed instead of redoing it — but still consume the entry (step 5); a pulled handoff is never left dangling.
 
 **Never** work a handoff's Next Action while its entry still sits in `_active.json` (or `_backlog.json`).
+
+## Working a package
+
+**An issues package is the one exception to step 5: do not consume it.** `gtg issues <pN>` says so in its own directive line.
+
+The rest of the Procedure applies — read the handoff, run the hooks, continue from the Next Action — but the entry stays where it is.
+
+A package entry is not only a bookmark. It is the only live mapping from its `pN` to a name, and every `docs/issues/` file in the batch carries `**Package:** pN` pointing at it. Consuming it orphans all of them at once: they fall back to loose, `gtg issues` reports a stale package ref, and the package stops existing for exactly as long as you are working it. A session that ends before re-parking leaves it that way.
+
+So a package retires by being **finished**, not by being picked up. Fix its members and delete their files as you go; when the last one goes, its row renders `no members - unstamped, or done` and names the `gtg remove` that closes it. That row is the retirement prompt — nothing else is needed.
+
+The rule step 5 protects still holds for ordinary handoffs, where the entry really is a bookmark you are holding and would otherwise dangle.

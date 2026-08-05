@@ -235,14 +235,14 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
 {
   const root = setup({}, [P1]);
   const { out } = run(root, ['p1']);
-  assert.equal(out, 'GTG-DIRECTIVE: resume issues-p1-hooks - read references/resume.md and follow it.');
+  assert.equal(out, 'GTG-DIRECTIVE: resume issues-p1-hooks - read references/resume.md and follow it, EXCEPT step 5: a package is never consumed. See "Working a package" there.');
 }
 
 // 9. A full slug and a substring of the project name both resolve, and like case 8 the
 // directive is the SOLE output. gtg's router only acts on a directive it sees first.
 {
   const root = setup({}, [P1], [P3]);
-  const only = 'GTG-DIRECTIVE: resume issues-p3-obelisk-housekeeping - read references/resume.md and follow it.';
+  const only = 'GTG-DIRECTIVE: resume issues-p3-obelisk-housekeeping - read references/resume.md and follow it, EXCEPT step 5: a package is never consumed. See "Working a package" there.';
   assert.equal(run(root, ['issues-p3-obelisk-housekeeping']).out, only);
   assert.equal(run(root, ['housekeeping']).out, only);
 }
@@ -529,16 +529,16 @@ const LOOSE = {
   assert.match(wrong.out, /No issue package matches "p1"/);
   // An exact pN still reaches its own package.
   assert.equal(run(only10, ['p10']).out,
-    'GTG-DIRECTIVE: resume issues-p10-dns - read references/resume.md and follow it.',
+    'GTG-DIRECTIVE: resume issues-p10-dns - read references/resume.md and follow it, EXCEPT step 5: a package is never consumed. See "Working a package" there.',
     'an exact pN query stopped matching its own package');
   // Free text keeps substring matching.
   assert.equal(run(only10, ['dns']).out,
-    'GTG-DIRECTIVE: resume issues-p10-dns - read references/resume.md and follow it.',
+    'GTG-DIRECTIVE: resume issues-p10-dns - read references/resume.md and follow it, EXCEPT step 5: a package is never consumed. See "Working a package" there.',
     'substring matching on free text was wrongly removed');
   // p1 resolves to p1 when p1 exists, with p10 sitting alongside it.
   const both = setup({}, [P1, P10]);
   assert.equal(run(both, ['p1']).out,
-    'GTG-DIRECTIVE: resume issues-p1-hooks - read references/resume.md and follow it.');
+    'GTG-DIRECTIVE: resume issues-p1-hooks - read references/resume.md and follow it, EXCEPT step 5: a package is never consumed. See "Working a package" there.');
   // A whitespace-only query is empty, not match-everything.
   const blank = run(both, ['   ']);
   assert.doesNotMatch(blank.out, /GTG-DIRECTIVE/);

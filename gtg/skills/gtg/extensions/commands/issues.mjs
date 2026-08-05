@@ -433,8 +433,11 @@ export default ({ root, args, ownEntries, commit, ownParent }) => {
     const hits = resolve(packages, v);
     // One line, nothing else: gtg's router follows a GTG-DIRECTIVE line instead of
     // relaying it, so anything printed alongside it is never seen.
+    // The step 5 exception is NAMED here rather than left to the reader, because consuming
+    // this entry deletes the only live mapping from its pN to a name while every member file
+    // still points at it - the package dissolves for exactly as long as you are working it.
     if (hits.length === 1) {
-      console.log(`GTG-DIRECTIVE: resume ${hits[0].slug} - read references/resume.md and follow it.`);
+      console.log(`GTG-DIRECTIVE: resume ${hits[0].slug} - read references/resume.md and follow it, EXCEPT step 5: a package is never consumed. See "Working a package" there.`);
       return;
     }
     if (hits.length > 1) {
