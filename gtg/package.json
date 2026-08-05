@@ -1,6 +1,6 @@
 {
   "name": "gtg",
-  "version": "1.10.1",
+  "version": "1.10.2",
   "description": "Pause/resume workflow for Claude Code sessions.",
   "type": "module",
   "private": true,

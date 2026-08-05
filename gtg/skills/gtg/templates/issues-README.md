@@ -80,7 +80,7 @@ Flags a listed issue can carry:
 | `BLOCKED: <thing>` | Its `Blocked on` names something that must happen first |
 | `WORKED-AROUND: <what>` | Symptom handled, failure class still live, file stays |
 | `(no Check)` | No `Check` field, so nobody can tell whether it is still real |
-| `membership unstamped` | A package whose issue files carry no `Package` field. Not empty and not broken |
+| `no members - unstamped, or done` | Either nothing carries this package's `pN` yet, or every member was fixed and deleted. Once the files are gone the folder cannot tell those apart, so both are named; the suggested `gtg remove` is for the second |
 
 Neither side has to be kept in step. Fix an issue and delete its file, and it leaves its
 package. Ship a package and `gtg prune` it, and any leftover files fall back to loose, with

@@ -102,7 +102,11 @@ const memberLine = (i) => {
 
 const pkgHeader = (p, members) => {
   const state = p.shelved ? `shelved ${days(p.updated)}d` : 'active';
-  const tail = members.length ? rollup(members) : 'membership unstamped';
+  // Zero members is TWO opposite states the folder can no longer tell apart: never stamped,
+  // or every member fixed and deleted. The second is a finished package that should be removed,
+  // and rendering it as "unstamped" read as unfinished setup, so the shelf only ever grew.
+  // Both are named rather than guessing which, because after deletion the history is gone.
+  const tail = members.length ? rollup(members) : `no members - unstamped, or done (\`gtg remove ${p.slug}\`)`;
   return `${p.project} [${p.slug}] (${state}) - ${tail}`;
 };
 

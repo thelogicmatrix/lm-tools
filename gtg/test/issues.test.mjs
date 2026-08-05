@@ -47,6 +47,14 @@ const run = (root, args = []) => {
       // NOT enforce "only through ownEntries". The same regression hand-rolled at the FS level,
       // JSON.parse(readFileSync(...)) bypassing ctx entirely, is NOT caught, and readIssues
       // already readFileSyncs under root so that route is available to a future edit.
+      // RE-AUDITING A FAIL-PRE-FIX MEASUREMENT: this stub makes that impossible as written.
+      // A pre-ownEntries issues.mjs calls readPackages(readStore) and dies here immediately, so
+      // every assertion reports the same meaningless failure instead of the specific ones a fix
+      // addressed. To reproduce any commit message's "N assertions failed before" figure,
+      // temporarily restore a working readStore (JSON.parse(readFileSync(join(root, rel)))) for
+      // the duration of that audit only. The measurements in the history were taken that way.
+      // The note lives here rather than in a commit message because commits are immutable and
+      // the run ledger is git-ignored, so neither survives to the next auditor.
       readStore: () => { throw new Error('read entries through ownEntries, not readStore'); },
       // Mirrors gtg.mjs handing over EXTENSIONS['issues']. The command no longer carries the
       // namespace literal at all, so the writer half (pack's --parent) reads it from here and
@@ -118,7 +126,7 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
 {
   const root = setup({}, [P1]);
   const { out } = run(root);
-  assert.match(out, /\[issues-p1-hooks\] \(active\) - membership unstamped/);
+  assert.match(out, /\[issues-p1-hooks\] \(active\) - no members - unstamped, or done \(`gtg remove issues-p1-hooks`\)/);
 }
 
 // 4. An unstamped issue is loose, grouped by area, and a missing Area reads unfiled.
