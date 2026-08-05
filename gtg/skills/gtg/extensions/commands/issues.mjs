@@ -218,7 +218,7 @@ const themeOf = (name) => name
   .replace(/[^a-z0-9]+/g, '-')
   .replace(/^-+|-+$/g, '');
 
-const pack = ({ root, commit }, argv, issues, packages) => {
+const pack = ({ root, commit, ownParent }, argv, issues, packages) => {
   if (!argv.length) {
     const known = new Set(packages.map((p) => p.pn).filter(Boolean));
     const loose = issues.filter((i) => !i.pkg || !known.has(i.pkg));
@@ -242,6 +242,10 @@ const pack = ({ root, commit }, argv, issues, packages) => {
   const eta = String(flags.eta ?? '').trim();
   const wanted = pos.slice(1);
 
+  // Without it the park would write `--parent undefined` and strand the entry under a
+  // namespace nothing reads - the exact silent failure the ctx collapse exists to prevent,
+  // so it refuses instead of guessing its own namespace.
+  if (!ownParent) errs.push('no ownParent on the extension ctx - gtg is too old, or this command was not reached through its extension dispatch');
   if (!/^p\d+$/.test(pn)) errs.push(`first argument must be a package number like p9, got "${pos[0] ?? ''}"`);
   else if (resolve(packages, pn).length) errs.push(`${pn} already exists: ${resolve(packages, pn)[0].slug}`);
   if (!name) errs.push('missing --name "<Name>"');
@@ -303,16 +307,11 @@ ${members.map((m) => `- docs/issues/${m.file}`).join('\n')}
 ## Next Action
 ${next}
 `;
-  // This 'issues' is a PAYLOAD, not a namespace comparison, so it is the one place the
-  // namespace string still lives outside gtg.mjs. It MUST agree with EXTENSIONS.issues, or
-  // newly packed packages park under a parent their own reader does not read and go invisible
-  // to gtg issues, gtg list and gtg backlog at once. Task 6's park test now pins this literal
-  // in the child argv and gtg.test.mjs pins EXTENSIONS.issues, so a one-sided edit fails CI,
-  // but a coordinated rename that forgets this line would not.
-  // See docs/issues/2026-08-04-gtg-pack-parent-must-agree-with-extensions-map.md: the cheap
-  // collapse is passing gtg.mjs's already-computed ownParent through the ctx.
+  // The parent written here is gtg.mjs's own EXTENSIONS[cmd], handed over on the ctx, so the
+  // writer and the reader (ownEntries) are one copy of the fact rather than two that have to
+  // be kept in step. A rename of the namespace now moves both ends at once.
   const backlogArgs = [
-    'backlog', '--project', name, '--slug', slug, '--next', next, '--parent', 'issues',
+    'backlog', '--project', name, '--slug', slug, '--next', next, '--parent', ownParent,
     ...(eta ? ['--eta', eta] : []),
   ];
 
@@ -324,7 +323,21 @@ ${next}
     return;
   }
 
-  writes.forEach((w) => writeFileSync(join(root, w.rel), w.text));
+  // A throw partway through the loop used to leave the earlier stamps on disk and
+  // uncommitted, and the RETRY could never pick them up: `writes` filters on `m.pkg !== pn`,
+  // so an already-stamped file is excluded from the next batch and its stamp sits in a shared
+  // checkout as an unattributed dirty file. Commit whatever landed before rethrowing, so the
+  // tree is never left dirty on someone else's behalf and the retry only does the remainder.
+  const done = [];
+  try {
+    writes.forEach((w) => { writeFileSync(join(root, w.rel), w.text); done.push(w.rel); });
+  } catch (e) {
+    if (done.length) commit(done, `${subject} [partial: ${done.length}/${writes.length}]`);
+    console.error(`gtg issues pack: stamping failed after ${done.length} of ${writes.length} file(s).`);
+    done.forEach((rel) => console.error(`  stamped and committed: ${rel}`));
+    console.error('  Fix: re-run the same command - already-stamped files are skipped, so it resumes.');
+    throw e;
+  }
   if (writes.length) commit(writes.map((w) => w.rel), subject);
   // process.argv[1] is the running gtg.mjs, checked above and not assumed, so there is no path
   // to configure. execPath + argv array, never a shell string: --name is free text.
@@ -348,14 +361,14 @@ ${next}
   }
 };
 
-export default ({ root, args, ownEntries, commit }) => {
+export default ({ root, args, ownEntries, commit, ownParent }) => {
   const issues = readIssues(root);
   const packages = readPackages(ownEntries);
   const [verb, ...rest] = args ?? [];
   const v = (verb ?? '').toLowerCase();
 
   if (v === 'packages') return listPackages(packages);
-  if (v === 'pack') return pack({ root, commit }, rest, issues, packages);
+  if (v === 'pack') return pack({ root, commit, ownParent }, rest, issues, packages);
   if (v) {
     const hits = resolve(packages, v);
     // One line, nothing else: gtg's router follows a GTG-DIRECTIVE line instead of

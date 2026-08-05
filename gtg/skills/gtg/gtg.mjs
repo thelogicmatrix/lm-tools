@@ -866,7 +866,10 @@ else {
           shelved: grab(REL_BACKLOG, 'backlog'),
         };
       };
-      await mod.default({ root: ROOT, args: rest, readStore, writeStore, commit, countHandoffFiles, ownEntries });
+      // ownParent rides the ctx as well as being closed over by ownEntries: an extension that
+      // WRITES an entry needs the same namespace its reader filters on, and deriving it a
+      // second time on the writer side is exactly the drift class this closes.
+      await mod.default({ root: ROOT, args: rest, readStore, writeStore, commit, countHandoffFiles, ownEntries, ownParent });
     } catch (e) {
       console.error(`gtg: extension '${cmd}' failed: ${(e?.message || String(e)).split('\n')[0]}`);
       process.exit(1);

@@ -48,6 +48,10 @@ const run = (root, args = []) => {
       // JSON.parse(readFileSync(...)) bypassing ctx entirely, is NOT caught, and readIssues
       // already readFileSyncs under root so that route is available to a future edit.
       readStore: () => { throw new Error('read entries through ownEntries, not readStore'); },
+      // Mirrors gtg.mjs handing over EXTENSIONS['issues']. The command no longer carries the
+      // namespace literal at all, so the writer half (pack's --parent) reads it from here and
+      // the park test below pins what actually reaches the child argv.
+      ownParent: 'issues',
       // Mirrors gtg.mjs: both stores, already filtered to this command's own parent
       // namespace, so the command never sees the namespace string itself.
       ownEntries: () => {

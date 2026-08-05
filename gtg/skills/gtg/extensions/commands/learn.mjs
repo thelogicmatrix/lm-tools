@@ -1,4 +1,5 @@
-// gtg learn - read-only view of learning sprints (entries with parent: "learning").
+// gtg learn - read-only view of learning sprints. The parent namespace it reads under is
+// gtg.mjs's EXTENSIONS map, reached through ctx.ownEntries and never named here.
 // ownEntries reads BOTH stores: an entry idle >7d is auto-shelved onto the backlog by
 // `gtg list` (gtg.mjs autoShelf), so an active-only read would report "no
 // learning sprints" for a sprint that exists. No flags, no writes.
