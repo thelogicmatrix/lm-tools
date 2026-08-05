@@ -4,7 +4,7 @@ Triggered by `gtg resume <project>` or a natural-language "let's continue X" (al
 
 All paths below are relative to the storage root: `$GTG_HUB` if set, else the current git repo's root.
 
-1. Read `docs/handoffs/_active.json`. Match `<name>` against `slug` first, then fuzzy against `project`. **If no match, also read `docs/handoffs/_backlog.json`** and match the same way. **Active wins collisions:** if the name matches in both, take the active entry.
+1. Read `docs/handoffs/_active.json`. Match `<name>` against `slug` first, then fuzzy against `project`. **If no match, also read `docs/handoffs/_backlog.json`** and match the same way. **Active wins collisions:** if the name matches in both, take the active entry. The two stores partition the work as of 1.10.4 — every writer moves a slug rather than copying it — so a real collision now means hand-edited JSON. The rule stays as the tie-break for that case.
 2. If multiple entries match ambiguously, ask: "Which project — [list matches]?"
 3. Read the linked handoff file (the entry's `file`, relative to the storage root).
 4. Respond: `"Found your [date] handoff for [project] — picking up from [next action]."`

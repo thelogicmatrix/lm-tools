@@ -276,6 +276,19 @@ Say: "let's continue ${a.project}"
   const items = entries(storeRel, key).filter((e) => e.slug !== a.slug); // dedupe by slug
   items.push(entry);
   saveEntries(storeRel, key, items);
+  // The two stores PARTITION the work, in flight against shelved, which is what every other
+  // mover already assumes: back, active, resume and autoShelf all MOVE an entry rather than
+  // copy it. Deduping against only the store being written left the other copy sitting there,
+  // and the two drive different renderers, so one project read as active or shelved depending
+  // on which command you happened to run. `prior` above already spans both stores; the write
+  // now does too, so writing a handoff for a shelved slug unparks it instead of forking it.
+  const [otherRel, otherKey] = storeRel === REL_ACTIVE
+    ? [REL_BACKLOG, 'backlog']
+    : [REL_ACTIVE, 'handoffs'];
+  const others = entries(otherRel, otherKey);
+  const kept = others.filter((e) => e.slug !== a.slug);
+  const unparked = kept.length !== others.length;
+  if (unparked) saveEntries(otherRel, otherKey, kept);
   // 'backlog' here means "park a NEW idea" (writeHandoff's other caller) - distinct
   // from `back` (below), which SHELVES an already-active entry and keeps its own
   // 'gtg backlog: park <project>' subject unchanged; historical commits use that
@@ -283,7 +296,7 @@ Say: "let's continue ${a.project}"
   const subject = verb === 'backlog'
     ? `gtg backlog: new ${a.project} - session ${sessions}`
     : `${verb}: ${a.project} - session ${sessions}`;
-  commit([relFile, storeRel], subject);
+  commit(unparked ? [relFile, storeRel, otherRel] : [relFile, storeRel], subject);
   console.log(relFile);
   console.log(verb === 'backlog'
     ? `PARKED on backlog: "${a.project}" - reactivate with 'gtg active <n>' or "let's continue ${a.project}"`

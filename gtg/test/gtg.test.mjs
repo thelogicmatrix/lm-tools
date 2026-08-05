@@ -2003,4 +2003,28 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 52 - the hints back and active print are runnable for an extension entry');
 }
 
+// --- 53. the two stores partition: one slug never sits in both ---
+// writeHandoff used to dedupe against only the store it was writing, so a handoff for a
+// shelved slug appended an active entry and left the backlog copy behind. The two stores
+// drive different renderers, so the same project then read as active or shelved depending on
+// which command ran. Both directions, because `backlog` writes through the same function.
+{
+  const repo = tempRepo();
+  const backlogOf = (r) => JSON.parse(readFileSync(join(r, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  const slugs = (xs) => (xs ?? []).map((e) => e.slug);
+
+  gtg(repo, ['backlog', '--project', 'Thing', '--slug', 'thing', '--next', 'TBD'], { input: BODY });
+  gtg(repo, HANDOFF_ARGS('thing', 'Thing'), { input: BODY });
+  assert.deepEqual(slugs(active(repo).handoffs), ['thing'], 'handoff did not unpark the shelved slug');
+  assert.deepEqual(slugs(backlogOf(repo)), [], 'the backlog copy survived a handoff for the same slug');
+
+  gtg(repo, ['backlog', '--project', 'Thing', '--slug', 'thing', '--next', 'TBD'], { input: BODY });
+  assert.deepEqual(slugs(backlogOf(repo)), ['thing'], 'parking did not land on the backlog');
+  assert.deepEqual(slugs(active(repo).handoffs), [], 'the active copy survived a park of the same slug');
+
+  const st = execSync('git status --porcelain', { cwd: repo, encoding: 'utf8' });
+  assert.equal(st.trim(), '', `the unpark left the tree dirty:\n${st}`);
+  console.log('ok 53 - a slug lives in exactly one store, both directions, and the unpark is committed');
+}
+
 console.log('ALL PASS');
