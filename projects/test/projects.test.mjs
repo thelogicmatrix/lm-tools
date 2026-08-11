@@ -1553,7 +1553,7 @@ mtest('SKILL.md carries the page skeleton and the list row byte-exact', () => {
     renderList(root, readStore(root)).trimEnd());
 });
 
-import { cmdRename, cmdLog } from '../skills/projects/projects.mjs';
+import { cmdRename, cmdLog, builtins } from '../skills/projects/projects.mjs';
 
 test('rename moves the row and its page, and git records it as a rename', () => {
   const { root, git } = gitFixture();
@@ -1893,6 +1893,28 @@ test('the CLI exits 2 on an unknown theme, not 1', () => {
   assert.equal(missing.status, 2, missing.stderr);
   assert.match(missing.stderr, /--theme is required/);
   assert.doesNotMatch(missing.stderr, /at .*projects\.mjs:/);
+});
+
+test('--theme "" is refused on both verbs, unlike --repo ""', () => {
+  // Two places promise this: projects.mjs's note above `if (theme !== null)` and SKILL.md's set
+  // row. '' does NOT clear a theme, because every row has one and a cleared row renders into a
+  // section it does not belong to. Pinned so the tempting "regularise --theme like --repo"
+  // refactor has to break a test rather than a promise. '' reaches validateTheme and exits 2.
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--theme', 'work']);
+  assert.equal(runCli(root, ['set', 'alpha', '--theme', '']).status, 2);
+  assert.equal(runCli(root, ['register', 'beta', '--name', 'Beta', '--theme', '']).status, 2);
+  assert.equal(findProject(readStore(root), 'alpha').theme, 'work', 'and the row is unchanged');
+});
+
+test('no theme key shadows a verb', () => {
+  // main routes `Object.hasOwn(THEMES, cmd)` BEFORE the builtins lookup, so a seventh theme keyed
+  // `set`, `log`, `sync`, `render`, `list` or `help` would silently turn that verb into a filter.
+  // No collision today. A test rather than a comment because it cannot be skimmed past and it
+  // fires at the one moment it matters, when the seventh theme is added.
+  for (const t of THEME_ORDER) {
+    assert.ok(!(t in builtins), `theme "${t}" would shadow the verb of the same name`);
+  }
 });
 
 mtest('set refuses an unknown theme without touching the row', () => {

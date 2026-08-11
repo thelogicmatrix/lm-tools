@@ -16,6 +16,10 @@ export const STATUS_ORDER = ['active', 'ops', 'paused', 'done'];
 // Themes partition the index into readable sections. Six members chosen against the real
 // 39 rows, not invented: fewer and citsim's worldbuilding rows sit somewhere that does not
 // describe them, more and a section holds one project.
+// Adding or renaming one? Markdown cannot interpolate this, so six prose statements go stale with
+// it: SKILL.md:18-19 and :30, README.md:34 and :51-52, plus the count word in each ("Six themes",
+// "deliberately six"). The CLI's own copies are derived (HELP and validateTheme both interpolate
+// THEME_ORDER) and need no edit. The inventory lives here so the edit and its fallout are adjacent.
 export const THEMES = {
   work: 'Work',
   'job-search': 'Job search',
@@ -579,8 +583,8 @@ export function cmdSet(root, args, opts = {}) {
   if (name === null && repo === null && where === null && themeArg === null) {
     throw new Error('projects: nothing to set, pass at least one of --name, --where, --repo, --theme');
   }
-  // Validated BEFORE any assignment below, alongside assertRenderable, so a bad theme in a
-  // multi-flag call leaves the row exactly as it was rather than half-updated.
+  // Validated BEFORE any assignment below, on the line just before assertRenderable, so a bad
+  // theme in a multi-flag call leaves the row exactly as it was rather than half-updated.
   const theme = themeArg === null ? null : validateTheme(themeArg);
   // Rendered fields go through the same gate register uses, and BEFORE anything is assigned: a
   // pipe or a line break here would corrupt the table or forge a row.
@@ -977,7 +981,9 @@ export function cmdSync(root, _args, opts = {}) {
     : `projects sync (${date}): nothing to flag across ${plural(store.projects.length, 'project')}\n`;
 }
 
-const builtins = {
+// Exported for the one test that asserts no theme key shadows a verb name, because main routes a
+// theme filter before this lookup.
+export const builtins = {
   // The slug is validated BEFORE stdin is read. The other way round, `projects current` with
   // no slug sits blocking on a terminal that is never going to send it an EOF.
   current: (root, rest) => {
