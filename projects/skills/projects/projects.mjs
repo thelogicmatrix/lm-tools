@@ -541,15 +541,22 @@ export function cmdSet(root, args, opts = {}) {
   const name = flag(args, '--name');
   const repo = flag(args, '--repo');
   const where = flag(args, '--where');
-  if (name === null && repo === null && where === null) {
-    throw new Error('projects: nothing to set, pass at least one of --name, --where, --repo');
+  const themeArg = flag(args, '--theme');
+  if (name === null && repo === null && where === null && themeArg === null) {
+    throw new Error('projects: nothing to set, pass at least one of --name, --where, --repo, --theme');
   }
+  // Validated BEFORE any assignment below, alongside assertRenderable, so a bad theme in a
+  // multi-flag call leaves the row exactly as it was rather than half-updated.
+  const theme = themeArg === null ? null : validateTheme(themeArg);
   // Rendered fields go through the same gate register uses, and BEFORE anything is assigned: a
   // pipe or a line break here would corrupt the table or forge a row.
   assertRenderable({ name: name ?? p.name, where: where !== null ? [where] : (p.where || []),
     lastTouched: p.lastTouched || '', page: p.page || '' });
   if (name !== null) p.name = name;
   if (where !== null) p.where = [where];
+  // Unlike --repo below, an empty string does NOT clear it: every row has a theme, and a cleared
+  // one renders into a section it does not belong to. '' reaches validateTheme and is refused.
+  if (theme !== null) p.theme = theme;
   // An empty string CLEARS repo, for a project whose own checkout has gone away. The key is
   // deleted rather than set to '', so absent has one representation, which is what every reader
   // already branches on.
@@ -578,6 +585,15 @@ export function cmdRegister(root, args, opts = {}) {
   if (findProject(store, slug)) throw new Error(`projects: "${slug}" is already registered`);
   const name = flag(args, '--name', slug);
   const status = validateStatus(flag(args, '--status', 'active'));
+  // Required, not defaulted. A default would pool every new row in one theme silently, and
+  // the whole reason this field exists is that the layer's failure mode is things nobody
+  // remembers to do. Read here, with the other flags, so it throws before the page is written
+  // and a refusal leaves no orphan page behind, the same guarantee assertRenderable has below.
+  const themeArg = flag(args, '--theme');
+  if (themeArg === null) {
+    throw new Error(`projects: --theme is required, expected one of ${THEME_ORDER.join(', ')}`);
+  }
+  const theme = validateTheme(themeArg);
   const where = flag(args, '--where');
   const repo = flag(args, '--repo');
   const date = opts.date || today();
@@ -605,7 +621,7 @@ export function cmdRegister(root, args, opts = {}) {
       + `## Current state (${date})\n${CS_START}\nRegistered ${date}. No status written yet.\n${CS_END}\n\n`
       + `## Future Directions\n\n## Docs map\n`, 'utf8');
   }
-  store.projects.push({ slug, name, status, where: where ? [where] : [],
+  store.projects.push({ slug, name, status, theme, where: where ? [where] : [],
     ...(repo ? { repo } : {}), page, lastTouched: date });
   saveAndRender(root, store, [`${PROJECTS_DIR}/${page}`], `projects: register ${slug}`, opts);
 }
@@ -963,10 +979,11 @@ const HELP = `projects: portfolio bookkeeping
   projects                     list every project, status and its page's opening line
   projects current <slug>      replace that page's Current state from stdin
   projects status <slug> <s>   set status: active | paused | ops | done
-  projects register <slug> [--name N --status S --where W --repo R]
+  projects register <slug> --theme T [--name N --status S --where W --repo R]
+                               theme: work | job-search | tooling | homelab | worldbuilding | personal
   projects archive <slug>      move the page to archive/ and drop the row
   projects rename <old> <new>  change a slug, moving its page with it
-  projects set <slug> [--name N --where W --repo R]   change a row's other fields
+  projects set <slug> [--name N --where W --repo R --theme T]   change a row's other fields
   projects log [slug] [-n N]   what happened, read from git. A slug follows its page
   projects sync                check every row against reality, reporting and never rewriting
   projects render              re-render INDEX.md from the store

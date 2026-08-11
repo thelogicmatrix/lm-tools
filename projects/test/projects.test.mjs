@@ -653,7 +653,7 @@ mtest('status validates, updates and re-renders the index', () => {
 mtest('register adds a row and a page skeleton carrying the unwritten marker', () => {
   const root = seeded();
   cmdRegister(root, ['newthing', '--name', 'New Thing', '--status', 'active',
-    '--where', 'C:/dev/newthing'], { commit: false, date: '2026-07-29' });
+    '--where', 'C:/dev/newthing', '--theme', 'tooling'], { commit: false, date: '2026-07-29' });
   const p = findProject(readStore(root), 'newthing');
   assert.equal(p.name, 'New Thing');
   assert.equal(p.page, 'newthing.md');
@@ -669,7 +669,7 @@ mtest('a skeleton page is stamped "last verified never", never with a date', () 
   // on exactly the pages that most need flagging. The field stays PRESENT, so no reader
   // downstream needs a missing-field branch.
   const root = seeded();
-  cmdRegister(root, ['fresh', '--name', 'Fresh'], { commit: false, date: '2026-07-29' });
+  cmdRegister(root, ['fresh', '--name', 'Fresh', '--theme', 'tooling'], { commit: false, date: '2026-07-29' });
   const page = readFileSync(join(root, 'docs/projects/fresh.md'), 'utf8');
   assert.match(page, /^\*last verified never · docs: none\*$/m);
   assert.doesNotMatch(page.split('\n')[1], /\d{4}-\d{2}-\d{2}/, 'no date on the header line');
@@ -683,7 +683,7 @@ mtest('register works in a repo that has no docs/projects yet', () => {
   // anything had created the folder, so it died on a raw ENOENT with no usable message.
   const root = fixture();
   rmSync(join(root, 'docs'), { recursive: true });
-  cmdRegister(root, ['first', '--name', 'First'], { commit: false, date: '2026-07-29' });
+  cmdRegister(root, ['first', '--name', 'First', '--theme', 'tooling'], { commit: false, date: '2026-07-29' });
   assert.ok(existsSync(join(root, 'docs/projects/first.md')));
   assert.equal(findProject(readStore(root), 'first').page, 'first.md');
 });
@@ -780,7 +780,7 @@ mtest('register adopts an existing page rather than clobbering the narrative', (
   const path = join(root, 'docs/projects/adopted.md');
   writeFileSync(path, '# Adopted\n\nhand-written long before the CLI existed\n');
   const before = readFileSync(path, 'utf8');
-  cmdRegister(root, ['adopted'], { commit: false, date: '2026-07-29' });
+  cmdRegister(root, ['adopted', '--theme', 'tooling'], { commit: false, date: '2026-07-29' });
   assert.equal(readFileSync(path, 'utf8'), before);
   assert.equal(findProject(readStore(root), 'adopted').page, 'adopted.md');
 });
@@ -800,7 +800,7 @@ test('an unrenderable name is refused before anything reaches disk', () => {
   // stored row that no render can emit bricks every later status, current and render call.
   const root = seeded();
   const store = readFileSync(join(root, REL_STORE), 'utf8');
-  assert.throws(() => cmdRegister(root, ['pipey', '--name', 'a|b'], { commit: false }),
+  assert.throws(() => cmdRegister(root, ['pipey', '--name', 'a|b', '--theme', 'tooling'], { commit: false }),
     /pipe or line break/);
   assert.equal(readFileSync(join(root, REL_STORE), 'utf8'), store);
   assert.ok(!existsSync(join(root, 'docs/projects/pipey.md')), 'and no orphan skeleton either');
@@ -848,7 +848,7 @@ function runCli(root, args, input = '') {
 
 test('main registers, writes a Current state from stdin and lists, all exit 0', () => {
   const { root, git } = gitFixture();
-  const reg = runCli(root, ['register', 'demo', '--name', 'Demo', '--status', 'active']);
+  const reg = runCli(root, ['register', 'demo', '--name', 'Demo', '--status', 'active', '--theme', 'tooling']);
   assert.equal(reg.status, 0, reg.stderr);
   assert.match(reg.stdout, /RENDERED/);
 
@@ -886,7 +886,7 @@ test('main exits 2 on an unknown verb and on a missing argument, 1 on a real fai
   // behaviour it guards against, blocking forever on a terminal, needs a tty to observe.
   assert.equal(runCli(root, ['current']).status, 2, 'no slug');
 
-  runCli(root, ['register', 'demo']);
+  runCli(root, ['register', 'demo', '--theme', 'tooling']);
   writeFileSync(join(root, 'docs/projects/demo.md'),
     `# Demo\n${CS_START}\na\n${CS_START}\nb\n${CS_END}\n`);
   const bad = runCli(root, ['current', 'demo'], 'new body\n');
@@ -1318,7 +1318,7 @@ test('a status body opening with a stamp line cannot pass as the header stamp', 
   // anchored to a line start but not bounded to the header looks, and the page reported clean
   // with a header still saying `never`. That is the false pass the anchor was added to close.
   const { root } = gitFixture();
-  assert.equal(runCli(root, ['register', 'beacon', '--name', 'Beacon']).status, 0);
+  assert.equal(runCli(root, ['register', 'beacon', '--name', 'Beacon', '--theme', 'tooling']).status, 0);
   assert.equal(runCli(root, ['current', 'beacon'],
     '*last verified 2026-08-03 after a full read*\nSweep is green.\n').status, 0);
 
@@ -1385,7 +1385,7 @@ test('an INDEX.md with no data rows is not mistaken for an unmigrated table', ()
   // only stop a new project from registering its first row.
   const { root } = gitFixture();
   writeFileSync(join(root, REL_INDEX), renderIndex({ version: 1, projects: [] }), 'utf8');
-  const r = runCli(root, ['register', 'demo']);
+  const r = runCli(root, ['register', 'demo', '--theme', 'tooling']);
   assert.equal(r.status, 0, r.stderr);
 });
 
@@ -1425,7 +1425,7 @@ mtest('sync does not report the code a day ahead of a status written the same lo
     const day = localDate(new Date());
     assert.notEqual(day, new Date().toISOString().slice(0, 10), 'the chosen zone has to diverge');
     const root = fixture();
-    cmdRegister(root, ['beacon', '--name', 'Beacon', '--repo', '.'], { commit: false });
+    cmdRegister(root, ['beacon', '--name', 'Beacon', '--repo', '.', '--theme', 'tooling'], { commit: false });
     cmdCurrent(root, ['beacon'], 'All current.', { commit: false });
     const out = cmdSync(root, [], { commitDateFor: () => day });
     assert.match(out, new RegExp(`^projects sync \\(${day}\\):`), 'the header is the local day');
@@ -1517,7 +1517,7 @@ mtest('SKILL.md carries the page skeleton and the list row byte-exact', () => {
   // a model that has never seen this CLI, so a drifting fence is a false comment with a wider
   // blast radius than one in a source file.
   const root = fixture();
-  cmdRegister(root, ['demo', '--name', 'Demo Project'], { commit: false, date: '2026-08-04' });
+  cmdRegister(root, ['demo', '--name', 'Demo Project', '--theme', 'tooling'], { commit: false, date: '2026-08-04' });
   const skill = readFileSync(fileURLToPath(new URL('../skills/projects/SKILL.md', import.meta.url)), 'utf8')
     .replaceAll('\r\n', '\n');
   const skeleton = skill.match(/```markdown\n([\s\S]*?)```/)[1]
@@ -1531,7 +1531,7 @@ import { cmdRename, cmdLog } from '../skills/projects/projects.mjs';
 
 test('rename moves the row and its page, and git records it as a rename', () => {
   const { root, git } = gitFixture();
-  runCli(root, ['register', 'ugly-derived-slug', '--name', 'Nice Project', '--status', 'active']);
+  runCli(root, ['register', 'ugly-derived-slug', '--name', 'Nice Project', '--status', 'active', '--theme', 'tooling']);
   const r = runCli(root, ['rename', 'ugly-derived-slug', 'nice']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /RENAMED/);
@@ -1554,8 +1554,8 @@ test('rename moves the row and its page, and git records it as a rename', () => 
 
 test('rename refuses a taken slug, an unknown one, and itself, and changes nothing', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active']);
-  runCli(root, ['register', 'beta', '--name', 'Beta', '--status', 'active']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
+  runCli(root, ['register', 'beta', '--name', 'Beta', '--status', 'active', '--theme', 'tooling']);
   const before = readFileSync(join(root, REL_STORE), 'utf8');
 
   // The exit codes split the way the rest of this CLI splits them. 2 is "what you named is not
@@ -1580,7 +1580,7 @@ test('rename refuses a taken slug, an unknown one, and itself, and changes nothi
 
 test('rename refuses to clobber an unrelated page already sitting at the new name', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
   // A page with no row pointing at it. sync calls this NO-ROW, and it is somebody's narrative.
   writeFileSync(join(root, 'docs/projects/gamma.md'), '# Gamma\n\nhand written, no row\n');
   const r = runCli(root, ['rename', 'alpha', 'gamma']);
@@ -1615,7 +1615,7 @@ test('rename does not bump lastTouched', () => {
 
 test('log reads history from git and follows a page across a rename', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
   runCli(root, ['current', 'alpha'], 'first state\n');
   runCli(root, ['rename', 'alpha', 'omega']);
 
@@ -1638,7 +1638,7 @@ test('log reads history from git and follows a page across a rename', () => {
 
 test('rename warns when a gtg entry still names the old slug as its parent', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
   mkdirSync(join(root, 'docs/handoffs'), { recursive: true });
   writeFileSync(join(root, 'docs/handoffs/_active.json'), JSON.stringify({ handoffs: [
     { slug: 'alpha', project: 'Alpha', parent: 'alpha' },
@@ -1662,7 +1662,7 @@ test('rename warns when a gtg entry still names the old slug as its parent', () 
 
 test('rename says nothing about gtg when there is no gtg store to read', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
   const r = runCli(root, ['rename', 'alpha', 'omega']);
   assert.equal(r.status, 0, r.stderr);
   assert.doesNotMatch(r.stdout, /gtg/, 'gtg not installed here is not a problem worth a word');
@@ -1685,7 +1685,7 @@ import { cmdSet } from '../skills/projects/projects.mjs';
 
 test('set changes where, repo and name, and clears repo with an empty string', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--where', 'old place']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--where', 'old place', '--theme', 'tooling']);
   assert.equal(readStore(root).projects[0].repo, undefined, 'register without --repo leaves it absent');
 
   const r = runCli(root, ['set', 'alpha', '--where', 'C:/dev/alpha', '--repo', 'C:/dev/alpha']);
@@ -1710,7 +1710,7 @@ test('set changes where, repo and name, and clears repo with an empty string', (
 
 test('set refuses an unknown project, an empty change, and an unrenderable value', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
   const before = readFileSync(join(root, REL_STORE), 'utf8');
 
   assert.equal(runCli(root, ['set', 'nope', '--repo', 'x']).status, 2, 'unknown project is a 2');
@@ -1820,4 +1820,54 @@ test('a flat index with no headings still parses to the right row count', () => 
   const parsed = parseIndex(flat);
   assert.equal(parsed.projects.length, 2);
   assert.equal(parsed.projects[0].theme, undefined);
+});
+
+// ── register requires a theme, set can change it ─────────────────────────────────────
+
+mtest('register refuses with no --theme and writes no page when it refuses', () => {
+  const root = fixture();
+  assert.throws(() => cmdRegister(root, ['demo', '--name', 'Demo'], { commit: false }),
+    /--theme is required, expected one of work, job-search/);
+  assert.equal(existsSync(join(root, 'docs/projects/demo.md')), false);
+});
+
+mtest('register stores a valid theme and refuses an unknown one before writing', () => {
+  const root = fixture();
+  cmdRegister(root, ['demo', '--name', 'Demo', '--theme', 'homelab'],
+    { commit: false, date: '2026-08-11' });
+  assert.equal(findProject(readStore(root), 'demo').theme, 'homelab');
+  assert.throws(() => cmdRegister(root, ['other', '--theme', 'wrok'], { commit: false }),
+    /unknown theme "wrok"/);
+  assert.equal(existsSync(join(root, 'docs/projects/other.md')), false);
+});
+
+mtest('set --theme moves a row between sections and does not bump lastTouched', () => {
+  const root = seeded();
+  cmdSet(root, ['beacon', '--theme', 'worldbuilding'], { commit: false });
+  const p = findProject(readStore(root), 'beacon');
+  assert.equal(p.theme, 'worldbuilding');
+  assert.equal(p.lastTouched, '2026-07-20');
+  assert.match(readFileSync(join(root, REL_INDEX), 'utf8'), /## Worldbuilding/);
+});
+
+test('the CLI exits 2 on an unknown theme, not 1', () => {
+  // 2 means "your input was wrong", 1 means "something failed". An agent reads the difference.
+  // This is the end-to-end half of validateTheme's unit test: it proves DELIBERATE recognises
+  // the message and the exit-code branch in main maps it.
+  const { root } = gitFixture();
+  const bad = runCli(root, ['register', 'demo', '--name', 'Demo', '--theme', 'wrok']);
+  assert.equal(bad.status, 2, bad.stderr);
+  assert.match(bad.stderr, /unknown theme "wrok"/);
+  // A real bug prints a stack. A deliberate refusal must not.
+  assert.doesNotMatch(bad.stderr, /at .*projects\.mjs:/);
+});
+
+mtest('set refuses an unknown theme without touching the row', () => {
+  const root = seeded();
+  cmdSet(root, ['beacon', '--theme', 'tooling'], { commit: false });
+  assert.throws(() => cmdSet(root, ['beacon', '--name', 'Renamed', '--theme', 'wrok'],
+    { commit: false }), /unknown theme "wrok"/);
+  const p = findProject(readStore(root), 'beacon');
+  assert.equal(p.name, 'Beacon', 'the name must not have been assigned before the throw');
+  assert.equal(p.theme, 'tooling');
 });

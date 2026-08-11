@@ -23,10 +23,10 @@ under `docs/projects/` in the current git repo, or under `$PROJECTS_ROOT` when t
 | "projects" / "project status" / "portfolio" | Run `projects` with no arguments, relay its output verbatim. **Stop.** |
 | status prose changed for a project | Write the body, pipe it: `echo "<body>" \| projects current <slug>`. **Stop.** |
 | a project started, paused, went background or finished | `projects status <slug> active\|paused\|ops\|done`. **Stop.** |
-| a new project needs a row | `projects register <slug> --name "<N>" --status <s> --where "<W>" --repo <R>`, then write its narrative into the page by hand. |
+| a new project needs a row | `projects register <slug> --theme <t> --name "<N>" --status <s> --where "<W>" --repo <R>`, then write its narrative into the page by hand. `--theme` is required and never guessed: ask which of work, job-search, tooling, homelab, worldbuilding, personal it is. |
 | "projects sync" | Run `projects sync`, then act on the flags. The user arbitrates concept-level truth, never rewrite a narrative to match reality without asking. |
 | a project is done | Confirm with the user, then `projects archive <slug>`. |
-| a project moved worktree, or got a repo, or its name changed | `projects set <slug> --where "<W>" --repo <R> --name "<N>"`. Pass only what changed. `--repo ""` clears it when a checkout is gone. |
+| a project moved worktree, or got a repo, or its name or theme changed | `projects set <slug> --where "<W>" --repo <R> --name "<N>" --theme <t>`. Pass only what changed. `--repo ""` clears it when a checkout is gone. `--theme ""` does not clear a theme, every row has one. |
 | a slug is wrong, ugly or disagrees with gtg's | `projects rename <old> <new>`. It moves the page with the slug. Never rename by hand, the store is guarded. |
 | "what happened to X" / "when did I last touch X" | `projects log [slug]`, relay it. **Stop.** |
 | `INDEX.md` disagrees with the store | `projects render`. Never fix the table by hand. |
