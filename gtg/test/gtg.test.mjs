@@ -2034,17 +2034,24 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const dir = tempRepo();
   gtg(dir, ['handoff', '--project', 'Alpha', '--slug', 'alpha', '--next', 'x',
     '--parent', 'ghost'], { input: 'body\n' });
+  // Bookkeeping is not work, so the idle clock `list` auto-shelves on must not restart.
+  // Backdated first, the way the auto-shelf tests do it, and captured BEFORE the unparent:
+  // reading `updated` afterwards can only catch a deletion, and nowIso() is second-
+  // granularity, so a stamp taken "now" would compare equal to a restamp in the same second.
+  const ap = join(dir, 'docs/handoffs/_active.json');
+  const before = new Date(Date.now() - 2 * 86400000).toISOString();
+  const pre = JSON.parse(readFileSync(ap, 'utf8'));
+  pre.handoffs[0].updated = before;
+  writeFileSync(ap, JSON.stringify(pre, null, 2) + '\n');
   const cleared = gtg(dir, ['unparent', 'alpha']);
   assert.equal(cleared.status, 0, cleared.stderr);
   assert.match(cleared.stdout, /Cleared parent 'ghost' from Alpha/);
-  const store = JSON.parse(readFileSync(join(dir, 'docs/handoffs/_active.json'), 'utf8'));
+  const store = JSON.parse(readFileSync(ap, 'utf8'));
   const entry = store.handoffs.find((e) => e.slug === 'alpha');
   // Deleted, not nulled: absent has ONE representation, which is what every reader
   // already branches on.
   assert.equal('parent' in entry, false);
-  // Bookkeeping is not work, so the idle clock `list` auto-shelves on must not restart.
-  const before = entry.updated;
-  assert.ok(before, 'updated must still be present');
+  assert.equal(entry.updated, before, 'updated must not be restamped');
   console.log('ok 54 - unparent deletes the parent key and leaves updated alone');
 }
 
