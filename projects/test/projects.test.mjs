@@ -1462,6 +1462,25 @@ test('a line break in a store field cannot forge a second numbered list row', ()
       const forged = renderList(fixture(), { version: 1, projects: [p] });
       assert.equal(forged.split(/[\n\r\u2028\u2029]/).filter(Boolean).length, 2,
         `${field} forged a row with U+${sep.charCodeAt(0).toString(16)}`);
+      // The same forge through the WRITE path is REFUSED, not squashed. renderIndex's output is
+      // written to INDEX.md and committed, so a phantom row there survives every later re-render,
+      // where renderList's is terminal output the next command replaces. `slug` is excluded
+      // because renderIndex never renders it: only the catch message naming the row reads it.
+      if (field === 'slug') continue;
+      const store = { version: 1, projects: [p] };
+      const code = `U+${sep.charCodeAt(0).toString(16)}`;
+      // status is refused whatever the separator, by validateStatus rather than by this guard.
+      if (sep === '\n' || sep === '\r' || field === 'status') {
+        assert.throws(() => renderIndex(store), /pipe or line break|unknown status/,
+          `${field} was not refused on the write path with ${code}`);
+      } else {
+        // U+2028 and U+2029 are line starts to /m, which is why renderList has to squash them, but
+        // they are NOT breaks to parseIndex (`split('\n')`) or to a markdown table, so UNRENDERABLE
+        // deliberately does not list them. Asserted rather than assumed: forging an index row needs
+        // a pipe or a real break, and both of those are refused above.
+        assert.equal(parseIndex(renderIndex(store)).projects.length, 1,
+          `${field} forged an index row with ${code}`);
+      }
     }
   }
 });

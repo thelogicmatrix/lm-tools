@@ -158,10 +158,13 @@ const INDEX_COLUMNS = '| Project | Status | Where | Last touched |';
 
 // A pipe splits the cell and shifts every column after it. A newline does worse, it ends the
 // row early and the tail becomes a phantom project on parse. Refuse both loudly rather than
-// write a corrupt table. Covers `page` too: it lands inside the link target.
+// write a corrupt table. Covers `page` too: it lands inside the link target. And `theme`, which
+// is interpolated into a `## ` section heading, so a line break there forges a whole section plus
+// the phantom row under it. Write paths refuse an unrenderable value here, read paths squash it
+// (renderList): a read must never fail on a bad row it only displays.
 const UNRENDERABLE = /[|\r\n]/;
 export function assertRenderable(p) {
-  const fields = [p.name, ...(p.where || []), p.lastTouched || '', p.page || ''];
+  const fields = [p.name, ...(p.where || []), p.lastTouched || '', p.page || '', p.theme || ''];
   for (const f of fields) {
     if (UNRENDERABLE.test(String(f))) {
       throw new Error(`projects: pipe or line break in a rendered field ("${f}")`);
