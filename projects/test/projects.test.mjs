@@ -1767,3 +1767,57 @@ test('validateTheme returns a known theme and refuses an unknown one', () => {
   // rather than a bug in this file, exactly as validateStatus is treated.
   assert.throws(() => validateTheme('wrok'), (e) => !e.message.startsWith('projects: '));
 });
+
+const THEMED = { version: 1, projects: [
+  { slug: 'beacon', name: 'Beacon', status: 'active', theme: 'tooling',
+    where: ['C:/dev/beacon'], page: 'beacon.md', lastTouched: '2026-07-20' },
+  { slug: 'atlas', name: 'Atlas', status: 'paused', theme: 'work',
+    where: [], page: 'atlas.md', lastTouched: '2026-07-18' },
+] };
+
+test('renderIndex emits one section per non-empty theme in THEME_ORDER', () => {
+  const out = renderIndex(THEMED);
+  assert.match(out, /## Work/);
+  assert.match(out, /## Tooling/);
+  // Work is ahead of Tooling in THEME_ORDER, whatever the rows' own sort order says.
+  assert.ok(out.indexOf('## Work') < out.indexOf('## Tooling'));
+  // A theme with no rows renders no heading and no empty table.
+  assert.doesNotMatch(out, /## Homelab/);
+  // Each section carries its own header and separator.
+  assert.equal(out.split('| Project | Status | Where | Last touched |').length - 1, 2);
+});
+
+test('a themed index round-trips byte for byte through parseIndex', () => {
+  assert.equal(renderIndex(parseIndex(renderIndex(THEMED))), renderIndex(THEMED));
+  assert.deepEqual(parseIndex(renderIndex(THEMED)).projects.map((p) => p.theme),
+    ['work', 'tooling']);
+});
+
+test('an unrecognised theme names itself, and a themeless row lands in Unthemed last', () => {
+  const odd = { version: 1, projects: [
+    { slug: 'a', name: 'A', status: 'active', theme: 'wrok', where: [], page: 'a.md', lastTouched: '2026-08-01' },
+    { slug: 'b', name: 'B', status: 'active', where: [], page: 'b.md', lastTouched: '2026-08-01' },
+    { slug: 'c', name: 'C', status: 'active', theme: 'work', where: [], page: 'c.md', lastTouched: '2026-08-01' },
+  ] };
+  const out = renderIndex(odd);
+  assert.match(out, /## wrok/);
+  assert.match(out, /## Unthemed/);
+  assert.ok(out.indexOf('## Work') < out.indexOf('## wrok'));
+  assert.ok(out.indexOf('## wrok') < out.indexOf('## Unthemed'));
+  // A true inverse for all three cases, so nothing is silently relabelled on re-render.
+  assert.equal(renderIndex(parseIndex(out)), out);
+});
+
+test('a flat index with no headings still parses to the right row count', () => {
+  // This is the pre-change INDEX.md shape. indexRowCount reads it through parseIndex, and a
+  // wrong count here makes readStore refuse every verb.
+  const flat = [
+    '| Project | Status | Where | Last touched |',
+    '|---|---|---|---|',
+    '| [Beacon](beacon.md) | 🟢 active | C:/dev/beacon | 2026-07-20 |',
+    '| [Atlas](atlas.md) | 🟡 paused |  | 2026-07-18 |',
+  ].join('\n');
+  const parsed = parseIndex(flat);
+  assert.equal(parsed.projects.length, 2);
+  assert.equal(parsed.projects[0].theme, undefined);
+});

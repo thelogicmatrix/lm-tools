@@ -170,34 +170,86 @@ export function assertRenderable(p) {
   return p;
 }
 
-// Fixed four columns, one line per project. The hand-typed table's `Next` column is gone.
+// The label a section is titled with. A known theme gets its display name. An unrecognised
+// one gets its own raw value, so a typo names itself in the index instead of being absorbed
+// into a real section. A row with none gets UNTHEMED.
+export function themeLabel(theme) {
+  if (!theme) return UNTHEMED;
+  return THEMES[theme] ?? theme;
+}
+
+// Insertion-ordered: every enum label first so an empty theme still holds its position, then
+// any unrecognised label as encountered, then UNTHEMED last however it got in. Empty sections
+// are dropped by the caller, not here, so renderList and renderIndex agree on the order.
+export function groupByTheme(rows) {
+  const sections = new Map(THEME_ORDER.map((t) => [THEMES[t], []]));
+  for (const p of rows) {
+    const label = themeLabel(p.theme);
+    if (!sections.has(label)) sections.set(label, []);
+    sections.get(label).push(p);
+  }
+  if (sections.has(UNTHEMED)) {
+    const last = sections.get(UNTHEMED);
+    sections.delete(UNTHEMED);
+    sections.set(UNTHEMED, last);
+  }
+  return sections;
+}
+
+// Extracted from the map below so renderIndex reads as grouping rather than as row building.
+// The try/catch stays here, at the one place that has the slug, for the reason below.
+function renderRow(p) {
+  // Both throws name the offending value and neither knows which row it came from, and one
+  // bad row refuses every mutating verb, including a verb touching only healthy rows. So the
+  // slug is added here.
+  try {
+    assertRenderable(p);
+    const label = p.page ? `[${p.name}](${p.page})` : p.name;
+    // `|| ''` on the date: Task 1 tolerates a missing lastTouched, and without this the cell
+    // renders the literal string "undefined" and round-trips into the store as that string.
+    return `| ${label} | ${STATUSES[validateStatus(p.status)]} | ${(p.where || []).join(' · ')} | ${p.lastTouched || ''} |`;
+  } catch (e) {
+    throw new Error(`${(e && e.message) || e} on project "${p.slug}"`);
+  }
+}
+
+// One section per non-empty theme. Sorting is unchanged and applies WITHIN a section, so a
+// row's neighbours change but its rank against them does not.
 export function renderIndex(store) {
-  const rows = sortProjects(store.projects).map((p) => {
-    // Both throws below name the offending value and neither knows which row it came from, and
-    // one bad row refuses every mutating verb, including a verb touching only healthy rows. So
-    // the slug is added here, at the one place that has it.
-    try {
-      assertRenderable(p);
-      const label = p.page ? `[${p.name}](${p.page})` : p.name;
-      // `|| ''` on the date: Task 1 tolerates a missing lastTouched, and without this the cell
-      // renders the literal string "undefined" and round-trips into the store as that string.
-      return `| ${label} | ${STATUSES[validateStatus(p.status)]} | ${(p.where || []).join(' · ')} | ${p.lastTouched || ''} |`;
-    } catch (e) {
-      throw new Error(`${(e && e.message) || e} on project "${p.slug}"`);
-    }
-  });
-  return [INDEX_HEADER, INDEX_COLUMNS, '|---|---|---|---|', ...rows]
-    .join('\n') + '\n';
+  const parts = [INDEX_HEADER];
+  for (const [label, rows] of groupByTheme(sortProjects(store.projects))) {
+    if (!rows.length) continue;
+    parts.push(`## ${label}`, '', INDEX_COLUMNS, '|---|---|---|---|', ...rows.map(renderRow), '');
+  }
+  // The join leaves exactly one trailing newline because every section ends with ''. The
+  // replace is belt and braces for a store with no projects at all, where parts is just the
+  // header and the file must still end in a single newline.
+  return parts.join('\n').replace(/\n*$/, '\n');
 }
 
 const RENDERED_TO_WORD = Object.fromEntries(
   Object.entries(STATUSES).map(([word, rendered]) => [rendered, word]));
 
+const RENDERED_TO_THEME = Object.fromEntries(
+  Object.entries(THEMES).map(([key, label]) => [label, key]));
+
 // The inverse of renderIndex, for the one-off migration of the hand-typed INDEX.md and for
 // the round-trip test. The slug is DERIVED here. The store's own slug stays authoritative.
 export function parseIndex(text) {
   const projects = [];
+  let theme;
   for (const line of text.split('\n')) {
+    // Theme is the first store field that decides WHERE a row renders, so parseIndex has to
+    // recover it or the byte-stable round trip breaks and every row re-renders as Unthemed.
+    // Three cases, one expression, and it is a true inverse of themeLabel: a known label maps
+    // back to its key, UNTHEMED maps back to no theme, and an unrecognised heading maps back
+    // to itself so a typo section survives a round trip instead of being relabelled.
+    const heading = line.match(/^## (.+)$/);
+    if (heading) {
+      const label = heading[1].trim();
+      theme = RENDERED_TO_THEME[label] ?? (label === UNTHEMED ? undefined : label);
+      continue;
+    }
     if (!line.startsWith('| ')) continue;
     const c = line.split('|').map((s) => s.trim());
     if (c.at(-1) === '') c.pop(); // trailing pipe
@@ -222,6 +274,7 @@ export function parseIndex(text) {
       slug: (link ? link[2].replace(/\.md$/, '') : label).toLowerCase().replace(/[^a-z0-9_-]+/g, '-'),
       name: link ? link[1] : label,
       status: RENDERED_TO_WORD[status] ?? status,
+      ...(theme ? { theme } : {}),
       where: where ? where.split(' · ') : [],
       page: link ? link[2] : null,
       lastTouched,
