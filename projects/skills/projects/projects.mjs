@@ -980,7 +980,7 @@ const HELP = `projects: portfolio bookkeeping
   projects current <slug>      replace that page's Current state from stdin
   projects status <slug> <s>   set status: active | paused | ops | done
   projects register <slug> --theme T [--name N --status S --where W --repo R]
-                               theme: work | job-search | tooling | homelab | worldbuilding | personal
+                               theme: ${THEME_ORDER.join(' | ')}
   projects archive <slug>      move the page to archive/ and drop the row
   projects rename <old> <new>  change a slug, moving its page with it
   projects set <slug> [--name N --where W --repo R --theme T]   change a row's other fields
@@ -1025,7 +1025,11 @@ export function main(argv = process.argv.slice(2)) {
     // message fragment is what this function already does and one more fragment is less machinery
     // than a second convention. An unmigrated root is an environment problem, so 2.
     // No `unknown command` fragment: that branch above exits directly and never throws.
-    process.exit(/unknown status|unknown theme|unknown project|invalid slug|was given|no page|Migrate it first/.test(message) ? 2 : 1);
+    // `is required` is the same class as `was given`: an invocation missing a required field is a
+    // malformed command, not a failed operation, and without it ONE user mistake exits two
+    // different ways depending on argv shape (`register demo --theme --name X` throws
+    // `was given` → 2, `register demo` with no --theme at all → 1).
+    process.exit(/unknown status|unknown theme|unknown project|invalid slug|was given|is required|no page|Migrate it first/.test(message) ? 2 : 1);
   }
 }
 

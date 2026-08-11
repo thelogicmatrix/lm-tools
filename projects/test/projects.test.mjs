@@ -1860,6 +1860,13 @@ test('the CLI exits 2 on an unknown theme, not 1', () => {
   assert.match(bad.stderr, /unknown theme "wrok"/);
   // A real bug prints a stack. A deliberate refusal must not.
   assert.doesNotMatch(bad.stderr, /at .*projects\.mjs:/);
+  // Missing the flag entirely is the SAME class of mistake as misspelling its value, so it exits
+  // the same way. Otherwise one user error has two exit codes decided by argv shape: `--theme`
+  // followed by another flag throws `was given` and exits 2, while omitting it exited 1.
+  const missing = runCli(root, ['register', 'demo', '--name', 'Demo']);
+  assert.equal(missing.status, 2, missing.stderr);
+  assert.match(missing.stderr, /--theme is required/);
+  assert.doesNotMatch(missing.stderr, /at .*projects\.mjs:/);
 });
 
 mtest('set refuses an unknown theme without touching the row', () => {
