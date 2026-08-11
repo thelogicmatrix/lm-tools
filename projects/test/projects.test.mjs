@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readStore, writeStore, validateStatus, validateSlug, sortProjects, commit, resolveRoot, today, REL_STORE, STATUSES, renderIndex, parseIndex, assertRenderable } from '../skills/projects/projects.mjs';
+import { readStore, writeStore, validateStatus, validateSlug, sortProjects, commit, resolveRoot, today, REL_STORE, STATUSES, renderIndex, parseIndex, assertRenderable, THEMES, THEME_ORDER, validateTheme } from '../skills/projects/projects.mjs';
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'projects-test-'));
@@ -1751,4 +1751,19 @@ test('SKILL.md frontmatter carries no unquoted colon-space', () => {
     assert.ok(/^['"]/.test(m[2]) || !m[2].includes(': '), `${m[1]} holds ": " and is not quoted`);
   }
   assert.deepEqual(keys, ['name', 'description'], 'both keys are still there to check');
+});
+
+test('THEME_ORDER is the enum key order, and every theme has a label', () => {
+  assert.deepEqual(THEME_ORDER,
+    ['work', 'job-search', 'tooling', 'homelab', 'worldbuilding', 'personal']);
+  assert.equal(THEMES['job-search'], 'Job search');
+  assert.equal(THEME_ORDER.length, Object.keys(THEMES).length);
+});
+
+test('validateTheme returns a known theme and refuses an unknown one', () => {
+  assert.equal(validateTheme('homelab'), 'homelab');
+  assert.throws(() => validateTheme('wrok'), /unknown theme "wrok"/);
+  // No `projects: ` prefix, so DELIBERATE keeps recognising it as a deliberate refusal
+  // rather than a bug in this file, exactly as validateStatus is treated.
+  assert.throws(() => validateTheme('wrok'), (e) => !e.message.startsWith('projects: '));
 });

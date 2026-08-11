@@ -13,6 +13,23 @@ export const STATUSES = {
   done: '✅ done',
 };
 export const STATUS_ORDER = ['active', 'ops', 'paused', 'done'];
+// Themes partition the index into readable sections. Six members chosen against the real
+// 39 rows, not invented: fewer and citsim's worldbuilding rows sit somewhere that does not
+// describe them, more and a section holds one project.
+export const THEMES = {
+  work: 'Work',
+  'job-search': 'Job search',
+  tooling: 'Tooling',
+  homelab: 'Homelab',
+  worldbuilding: 'Worldbuilding',
+  personal: 'Personal',
+};
+// Derived, never a second list: a hand-maintained order drifts from the enum the first time
+// a theme is added and the drift is silent.
+export const THEME_ORDER = Object.keys(THEMES);
+// The section a row with no theme lands in. Not a seventh theme: nothing can be SET to it,
+// and with every row themed the section renders on no row and never appears.
+export const UNTHEMED = 'Unthemed';
 export const PROJECTS_DIR = 'docs/projects';
 export const REL_STORE = `${PROJECTS_DIR}/_projects.json`;
 export const REL_INDEX = `${PROJECTS_DIR}/INDEX.md`;
@@ -92,6 +109,15 @@ export function validateStatus(s) {
     throw new Error(`unknown status "${s}", expected one of ${STATUS_ORDER.join(', ')}`);
   }
   return s;
+}
+
+// No `projects: ` prefix, matching validateStatus and validateSlug. DELIBERATE below keys
+// off that, and main maps this message to exit 2: a bad theme is bad input, not a bug here.
+export function validateTheme(t) {
+  if (!Object.prototype.hasOwnProperty.call(THEMES, t)) {
+    throw new Error(`unknown theme "${t}", expected one of ${THEME_ORDER.join(', ')}`);
+  }
+  return t;
 }
 
 export function validateSlug(s) {
@@ -897,7 +923,7 @@ INDEX.md is generated. Never hand-edit it.
 
 // The shapes every intentional throw in this file takes. validateSlug and validateStatus are
 // the only two that do not carry the `projects: ` prefix.
-const DELIBERATE = /^(projects: |invalid slug|unknown status)/;
+const DELIBERATE = /^(projects: |invalid slug|unknown status|unknown theme)/;
 
 export function main(argv = process.argv.slice(2)) {
   const root = resolveRoot();
@@ -929,7 +955,7 @@ export function main(argv = process.argv.slice(2)) {
     // message fragment is what this function already does and one more fragment is less machinery
     // than a second convention. An unmigrated root is an environment problem, so 2.
     // No `unknown command` fragment: that branch above exits directly and never throws.
-    process.exit(/unknown status|unknown project|invalid slug|was given|no page|Migrate it first/.test(message) ? 2 : 1);
+    process.exit(/unknown status|unknown theme|unknown project|invalid slug|was given|no page|Migrate it first/.test(message) ? 2 : 1);
   }
 }
 
