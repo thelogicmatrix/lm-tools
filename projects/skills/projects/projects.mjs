@@ -13,6 +13,23 @@ export const STATUSES = {
   done: '✅ done',
 };
 export const STATUS_ORDER = ['active', 'ops', 'paused', 'done'];
+// Themes partition the index into readable sections. Six members chosen against the real
+// 39 rows, not invented: fewer and citsim's worldbuilding rows sit somewhere that does not
+// describe them, more and a section holds one project.
+export const THEMES = {
+  work: 'Work',
+  'job-search': 'Job search',
+  tooling: 'Tooling',
+  homelab: 'Homelab',
+  worldbuilding: 'Worldbuilding',
+  personal: 'Personal',
+};
+// Derived, never a second list: a hand-maintained order drifts from the enum the first time
+// a theme is added and the drift is silent.
+export const THEME_ORDER = Object.keys(THEMES);
+// The section a row with no theme lands in. Not a seventh theme: nothing can be SET to it,
+// and with every row themed the section renders on no row and never appears.
+export const UNTHEMED = 'Unthemed';
 export const PROJECTS_DIR = 'docs/projects';
 export const REL_STORE = `${PROJECTS_DIR}/_projects.json`;
 export const REL_INDEX = `${PROJECTS_DIR}/INDEX.md`;
@@ -94,6 +111,15 @@ export function validateStatus(s) {
   return s;
 }
 
+// No `projects: ` prefix, matching validateStatus and validateSlug. DELIBERATE below keys
+// off that, and main maps this message to exit 2: a bad theme is bad input, not a bug here.
+export function validateTheme(t) {
+  if (!Object.prototype.hasOwnProperty.call(THEMES, t)) {
+    throw new Error(`unknown theme "${t}", expected one of ${THEME_ORDER.join(', ')}`);
+  }
+  return t;
+}
+
 export function validateSlug(s) {
   if (typeof s !== 'string' || !SLUG_RE.test(s)) throw new Error(`invalid slug "${s}"`);
   return s;
@@ -144,34 +170,86 @@ export function assertRenderable(p) {
   return p;
 }
 
-// Fixed four columns, one line per project. The hand-typed table's `Next` column is gone.
+// The label a section is titled with. A known theme gets its display name. An unrecognised
+// one gets its own raw value, so a typo names itself in the index instead of being absorbed
+// into a real section. A row with none gets UNTHEMED.
+export function themeLabel(theme) {
+  if (!theme) return UNTHEMED;
+  return THEMES[theme] ?? theme;
+}
+
+// Insertion-ordered: every enum label first so an empty theme still holds its position, then
+// any unrecognised label as encountered, then UNTHEMED last however it got in. Empty sections
+// are dropped by the caller, not here, so renderList and renderIndex agree on the order.
+export function groupByTheme(rows) {
+  const sections = new Map(THEME_ORDER.map((t) => [THEMES[t], []]));
+  for (const p of rows) {
+    const label = themeLabel(p.theme);
+    if (!sections.has(label)) sections.set(label, []);
+    sections.get(label).push(p);
+  }
+  if (sections.has(UNTHEMED)) {
+    const last = sections.get(UNTHEMED);
+    sections.delete(UNTHEMED);
+    sections.set(UNTHEMED, last);
+  }
+  return sections;
+}
+
+// Extracted from the map below so renderIndex reads as grouping rather than as row building.
+// The try/catch stays here, at the one place that has the slug, for the reason below.
+function renderRow(p) {
+  // Both throws name the offending value and neither knows which row it came from, and one
+  // bad row refuses every mutating verb, including a verb touching only healthy rows. So the
+  // slug is added here.
+  try {
+    assertRenderable(p);
+    const label = p.page ? `[${p.name}](${p.page})` : p.name;
+    // `|| ''` on the date: Task 1 tolerates a missing lastTouched, and without this the cell
+    // renders the literal string "undefined" and round-trips into the store as that string.
+    return `| ${label} | ${STATUSES[validateStatus(p.status)]} | ${(p.where || []).join(' · ')} | ${p.lastTouched || ''} |`;
+  } catch (e) {
+    throw new Error(`${(e && e.message) || e} on project "${p.slug}"`);
+  }
+}
+
+// One section per non-empty theme. Sorting is unchanged and applies WITHIN a section, so a
+// row's neighbours change but its rank against them does not.
 export function renderIndex(store) {
-  const rows = sortProjects(store.projects).map((p) => {
-    // Both throws below name the offending value and neither knows which row it came from, and
-    // one bad row refuses every mutating verb, including a verb touching only healthy rows. So
-    // the slug is added here, at the one place that has it.
-    try {
-      assertRenderable(p);
-      const label = p.page ? `[${p.name}](${p.page})` : p.name;
-      // `|| ''` on the date: Task 1 tolerates a missing lastTouched, and without this the cell
-      // renders the literal string "undefined" and round-trips into the store as that string.
-      return `| ${label} | ${STATUSES[validateStatus(p.status)]} | ${(p.where || []).join(' · ')} | ${p.lastTouched || ''} |`;
-    } catch (e) {
-      throw new Error(`${(e && e.message) || e} on project "${p.slug}"`);
-    }
-  });
-  return [INDEX_HEADER, INDEX_COLUMNS, '|---|---|---|---|', ...rows]
-    .join('\n') + '\n';
+  const parts = [INDEX_HEADER];
+  for (const [label, rows] of groupByTheme(sortProjects(store.projects))) {
+    if (!rows.length) continue;
+    parts.push(`## ${label}`, '', INDEX_COLUMNS, '|---|---|---|---|', ...rows.map(renderRow), '');
+  }
+  // The join leaves exactly one trailing newline because every section ends with ''. The
+  // replace is belt and braces for a store with no projects at all, where parts is just the
+  // header and the file must still end in a single newline.
+  return parts.join('\n').replace(/\n*$/, '\n');
 }
 
 const RENDERED_TO_WORD = Object.fromEntries(
   Object.entries(STATUSES).map(([word, rendered]) => [rendered, word]));
 
+const RENDERED_TO_THEME = Object.fromEntries(
+  Object.entries(THEMES).map(([key, label]) => [label, key]));
+
 // The inverse of renderIndex, for the one-off migration of the hand-typed INDEX.md and for
 // the round-trip test. The slug is DERIVED here. The store's own slug stays authoritative.
 export function parseIndex(text) {
   const projects = [];
+  let theme;
   for (const line of text.split('\n')) {
+    // Theme is the first store field that decides WHERE a row renders, so parseIndex has to
+    // recover it or the byte-stable round trip breaks and every row re-renders as Unthemed.
+    // Three cases, one expression, and it is a true inverse of themeLabel: a known label maps
+    // back to its key, UNTHEMED maps back to no theme, and an unrecognised heading maps back
+    // to itself so a typo section survives a round trip instead of being relabelled.
+    const heading = line.match(/^## (.+)$/);
+    if (heading) {
+      const label = heading[1].trim();
+      theme = RENDERED_TO_THEME[label] ?? (label === UNTHEMED ? undefined : label);
+      continue;
+    }
     if (!line.startsWith('| ')) continue;
     const c = line.split('|').map((s) => s.trim());
     if (c.at(-1) === '') c.pop(); // trailing pipe
@@ -196,6 +274,7 @@ export function parseIndex(text) {
       slug: (link ? link[2].replace(/\.md$/, '') : label).toLowerCase().replace(/[^a-z0-9_-]+/g, '-'),
       name: link ? link[1] : label,
       status: RENDERED_TO_WORD[status] ?? status,
+      ...(theme ? { theme } : {}),
       where: where ? where.split(' · ') : [],
       page: link ? link[2] : null,
       lastTouched,
@@ -310,40 +389,71 @@ export function currentStateFirstLine(pageText) {
 }
 
 // ── renderList: the no-args print ────────────────────────────────────────────────────
-// One numbered row per project, status order, each tailed by its page's Current state
-// opening line. Read-only: nothing here is written to disk, so a bad page must degrade
-// its own row, never the command. Each row's read is its own try/catch, one per project and
-// not one around the loop, so a single malformed page cannot blank out every row after it.
-export function renderList(root, store) {
-  if (!store.projects.length) return 'No registered projects.\n';
-  return sortProjects(store.projects).map((p, i) => {
-    let tail = '(no page)';
-    if (p.page) {
-      try {
-        // pagePath, not a bare join: `page` comes out of hand-editable _projects.json, so
-        // `page: "../../.ssh/config"` would otherwise make the no-args list READ a file
-        // outside docs/projects. Inside the try on purpose, so the refusal degrades this one
-        // row to MALFORMED like any other unreadable page and every other row still prints.
-        const path = pagePath(root, p.page);
-        tail = existsSync(path)
-          ? currentStateFirstLine(readFileSync(path, 'utf8')) ?? '(no current state)'
-          : '(page missing)';
-      } catch {
-        // currentStateFirstLine throws on markers that are missing-but-stray, reversed, or
-        // duplicated, a deliberate refusal to guess (see locateBlock), and pagePath throws on
-        // a page name that escapes the folder. A read must never lie about what is on disk,
-        // so the row says MALFORMED rather than guessing or being dropped.
-        tail = 'MALFORMED';
-      }
+// One numbered row per project, grouped into theme sections, status order within a section,
+// each row tailed by its page's Current state opening line.
+//
+// The tail is unchanged from the old inline body, extracted so renderList reads as grouping
+// rather than as row building and so the filter has one row shape to produce. Read-only:
+// nothing here is written to disk, so a bad page must degrade its own row, never the command.
+// The try/catch is per row and not around the loop, so a single malformed page cannot blank
+// out every row after it.
+function listTail(root, p) {
+  if (!p.page) return '(no page)';
+  try {
+    // pagePath, not a bare join: `page` comes out of hand-editable _projects.json, so
+    // `page: "../../.ssh/config"` would otherwise make the no-args list READ a file outside
+    // docs/projects. Inside the try on purpose, so the refusal degrades this one row to
+    // MALFORMED like any other unreadable page and every other row still prints.
+    const path = pagePath(root, p.page);
+    return existsSync(path)
+      ? currentStateFirstLine(readFileSync(path, 'utf8')) ?? '(no current state)'
+      : '(page missing)';
+  } catch {
+    // currentStateFirstLine throws on markers that are missing-but-stray, reversed, or
+    // duplicated, a deliberate refusal to guess (see locateBlock), and pagePath throws on a
+    // page name that escapes the folder. A read must never lie about what is on disk, so the
+    // row says MALFORMED rather than guessing or being dropped.
+    return 'MALFORMED';
+  }
+}
+
+// `theme` null lists everything grouped. A theme lists only that section, still under its
+// heading, so there is one code path and the reader always knows what they are looking at.
+export function renderList(root, store, theme = null) {
+  if (theme !== null) validateTheme(theme);
+  const rows = theme === null
+    ? store.projects
+    : store.projects.filter((p) => p.theme === theme);
+  if (!rows.length) {
+    // Distinct messages: an empty filter is a true answer about one theme, an empty store is
+    // a different fact, and reporting the first as the second reads as a broken command.
+    return theme === null ? 'No registered projects.\n' : `No projects under ${theme}.\n`;
+  }
+  const out = [];
+  let n = 0;
+  // Empty sections are dropped HERE, as groupByTheme's contract requires of every caller, so
+  // this view and renderIndex agree on which sections exist.
+  for (const [label, group] of groupByTheme(sortProjects(rows))) {
+    if (!group.length) continue;
+    // Squashed for the same reason every row is: an unrecognised theme titles its section with
+    // its own raw value straight out of the hand-editable store, so a line break in it forged a
+    // numbered row through the HEADING rather than through a row.
+    out.push(`${String(label).replace(/\s+/g, ' ')}:`);
+    for (const p of group) {
+      // The slug is in the row because every mutating verb takes it and the skill is
+      // forbidden to read the store to find it. Squashed once on the ASSEMBLED row, the same
+      // shape as the sync report's join: the row interpolates raw store fields, and a line
+      // break in any of them printed an extra numbered row carrying whatever tokens the
+      // author of the store chose. `\s` covers every character /m treats as a line start.
+      //
+      // The indent is prefixed OUTSIDE the squash: inside it, /\s+/g would collapse the two
+      // leading spaces along with everything else and the row would carry a one-space indent
+      // nobody asked for.
+      out.push('  ' + `${++n}. ${p.name} [${p.slug}] (${p.status}): ${listTail(root, p)}`
+        .replace(/\s+/g, ' '));
     }
-    // The slug is in the row because every mutating verb takes it and the skill is forbidden to
-    // read the store to find it. Squashed once on the ASSEMBLED row, the same shape as the sync
-    // report's join: the row interpolates raw store fields, and a line break in any of them
-    // printed an extra numbered row carrying whatever tokens the author of the store chose.
-    // Squashing the whole row rather than each field leaves no later field to remember.
-    // `\s` covers every character /m treats as a line start, not just \n.
-    return `${i + 1}. ${p.name} [${p.slug}] (${p.status}): ${tail}`.replace(/\s+/g, ' ');
-  }).join('\n') + '\n';
+  }
+  return out.join('\n') + '\n';
 }
 
 // The LOCAL calendar date, which is the calendar every date in this file is in. The dates it is
@@ -462,15 +572,22 @@ export function cmdSet(root, args, opts = {}) {
   const name = flag(args, '--name');
   const repo = flag(args, '--repo');
   const where = flag(args, '--where');
-  if (name === null && repo === null && where === null) {
-    throw new Error('projects: nothing to set, pass at least one of --name, --where, --repo');
+  const themeArg = flag(args, '--theme');
+  if (name === null && repo === null && where === null && themeArg === null) {
+    throw new Error('projects: nothing to set, pass at least one of --name, --where, --repo, --theme');
   }
+  // Validated BEFORE any assignment below, alongside assertRenderable, so a bad theme in a
+  // multi-flag call leaves the row exactly as it was rather than half-updated.
+  const theme = themeArg === null ? null : validateTheme(themeArg);
   // Rendered fields go through the same gate register uses, and BEFORE anything is assigned: a
   // pipe or a line break here would corrupt the table or forge a row.
   assertRenderable({ name: name ?? p.name, where: where !== null ? [where] : (p.where || []),
     lastTouched: p.lastTouched || '', page: p.page || '' });
   if (name !== null) p.name = name;
   if (where !== null) p.where = [where];
+  // Unlike --repo below, an empty string does NOT clear it: every row has a theme, and a cleared
+  // one renders into a section it does not belong to. '' reaches validateTheme and is refused.
+  if (theme !== null) p.theme = theme;
   // An empty string CLEARS repo, for a project whose own checkout has gone away. The key is
   // deleted rather than set to '', so absent has one representation, which is what every reader
   // already branches on.
@@ -499,6 +616,15 @@ export function cmdRegister(root, args, opts = {}) {
   if (findProject(store, slug)) throw new Error(`projects: "${slug}" is already registered`);
   const name = flag(args, '--name', slug);
   const status = validateStatus(flag(args, '--status', 'active'));
+  // Required, not defaulted. A default would pool every new row in one theme silently, and
+  // the whole reason this field exists is that the layer's failure mode is things nobody
+  // remembers to do. Read here, with the other flags, so it throws before the page is written
+  // and a refusal leaves no orphan page behind, the same guarantee assertRenderable has below.
+  const themeArg = flag(args, '--theme');
+  if (themeArg === null) {
+    throw new Error(`projects: --theme is required, expected one of ${THEME_ORDER.join(', ')}`);
+  }
+  const theme = validateTheme(themeArg);
   const where = flag(args, '--where');
   const repo = flag(args, '--repo');
   const date = opts.date || today();
@@ -526,7 +652,7 @@ export function cmdRegister(root, args, opts = {}) {
       + `## Current state (${date})\n${CS_START}\nRegistered ${date}. No status written yet.\n${CS_END}\n\n`
       + `## Future Directions\n\n## Docs map\n`, 'utf8');
   }
-  store.projects.push({ slug, name, status, where: where ? [where] : [],
+  store.projects.push({ slug, name, status, theme, where: where ? [where] : [],
     ...(repo ? { repo } : {}), page, lastTouched: date });
   saveAndRender(root, store, [`${PROJECTS_DIR}/${page}`], `projects: register ${slug}`, opts);
 }
@@ -872,7 +998,7 @@ const builtins = {
     process.stdout.write(out);
     if (/^MALFORMED /m.test(out)) process.exit(1);
   },
-  list: (root) => process.stdout.write(renderList(root, readStore(root))),
+  list: (root, rest) => process.stdout.write(renderList(root, readStore(root), rest[0] ?? null)),
   render: (root) => saveAndRender(root, readStore(root), [], 'projects: re-render index', {}),
   help: () => process.stdout.write(HELP),
   '--help': () => process.stdout.write(HELP),
@@ -881,13 +1007,14 @@ const builtins = {
 
 const HELP = `projects: portfolio bookkeeping
 
-  projects                     list every project, status and its page's opening line
+  projects                     list every project grouped by theme, with its page's opening line
+  projects <theme>             list one theme: ${THEME_ORDER.join(' | ')}
   projects current <slug>      replace that page's Current state from stdin
   projects status <slug> <s>   set status: active | paused | ops | done
-  projects register <slug> [--name N --status S --where W --repo R]
+  projects register <slug> --theme T [--name N --status S --where W --repo R]
   projects archive <slug>      move the page to archive/ and drop the row
   projects rename <old> <new>  change a slug, moving its page with it
-  projects set <slug> [--name N --where W --repo R]   change a row's other fields
+  projects set <slug> [--name N --where W --repo R --theme T]   change a row's other fields
   projects log [slug] [-n N]   what happened, read from git. A slug follows its page
   projects sync                check every row against reality, reporting and never rewriting
   projects render              re-render INDEX.md from the store
@@ -897,13 +1024,17 @@ INDEX.md is generated. Never hand-edit it.
 
 // The shapes every intentional throw in this file takes. validateSlug and validateStatus are
 // the only two that do not carry the `projects: ` prefix.
-const DELIBERATE = /^(projects: |invalid slug|unknown status)/;
+const DELIBERATE = /^(projects: |invalid slug|unknown status|unknown theme)/;
 
 export function main(argv = process.argv.slice(2)) {
   const root = resolveRoot();
   const [cmd, ...rest] = argv;
   try {
     if (!cmd) return builtins.list(root, []);
+    // A theme reads as a filter, not a verb. Routed HERE rather than added to `builtins`,
+    // which stays a map of verbs only so the Object.hasOwn guard below keeps doing exactly
+    // the job its comment describes. Anything that is neither still exits 2 with help.
+    if (Object.hasOwn(THEMES, cmd)) return builtins.list(root, [cmd]);
     // hasOwn, not truthiness: `builtins.constructor` and `builtins.toString` resolve up the
     // prototype chain, so `projects constructor` ran a function that is not a verb and exited 0.
     // An agent reads exit 0 as the command having worked.
@@ -929,7 +1060,11 @@ export function main(argv = process.argv.slice(2)) {
     // message fragment is what this function already does and one more fragment is less machinery
     // than a second convention. An unmigrated root is an environment problem, so 2.
     // No `unknown command` fragment: that branch above exits directly and never throws.
-    process.exit(/unknown status|unknown project|invalid slug|was given|no page|Migrate it first/.test(message) ? 2 : 1);
+    // `is required` is the same class as `was given`: an invocation missing a required field is a
+    // malformed command, not a failed operation, and without it ONE user mistake exits two
+    // different ways depending on argv shape (`register demo --theme --name X` throws
+    // `was given` → 2, `register demo` with no --theme at all → 1).
+    process.exit(/unknown status|unknown theme|unknown project|invalid slug|was given|is required|no page|Migrate it first/.test(message) ? 2 : 1);
   }
 }
 
