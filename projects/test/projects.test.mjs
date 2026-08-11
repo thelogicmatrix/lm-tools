@@ -1540,6 +1540,23 @@ test('a flag with nothing after it is refused, not read as no flag at all', () =
   assert.match(empty.stderr, /nothing to set/);
 });
 
+test('register with a valid --theme refuses a trailing --name or --status, and writes nothing', () => {
+  // Before the flag() guard, a flag in final position returned its fallback, so `register demo
+  // --theme work --name` silently defaulted the name to the slug and `--status` silently defaulted
+  // to active: both exited 0 with a row written. The guard changed the exit code, but the failure
+  // mode that actually matters is the row: pinned here so a future flag() refactor that restores
+  // defaulting breaks this test's store/page assertions, not just its exit-code one.
+  const { root } = gitFixture();
+  const noName = runCli(root, ['register', 'demo', '--theme', 'work', '--name']);
+  assert.equal(noName.status, 2, noName.stderr);
+  assert.match(noName.stderr, /--name was given no value/);
+  const noStatus = runCli(root, ['register', 'demo', '--theme', 'work', '--status']);
+  assert.equal(noStatus.status, 2, noStatus.stderr);
+  assert.match(noStatus.stderr, /--status was given no value/);
+  assert.ok(!existsSync(join(root, REL_STORE)), 'no row was ever written');
+  assert.ok(!existsSync(join(root, 'docs/projects/demo.md')), 'and no orphan page was left behind');
+});
+
 mtest('a store row that cannot render names its slug', () => {
   // Every mutating verb renders the whole index before writing anything, so one hand-edited row
   // refuses verbs that touch only healthy rows, while sync reports nothing about it. Neither throw
