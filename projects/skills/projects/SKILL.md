@@ -16,8 +16,8 @@ either file. A write-guard hook exists to deny `Write` and `Edit` on both and po
 caller back at the CLI.
 
 Six themes, and every row has one: `work`, `job-search`, `tooling`, `homelab`,
-`worldbuilding`, `personal`. They decide which section of `INDEX.md` a project renders in and
-nothing else. `register` refuses without one. `projects <theme>` lists just that section.
+`worldbuilding`, `personal`. They decide which section of `INDEX.md` a project renders in.
+`register` refuses without one. `projects <theme>` lists just that section.
 
 `projects` below is `node "${CLAUDE_PLUGIN_ROOT}/skills/projects/projects.mjs"`. It stores
 under `docs/projects/` in the current git repo, or under `$PROJECTS_ROOT` when that is set.
@@ -30,7 +30,7 @@ under `docs/projects/` in the current git repo, or under `$PROJECTS_ROOT` when t
 | a new project needs a row | `projects register <slug> --theme <t> --name "<N>" --status <s> --where "<W>" --repo <R>`, then write its narrative into the page by hand. `--theme` is required and never guessed: ask which of work, job-search, tooling, homelab, worldbuilding, personal it is. |
 | "projects sync" | Run `projects sync`, then act on the flags. The user arbitrates concept-level truth, never rewrite a narrative to match reality without asking. |
 | a project is done | Confirm with the user, then `projects archive <slug>`. |
-| a project moved worktree, or got a repo, or its name or theme changed | `projects set <slug> --where "<W>" --repo <R> --name "<N>" --theme <t>`. Pass only what changed. `--repo ""` clears it when a checkout is gone. `--theme ""` does not clear a theme, every row has one. |
+| a project moved worktree, or got a repo, or its name or theme changed | `projects set <slug> --where "<W>" --repo <R> --name "<N>" --theme <t>`. Pass only what changed. `--repo ""` clears it when a checkout is gone. `--theme ""` is refused with exit 2, it does not clear a theme, every row has one. |
 | a project's theme is wrong or missing | `projects set <slug> --theme <t>`. **Stop.** |
 | a slug is wrong, ugly or disagrees with gtg's | `projects rename <old> <new>`. It moves the page with the slug. Never rename by hand, the store is guarded. |
 | "what happened to X" / "when did I last touch X" | `projects log [slug]`, relay it. **Stop.** |

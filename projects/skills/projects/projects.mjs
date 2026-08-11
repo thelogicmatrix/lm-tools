@@ -16,6 +16,10 @@ export const STATUS_ORDER = ['active', 'ops', 'paused', 'done'];
 // Themes partition the index into readable sections. Six members chosen against the real
 // 39 rows, not invented: fewer and citsim's worldbuilding rows sit somewhere that does not
 // describe them, more and a section holds one project.
+// Adding or renaming one? Markdown cannot interpolate this, so six prose statements go stale with
+// it: SKILL.md:18-19 and :30, README.md:34 and :51-52, plus the count word in each ("Six themes",
+// "deliberately six"). The CLI's own copies are derived (HELP and validateTheme both interpolate
+// THEME_ORDER) and need no edit. The inventory lives here so the edit and its fallout are adjacent.
 export const THEMES = {
   work: 'Work',
   'job-search': 'Job search',
@@ -158,10 +162,13 @@ const INDEX_COLUMNS = '| Project | Status | Where | Last touched |';
 
 // A pipe splits the cell and shifts every column after it. A newline does worse, it ends the
 // row early and the tail becomes a phantom project on parse. Refuse both loudly rather than
-// write a corrupt table. Covers `page` too: it lands inside the link target.
+// write a corrupt table. Covers `page` too: it lands inside the link target. And `theme`, which
+// is interpolated into a `## ` section heading, so a line break there forges a whole section plus
+// the phantom row under it. Write paths refuse an unrenderable value here, read paths squash it
+// (renderList): a read must never fail on a bad row it only displays.
 const UNRENDERABLE = /[|\r\n]/;
 export function assertRenderable(p) {
-  const fields = [p.name, ...(p.where || []), p.lastTouched || '', p.page || ''];
+  const fields = [p.name, ...(p.where || []), p.lastTouched || '', p.page || '', p.theme || ''];
   for (const f of fields) {
     if (UNRENDERABLE.test(String(f))) {
       throw new Error(`projects: pipe or line break in a rendered field ("${f}")`);
@@ -576,8 +583,8 @@ export function cmdSet(root, args, opts = {}) {
   if (name === null && repo === null && where === null && themeArg === null) {
     throw new Error('projects: nothing to set, pass at least one of --name, --where, --repo, --theme');
   }
-  // Validated BEFORE any assignment below, alongside assertRenderable, so a bad theme in a
-  // multi-flag call leaves the row exactly as it was rather than half-updated.
+  // Validated BEFORE any assignment below, on the line just before assertRenderable, so a bad
+  // theme in a multi-flag call leaves the row exactly as it was rather than half-updated.
   const theme = themeArg === null ? null : validateTheme(themeArg);
   // Rendered fields go through the same gate register uses, and BEFORE anything is assigned: a
   // pipe or a line break here would corrupt the table or forge a row.
@@ -602,7 +609,14 @@ export function cmdSet(root, args, opts = {}) {
 // and the name is the field a human reads in the index afterwards.
 function flag(args, name, fallback = null) {
   const i = args.indexOf(name);
-  if (i === -1 || i === args.length - 1) return fallback;
+  if (i === -1) return fallback;
+  // A flag in FINAL position used to return the fallback too, so `set alpha --theme` was
+  // indistinguishable from passing no flags at all and set answered `nothing to set, pass at least
+  // one of --name, --where, --repo, --theme` at exit 1: it named the flag the user had just passed.
+  // Refused here rather than in cmdSet because this is the one place every flag on every verb is
+  // read through, so one guard covers --name, --where, --repo, --theme and -n. `was given` puts it
+  // on the same exit 2 as `--theme --name X`, which is the same mistake with one more word typed.
+  if (i === args.length - 1) throw new Error(`projects: ${name} was given no value`);
   const value = args[i + 1];
   if (value.startsWith('--')) {
     throw new Error(`projects: ${name} was given ${value}, which is another flag. Quote the value if it really starts with --`);
@@ -974,7 +988,9 @@ export function cmdSync(root, _args, opts = {}) {
     : `projects sync (${date}): nothing to flag across ${plural(store.projects.length, 'project')}\n`;
 }
 
-const builtins = {
+// Exported for the one test that asserts no theme key shadows a verb name, because main routes a
+// theme filter before this lookup.
+export const builtins = {
   // The slug is validated BEFORE stdin is read. The other way round, `projects current` with
   // no slug sits blocking on a terminal that is never going to send it an EOF.
   current: (root, rest) => {

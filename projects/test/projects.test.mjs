@@ -1462,6 +1462,25 @@ test('a line break in a store field cannot forge a second numbered list row', ()
       const forged = renderList(fixture(), { version: 1, projects: [p] });
       assert.equal(forged.split(/[\n\r\u2028\u2029]/).filter(Boolean).length, 2,
         `${field} forged a row with U+${sep.charCodeAt(0).toString(16)}`);
+      // The same forge through the WRITE path is REFUSED, not squashed. renderIndex's output is
+      // written to INDEX.md and committed, so a phantom row there survives every later re-render,
+      // where renderList's is terminal output the next command replaces. `slug` is excluded
+      // because renderIndex never renders it: only the catch message naming the row reads it.
+      if (field === 'slug') continue;
+      const store = { version: 1, projects: [p] };
+      const code = `U+${sep.charCodeAt(0).toString(16)}`;
+      // status is refused whatever the separator, by validateStatus rather than by this guard.
+      if (sep === '\n' || sep === '\r' || field === 'status') {
+        assert.throws(() => renderIndex(store), /pipe or line break|unknown status/,
+          `${field} was not refused on the write path with ${code}`);
+      } else {
+        // U+2028 and U+2029 are line starts to /m, which is why renderList has to squash them, but
+        // they are NOT breaks to parseIndex (`split('\n')`) or to a markdown table, so UNRENDERABLE
+        // deliberately does not list them. Asserted rather than assumed: forging an index row needs
+        // a pipe or a real break, and both of those are refused above.
+        assert.equal(parseIndex(renderIndex(store)).projects.length, 1,
+          `${field} forged an index row with ${code}`);
+      }
     }
   }
 });
@@ -1495,6 +1514,46 @@ test('a flag handed another flag as its value is refused, not taken as the value
   assert.equal(typo.status, 2, typo.stdout);
   assert.match(typo.stderr, /--name was given --status/);
   assert.ok(!existsSync(join(root, REL_STORE)), 'the row was never written');
+  assert.ok(!existsSync(join(root, 'docs/projects/demo.md')), 'and no orphan page was left behind');
+});
+
+test('a flag with nothing after it is refused, not read as no flag at all', () => {
+  // flag() returned the fallback for a flag in final argv position, so `set alpha --theme` looked
+  // exactly like `set alpha` and set answered "nothing to set, pass at least one of ... --theme"
+  // at exit 1, naming the flag that had just been passed. The same typo on register exited 2, so
+  // one mistake had two exit codes and one misleading message. Guarded in flag(), so every flag on
+  // every verb answers the same way.
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--theme', 'work']);
+  for (const argv of [['set', 'alpha', '--theme'], ['set', 'alpha', '--name'],
+    ['set', 'alpha', '--where'], ['set', 'alpha', '--repo'], ['log', '-n'],
+    ['register', 'beta', '--theme']]) {
+    const r = runCli(root, argv);
+    assert.equal(r.status, 2, `${argv.join(' ')}: ${r.stderr}`);
+    assert.match(r.stderr, new RegExp(`${argv.at(-1)} was given no value`));
+    // A deliberate refusal, not a bug: no stack.
+    assert.doesNotMatch(r.stderr, /at .*projects\.mjs:/);
+  }
+  // The exit-1 answer still belongs to the request that really asks for nothing.
+  const empty = runCli(root, ['set', 'alpha']);
+  assert.equal(empty.status, 1);
+  assert.match(empty.stderr, /nothing to set/);
+});
+
+test('register with a valid --theme refuses a trailing --name or --status, and writes nothing', () => {
+  // Before the flag() guard, a flag in final position returned its fallback, so `register demo
+  // --theme work --name` silently defaulted the name to the slug and `--status` silently defaulted
+  // to active: both exited 0 with a row written. The guard changed the exit code, but the failure
+  // mode that actually matters is the row: pinned here so a future flag() refactor that restores
+  // defaulting breaks this test's store/page assertions, not just its exit-code one.
+  const { root } = gitFixture();
+  const noName = runCli(root, ['register', 'demo', '--theme', 'work', '--name']);
+  assert.equal(noName.status, 2, noName.stderr);
+  assert.match(noName.stderr, /--name was given no value/);
+  const noStatus = runCli(root, ['register', 'demo', '--theme', 'work', '--status']);
+  assert.equal(noStatus.status, 2, noStatus.stderr);
+  assert.match(noStatus.stderr, /--status was given no value/);
+  assert.ok(!existsSync(join(root, REL_STORE)), 'no row was ever written');
   assert.ok(!existsSync(join(root, 'docs/projects/demo.md')), 'and no orphan page was left behind');
 });
 
@@ -1534,7 +1593,7 @@ mtest('SKILL.md carries the page skeleton and the list row byte-exact', () => {
     renderList(root, readStore(root)).trimEnd());
 });
 
-import { cmdRename, cmdLog } from '../skills/projects/projects.mjs';
+import { cmdRename, cmdLog, builtins } from '../skills/projects/projects.mjs';
 
 test('rename moves the row and its page, and git records it as a rename', () => {
   const { root, git } = gitFixture();
@@ -1874,6 +1933,28 @@ test('the CLI exits 2 on an unknown theme, not 1', () => {
   assert.equal(missing.status, 2, missing.stderr);
   assert.match(missing.stderr, /--theme is required/);
   assert.doesNotMatch(missing.stderr, /at .*projects\.mjs:/);
+});
+
+test('--theme "" is refused on both verbs, unlike --repo ""', () => {
+  // Two places promise this: projects.mjs's note above `if (theme !== null)` and SKILL.md's set
+  // row. '' does NOT clear a theme, because every row has one and a cleared row renders into a
+  // section it does not belong to. Pinned so the tempting "regularise --theme like --repo"
+  // refactor has to break a test rather than a promise. '' reaches validateTheme and exits 2.
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--theme', 'work']);
+  assert.equal(runCli(root, ['set', 'alpha', '--theme', '']).status, 2);
+  assert.equal(runCli(root, ['register', 'beta', '--name', 'Beta', '--theme', '']).status, 2);
+  assert.equal(findProject(readStore(root), 'alpha').theme, 'work', 'and the row is unchanged');
+});
+
+test('no theme key shadows a verb', () => {
+  // main routes `Object.hasOwn(THEMES, cmd)` BEFORE the builtins lookup, so a seventh theme keyed
+  // `set`, `log`, `sync`, `render`, `list` or `help` would silently turn that verb into a filter.
+  // No collision today. A test rather than a comment because it cannot be skimmed past and it
+  // fires at the one moment it matters, when the seventh theme is added.
+  for (const t of THEME_ORDER) {
+    assert.ok(!(t in builtins), `theme "${t}" would shadow the verb of the same name`);
+  }
 });
 
 mtest('set refuses an unknown theme without touching the row', () => {
