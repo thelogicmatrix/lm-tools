@@ -1517,6 +1517,29 @@ test('a flag handed another flag as its value is refused, not taken as the value
   assert.ok(!existsSync(join(root, 'docs/projects/demo.md')), 'and no orphan page was left behind');
 });
 
+test('a flag with nothing after it is refused, not read as no flag at all', () => {
+  // flag() returned the fallback for a flag in final argv position, so `set alpha --theme` looked
+  // exactly like `set alpha` and set answered "nothing to set, pass at least one of ... --theme"
+  // at exit 1, naming the flag that had just been passed. The same typo on register exited 2, so
+  // one mistake had two exit codes and one misleading message. Guarded in flag(), so every flag on
+  // every verb answers the same way.
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--theme', 'work']);
+  for (const argv of [['set', 'alpha', '--theme'], ['set', 'alpha', '--name'],
+    ['set', 'alpha', '--where'], ['set', 'alpha', '--repo'], ['log', '-n'],
+    ['register', 'beta', '--theme']]) {
+    const r = runCli(root, argv);
+    assert.equal(r.status, 2, `${argv.join(' ')}: ${r.stderr}`);
+    assert.match(r.stderr, new RegExp(`${argv.at(-1)} was given no value`));
+    // A deliberate refusal, not a bug: no stack.
+    assert.doesNotMatch(r.stderr, /at .*projects\.mjs:/);
+  }
+  // The exit-1 answer still belongs to the request that really asks for nothing.
+  const empty = runCli(root, ['set', 'alpha']);
+  assert.equal(empty.status, 1);
+  assert.match(empty.stderr, /nothing to set/);
+});
+
 mtest('a store row that cannot render names its slug', () => {
   // Every mutating verb renders the whole index before writing anything, so one hand-edited row
   // refuses verbs that touch only healthy rows, while sync reports nothing about it. Neither throw

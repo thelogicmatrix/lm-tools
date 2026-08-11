@@ -609,7 +609,14 @@ export function cmdSet(root, args, opts = {}) {
 // and the name is the field a human reads in the index afterwards.
 function flag(args, name, fallback = null) {
   const i = args.indexOf(name);
-  if (i === -1 || i === args.length - 1) return fallback;
+  if (i === -1) return fallback;
+  // A flag in FINAL position used to return the fallback too, so `set alpha --theme` was
+  // indistinguishable from passing no flags at all and set answered `nothing to set, pass at least
+  // one of --name, --where, --repo, --theme` at exit 1: it named the flag the user had just passed.
+  // Refused here rather than in cmdSet because this is the one place every flag on every verb is
+  // read through, so one guard covers --name, --where, --repo, --theme and -n. `was given` puts it
+  // on the same exit 2 as `--theme --name X`, which is the same mistake with one more word typed.
+  if (i === args.length - 1) throw new Error(`projects: ${name} was given no value`);
   const value = args[i + 1];
   if (value.startsWith('--')) {
     throw new Error(`projects: ${name} was given ${value}, which is another flag. Quote the value if it really starts with --`);
