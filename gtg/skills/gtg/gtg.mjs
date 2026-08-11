@@ -513,6 +513,7 @@ function help() {
                                rolled up or created in error (neither ship nor abandon)
   gtg rename <n|slug> <new>    change a slug, re-pointing any sub-projects. With a slug nothing
                                here carries, it repairs a stale parent reference instead
+  gtg unparent <n|slug>        clear an entry's parent, so it lists as standalone
   gtg log [n|slug] [-n N]      what happened, read from git rather than a ledger
   gtg undo                     revert THIS SESSION'S last change to the stores
   gtg stats                    one-screen scoreboard: streak, ships, sessions, effort
@@ -620,6 +621,43 @@ function rename(argv) {
   console.log(`Renamed: ${match.project} (${old} -> ${to})${
     kids ? `, re-pointed ${kids} sub-project(s)` : ''}`);
   console.log(`The portfolio slug is separate. Match it with: projects rename ${old} ${to}`);
+}
+
+// The inverse of rename's parent path. rename can only re-POINT a parent, and its <new> is
+// held to the slug regex, so there was no way to say "this entry belongs to no family".
+// Re-pointing a dangling parent at its own project's slug just trades a dangling parent for a
+// self-parent, which is the same defect in a different costume.
+//
+// A dangling parent and a self-parent both already list as standalone (see inferParent), so
+// this fixes the stored record rather than today's behaviour: the value stops claiming a
+// family that is not there, and a later reader stops having to know that.
+//
+// Entry-scoped, deliberately, unlike rename's second path which acts on every child of a
+// parent at once. Clearing is the operation you want to watch happen one entry at a time.
+function unparent(argv) {
+  const t = argv[0];
+  if (!t) { console.error("Usage: gtg unparent <number|slug>  (see 'gtg list')"); process.exit(2); }
+  const act = entries(REL_ACTIVE, 'handoffs');
+  const bl = entries(REL_BACKLOG, 'backlog');
+  // Active wins a collision, the same precedence rename and resume use.
+  const match = resolveEntry(act, t, displayOrder) ?? resolveEntry(bl, t);
+  if (!match) { console.error(`No project matching '${t}'. Try 'gtg list'.`); process.exit(2); }
+  // Refused rather than passed over, the same call rename makes on a no-op rename. A silent
+  // success here reads as "there was a parent and it is gone", which is a different fact.
+  if (!match.parent) {
+    console.error(`gtg unparent: '${match.slug}' has no parent`);
+    process.exit(2);
+  }
+  const had = match.parent;
+  // Deleted, not set to null or '': absent gets ONE representation, which is what every
+  // reader here already branches on with a bare truthiness test.
+  delete match.parent;
+  // `updated` is NOT restamped. Bookkeeping is not work, the same rule rename follows, and
+  // restamping would restart the 7-day idle clock `list` auto-shelves on.
+  saveEntries(REL_ACTIVE, 'handoffs', act);
+  saveEntries(REL_BACKLOG, 'backlog', bl);
+  commit([REL_ACTIVE, REL_BACKLOG], `gtg unparent: ${match.project}`);
+  console.log(`Cleared parent '${had}' from ${match.project}. It now lists as standalone.`);
 }
 
 // The record IS git. Every verb here commits with a descriptive subject, so the two stores
@@ -839,7 +877,7 @@ const [cmd, ...rest] = process.argv.slice(2);
 const builtins = {
   handoff, backlog, list, help, '--help': help, '-h': help,
   back, active: activate, remove, rm: remove, prune: remove, resume: resumeConsume, undo,
-  rename, log, supersede,
+  rename, unparent, log, supersede,
 };
 if (!cmd) { list([]); }
 // hasOwn, not truthiness: every inherited Object key resolved here, so `gtg constructor` and

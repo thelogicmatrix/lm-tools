@@ -51,6 +51,7 @@ Requires Node.js ≥ 18 and git on PATH.
 | "gtg remove <n>" / undo via "gtg undo" | Prune; git history is the undo stack, scoped to your own session |
 | "gtg supersede <n\|slug> [--into <n\|slug>]" | Rolled up into another entry, or filed in error — neither a ship nor an abandonment |
 | "gtg rename <n\|slug> <new>" | Change a slug, re-pointing any sub-projects that named it as their parent. Given a slug no entry carries, it repairs a stale `parent` reference instead, which is what a rename on the portfolio side leaves behind |
+| "gtg unparent <n\|slug>" | Clear one entry's `parent`, so it lists as standalone. `rename` re-**points** a parent, this **removes** one — re-pointing a dangling parent at the entry's own slug would only make it a self-parent |
 | "gtg log [n\|slug]" | What happened, read from git rather than a ledger |
 
 Handoffs live in *your repo* (`<repo>/docs/handoffs/`), committed to *your* history.

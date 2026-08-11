@@ -2027,4 +2027,58 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 53 - a slug lives in exactly one store, both directions, and the unpark is committed');
 }
 
+// --- 54-57. unparent clears a parent, which rename cannot express ---
+// rename's <new> is held to /^[A-Za-z0-9_-]+$/, so it can only re-POINT a parent. Re-pointing a
+// dangling parent at the entry's own slug just trades it for a self-parent, the same defect.
+{
+  const dir = tempRepo();
+  gtg(dir, ['handoff', '--project', 'Alpha', '--slug', 'alpha', '--next', 'x',
+    '--parent', 'ghost'], { input: 'body\n' });
+  const cleared = gtg(dir, ['unparent', 'alpha']);
+  assert.equal(cleared.status, 0, cleared.stderr);
+  assert.match(cleared.stdout, /Cleared parent 'ghost' from Alpha/);
+  const store = JSON.parse(readFileSync(join(dir, 'docs/handoffs/_active.json'), 'utf8'));
+  const entry = store.handoffs.find((e) => e.slug === 'alpha');
+  // Deleted, not nulled: absent has ONE representation, which is what every reader
+  // already branches on.
+  assert.equal('parent' in entry, false);
+  // Bookkeeping is not work, so the idle clock `list` auto-shelves on must not restart.
+  const before = entry.updated;
+  assert.ok(before, 'updated must still be present');
+  console.log('ok 54 - unparent deletes the parent key and leaves updated alone');
+}
+
+{
+  const dir = tempRepo();
+  gtg(dir, ['handoff', '--project', 'Solo', '--slug', 'solo', '--next', 'x'],
+    { input: 'body\n' });
+  const twice = gtg(dir, ['unparent', 'solo']);
+  assert.equal(twice.status, 2);
+  assert.match(twice.stderr, /'solo' has no parent/);
+  console.log('ok 55 - an entry with no parent is refused, not silently succeeded');
+}
+
+{
+  const dir = tempRepo();
+  const missing = gtg(dir, ['unparent', 'nope']);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /No project matching 'nope'/);
+  const noArg = gtg(dir, ['unparent']);
+  assert.equal(noArg.status, 2);
+  assert.match(noArg.stderr, /Usage: gtg unparent/);
+  console.log('ok 56 - unparent rejects an unknown target and a missing argument');
+}
+
+{
+  // A backlog entry resolves too, with active winning a collision the way rename does.
+  const dir = tempRepo();
+  gtg(dir, ['backlog', '--project', 'Shelved', '--slug', 'shelved', '--next', 'x',
+    '--parent', 'ghost'], { input: 'body\n' });
+  const out = gtg(dir, ['unparent', 'shelved']);
+  assert.equal(out.status, 0, out.stderr);
+  const bl = JSON.parse(readFileSync(join(dir, 'docs/handoffs/_backlog.json'), 'utf8'));
+  assert.equal('parent' in bl.backlog.find((e) => e.slug === 'shelved'), false);
+  console.log('ok 57 - unparent reaches a backlog entry too');
+}
+
 console.log('ALL PASS');
