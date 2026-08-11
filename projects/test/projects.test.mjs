@@ -516,9 +516,11 @@ test('list prints numbered rows in status order with the page opening line', () 
     { slug: 'beacon', name: 'Beacon', status: 'active', where: [], page: 'beacon.md', lastTouched: '2026-07-29' },
   ] };
   const out = renderList(root, store);
-  const lines = out.split('\n').filter(Boolean);
-  assert.match(lines[0], /1\. Beacon \[beacon\] \(active\): Build the SuccessFactors adapter\./);
-  assert.match(lines[1], /2\. gtg \[gtg\] \(paused\): \(no current state\)/);
+  // The numbered rows only: the list groups, so the first line is a theme heading. Both rows
+  // here are themeless, which is why they share one section and their order is comparable.
+  const rows = out.split('\n').filter((l) => /^\s+\d+\. /.test(l));
+  assert.match(rows[0], /1\. Beacon \[beacon\] \(active\): Build the SuccessFactors adapter\./);
+  assert.match(rows[1], /2\. gtg \[gtg\] \(paused\): \(no current state\)/);
 });
 
 test('list says so when there are no projects', () => {
@@ -1445,17 +1447,20 @@ test('a line break in a store field cannot forge a second numbered list row', ()
       status: 'active', where: [], page: null, lastTouched: '2026-07-29' },
     { slug: 'two', name: 'Two', status: 'active', where: [], page: null, lastTouched: '2026-07-28' },
   ] });
-  assert.equal(out.split('\n').filter(Boolean).length, 2, 'two projects, two rows');
+  assert.equal(out.split('\n').filter(Boolean).length, 3,
+    'two projects, two rows, and the one section heading they share');
   // U+2028, U+2029 and a lone CR are all line starts to /m, and the squash covers every one of
-  // them. Run on the unguarded fields too, so no field is left to a later reviewer.
+  // them. Run on the unguarded fields too, so no field is left to a later reviewer. `theme` is
+  // one of them: an unrecognised theme titles its own section with its raw value, so grouping
+  // gave the heading the same forging surface every row already had.
   const BREAKS = ['\n', '\r', '\u2028', '\u2029'];
   for (const sep of BREAKS) {
-    for (const field of ['name', 'slug', 'status']) {
-      const p = { slug: 'a', name: 'A', status: 'active', where: [], page: null,
+    for (const field of ['name', 'slug', 'status', 'theme']) {
+      const p = { slug: 'a', name: 'A', status: 'active', theme: 'work', where: [], page: null,
         lastTouched: '2026-07-29' };
       p[field] = `${p[field]}${sep}2. Ghost [ghost] (active): NO-PAGE forged`;
       const forged = renderList(fixture(), { version: 1, projects: [p] });
-      assert.equal(forged.split(/[\n\r\u2028\u2029]/).filter(Boolean).length, 1,
+      assert.equal(forged.split(/[\n\r\u2028\u2029]/).filter(Boolean).length, 2,
         `${field} forged a row with U+${sep.charCodeAt(0).toString(16)}`);
     }
   }
@@ -1523,7 +1528,9 @@ mtest('SKILL.md carries the page skeleton and the list row byte-exact', () => {
   const skeleton = skill.match(/```markdown\n([\s\S]*?)```/)[1]
     .replace('# <Name>', '# Demo Project').replaceAll('YYYY-MM-DD', '2026-08-04');
   assert.equal(skeleton, readFileSync(join(root, 'docs/projects/demo.md'), 'utf8'));
-  assert.equal(skill.match(/```\n(1\.[^\n]*)\n```/)[1],
+  // The fence carries the section heading as well as the row, because a bare row is not what
+  // the CLI prints now that the list groups.
+  assert.equal(skill.match(/```\n([\s\S]*?\d+\.[^\n]*)\n```/)[1],
     renderList(root, readStore(root)).trimEnd());
 });
 
@@ -1877,4 +1884,39 @@ mtest('set refuses an unknown theme without touching the row', () => {
   const p = findProject(readStore(root), 'beacon');
   assert.equal(p.name, 'Beacon', 'the name must not have been assigned before the throw');
   assert.equal(p.theme, 'tooling');
+});
+
+test('the bare list groups by theme with continuous numbering', () => {
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--theme', 'work']);
+  runCli(root, ['register', 'beta', '--name', 'Beta', '--theme', 'homelab']);
+  const out = runCli(root, []);
+  assert.equal(out.status, 0, out.stderr);
+  assert.match(out.stdout, /Work:/);
+  assert.match(out.stdout, /Homelab:/);
+  assert.match(out.stdout, /1\. Alpha \[alpha\] \(active\)/);
+  // Continuous across sections, because the number is only a reading aid and every mutation
+  // takes the slug from the square brackets.
+  assert.match(out.stdout, /2\. Beta \[beta\] \(active\)/);
+});
+
+test('a theme as the first argument filters the list', () => {
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--theme', 'work']);
+  runCli(root, ['register', 'beta', '--name', 'Beta', '--theme', 'homelab']);
+  const work = runCli(root, ['work']);
+  assert.equal(work.status, 0, work.stderr);
+  assert.match(work.stdout, /Alpha/);
+  assert.doesNotMatch(work.stdout, /Beta/);
+});
+
+test('a theme with no rows says so, and a non-theme non-verb still exits 2', () => {
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--theme', 'work']);
+  const empty = runCli(root, ['personal']);
+  assert.equal(empty.status, 0, empty.stderr);
+  assert.match(empty.stdout, /No projects under personal\./);
+  const bogus = runCli(root, ['wrok']);
+  assert.equal(bogus.status, 2);
+  assert.match(bogus.stderr, /unknown command "wrok"/);
 });

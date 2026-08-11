@@ -389,40 +389,71 @@ export function currentStateFirstLine(pageText) {
 }
 
 // ── renderList: the no-args print ────────────────────────────────────────────────────
-// One numbered row per project, status order, each tailed by its page's Current state
-// opening line. Read-only: nothing here is written to disk, so a bad page must degrade
-// its own row, never the command. Each row's read is its own try/catch, one per project and
-// not one around the loop, so a single malformed page cannot blank out every row after it.
-export function renderList(root, store) {
-  if (!store.projects.length) return 'No registered projects.\n';
-  return sortProjects(store.projects).map((p, i) => {
-    let tail = '(no page)';
-    if (p.page) {
-      try {
-        // pagePath, not a bare join: `page` comes out of hand-editable _projects.json, so
-        // `page: "../../.ssh/config"` would otherwise make the no-args list READ a file
-        // outside docs/projects. Inside the try on purpose, so the refusal degrades this one
-        // row to MALFORMED like any other unreadable page and every other row still prints.
-        const path = pagePath(root, p.page);
-        tail = existsSync(path)
-          ? currentStateFirstLine(readFileSync(path, 'utf8')) ?? '(no current state)'
-          : '(page missing)';
-      } catch {
-        // currentStateFirstLine throws on markers that are missing-but-stray, reversed, or
-        // duplicated, a deliberate refusal to guess (see locateBlock), and pagePath throws on
-        // a page name that escapes the folder. A read must never lie about what is on disk,
-        // so the row says MALFORMED rather than guessing or being dropped.
-        tail = 'MALFORMED';
-      }
+// One numbered row per project, grouped into theme sections, status order within a section,
+// each row tailed by its page's Current state opening line.
+//
+// The tail is unchanged from the old inline body, extracted so renderList reads as grouping
+// rather than as row building and so the filter has one row shape to produce. Read-only:
+// nothing here is written to disk, so a bad page must degrade its own row, never the command.
+// The try/catch is per row and not around the loop, so a single malformed page cannot blank
+// out every row after it.
+function listTail(root, p) {
+  if (!p.page) return '(no page)';
+  try {
+    // pagePath, not a bare join: `page` comes out of hand-editable _projects.json, so
+    // `page: "../../.ssh/config"` would otherwise make the no-args list READ a file outside
+    // docs/projects. Inside the try on purpose, so the refusal degrades this one row to
+    // MALFORMED like any other unreadable page and every other row still prints.
+    const path = pagePath(root, p.page);
+    return existsSync(path)
+      ? currentStateFirstLine(readFileSync(path, 'utf8')) ?? '(no current state)'
+      : '(page missing)';
+  } catch {
+    // currentStateFirstLine throws on markers that are missing-but-stray, reversed, or
+    // duplicated, a deliberate refusal to guess (see locateBlock), and pagePath throws on a
+    // page name that escapes the folder. A read must never lie about what is on disk, so the
+    // row says MALFORMED rather than guessing or being dropped.
+    return 'MALFORMED';
+  }
+}
+
+// `theme` null lists everything grouped. A theme lists only that section, still under its
+// heading, so there is one code path and the reader always knows what they are looking at.
+export function renderList(root, store, theme = null) {
+  if (theme !== null) validateTheme(theme);
+  const rows = theme === null
+    ? store.projects
+    : store.projects.filter((p) => p.theme === theme);
+  if (!rows.length) {
+    // Distinct messages: an empty filter is a true answer about one theme, an empty store is
+    // a different fact, and reporting the first as the second reads as a broken command.
+    return theme === null ? 'No registered projects.\n' : `No projects under ${theme}.\n`;
+  }
+  const out = [];
+  let n = 0;
+  // Empty sections are dropped HERE, as groupByTheme's contract requires of every caller, so
+  // this view and renderIndex agree on which sections exist.
+  for (const [label, group] of groupByTheme(sortProjects(rows))) {
+    if (!group.length) continue;
+    // Squashed for the same reason every row is: an unrecognised theme titles its section with
+    // its own raw value straight out of the hand-editable store, so a line break in it forged a
+    // numbered row through the HEADING rather than through a row.
+    out.push(`${String(label).replace(/\s+/g, ' ')}:`);
+    for (const p of group) {
+      // The slug is in the row because every mutating verb takes it and the skill is
+      // forbidden to read the store to find it. Squashed once on the ASSEMBLED row, the same
+      // shape as the sync report's join: the row interpolates raw store fields, and a line
+      // break in any of them printed an extra numbered row carrying whatever tokens the
+      // author of the store chose. `\s` covers every character /m treats as a line start.
+      //
+      // The indent is prefixed OUTSIDE the squash: inside it, /\s+/g would collapse the two
+      // leading spaces along with everything else and the row would carry a one-space indent
+      // nobody asked for.
+      out.push('  ' + `${++n}. ${p.name} [${p.slug}] (${p.status}): ${listTail(root, p)}`
+        .replace(/\s+/g, ' '));
     }
-    // The slug is in the row because every mutating verb takes it and the skill is forbidden to
-    // read the store to find it. Squashed once on the ASSEMBLED row, the same shape as the sync
-    // report's join: the row interpolates raw store fields, and a line break in any of them
-    // printed an extra numbered row carrying whatever tokens the author of the store chose.
-    // Squashing the whole row rather than each field leaves no later field to remember.
-    // `\s` covers every character /m treats as a line start, not just \n.
-    return `${i + 1}. ${p.name} [${p.slug}] (${p.status}): ${tail}`.replace(/\s+/g, ' ');
-  }).join('\n') + '\n';
+  }
+  return out.join('\n') + '\n';
 }
 
 // The LOCAL calendar date, which is the calendar every date in this file is in. The dates it is
@@ -967,7 +998,7 @@ const builtins = {
     process.stdout.write(out);
     if (/^MALFORMED /m.test(out)) process.exit(1);
   },
-  list: (root) => process.stdout.write(renderList(root, readStore(root))),
+  list: (root, rest) => process.stdout.write(renderList(root, readStore(root), rest[0] ?? null)),
   render: (root) => saveAndRender(root, readStore(root), [], 'projects: re-render index', {}),
   help: () => process.stdout.write(HELP),
   '--help': () => process.stdout.write(HELP),
@@ -976,11 +1007,11 @@ const builtins = {
 
 const HELP = `projects: portfolio bookkeeping
 
-  projects                     list every project, status and its page's opening line
+  projects                     list every project grouped by theme, with its page's opening line
+  projects <theme>             list one theme: ${THEME_ORDER.join(' | ')}
   projects current <slug>      replace that page's Current state from stdin
   projects status <slug> <s>   set status: active | paused | ops | done
   projects register <slug> --theme T [--name N --status S --where W --repo R]
-                               theme: ${THEME_ORDER.join(' | ')}
   projects archive <slug>      move the page to archive/ and drop the row
   projects rename <old> <new>  change a slug, moving its page with it
   projects set <slug> [--name N --where W --repo R --theme T]   change a row's other fields
@@ -1000,6 +1031,10 @@ export function main(argv = process.argv.slice(2)) {
   const [cmd, ...rest] = argv;
   try {
     if (!cmd) return builtins.list(root, []);
+    // A theme reads as a filter, not a verb. Routed HERE rather than added to `builtins`,
+    // which stays a map of verbs only so the Object.hasOwn guard below keeps doing exactly
+    // the job its comment describes. Anything that is neither still exits 2 with help.
+    if (Object.hasOwn(THEMES, cmd)) return builtins.list(root, [cmd]);
     // hasOwn, not truthiness: `builtins.constructor` and `builtins.toString` resolve up the
     // prototype chain, so `projects constructor` ran a function that is not a verb and exited 0.
     // An agent reads exit 0 as the command having worked.
