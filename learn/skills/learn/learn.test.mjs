@@ -130,3 +130,8 @@ test('resolveRoot exits 2 with a message when neither LEARN_HUB nor a git repo i
   assert.ok(result.stderr.length > 0);
   rmSync(dir, { recursive: true, force: true });
 });
+
+test('slugify throws on input that reduces to nothing', () => {
+  assert.throws(() => slugify('!!!'), /!!!/);
+  assert.throws(() => slugify('   '), /   /);
+});

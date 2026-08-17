@@ -7,9 +7,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 const SAFE = /^[A-Za-z0-9_-]+$/;
 
+// Throws rather than exiting, matching sprintPath and trackFile. main() turns any thrown
+// Error into die(2, message), so all three input guards behave identically at the CLI edge
+// and all three stay testable in-process.
 export function slugify(s) {
   const out = String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  if (!out) die(2, `cannot slugify ${JSON.stringify(s)} into a usable name`);
+  if (!out) throw new Error(`cannot slugify ${JSON.stringify(s)} into a usable name`);
   return out;
 }
 
@@ -119,8 +122,14 @@ const builtins = { tracks, help, '--help': help, '-h': help };
 async function main(argv) {
   const [cmd, ...rest] = argv;
   if (!cmd) return help();
-  if (builtins[cmd]) return builtins[cmd](rest);
-  die(2, `unknown command '${cmd}'. Try 'learn help'.`);
+  if (!builtins[cmd]) die(2, `unknown command '${cmd}'. Try 'learn help'.`);
+  // One catch at the edge. Every input guard throws; this is the only place that exits,
+  // so a guard is never the reason a function cannot be tested in-process.
+  try {
+    return await builtins[cmd](rest);
+  } catch (e) {
+    die(2, e.message);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
