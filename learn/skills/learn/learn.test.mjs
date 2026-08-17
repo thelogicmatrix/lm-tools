@@ -68,20 +68,33 @@ test('parseTrack reads every required heading', () => {
 test('a user track overrides a bundled track of the same name', () => {
   const root = tmp();
   mkdirSync(join(root, '.learn', 'tracks'), { recursive: true });
-  writeFileSync(join(root, '.learn', 'tracks', 'concept.md'), TRACK_FIXTURE);
-  const hit = trackFile(root, 'concept');
+  writeFileSync(join(root, '.learn', 'tracks', 'code.md'), TRACK_FIXTURE);
+  const hit = trackFile(root, 'code');
   assert.equal(hit.source, 'user');
   rmSync(root, { recursive: true, force: true });
+
+  // Mirror case: with no user tracks dir at all, the same name must resolve bundled.
+  // Each half fails if precedence flips, which is what actually proves the ordering.
+  const bare = tmp();
+  const fallback = trackFile(bare, 'code');
+  assert.equal(fallback.source, 'bundled');
+  rmSync(bare, { recursive: true, force: true });
 });
 
 test('listTracks labels bundled and user tracks and dedupes by name', () => {
   const root = tmp();
   mkdirSync(join(root, '.learn', 'tracks'), { recursive: true });
-  writeFileSync(join(root, '.learn', 'tracks', 'concept.md'), TRACK_FIXTURE);
+  writeFileSync(join(root, '.learn', 'tracks', 'code.md'), TRACK_FIXTURE);
   writeFileSync(join(root, '.learn', 'tracks', 'language.md'), TRACK_FIXTURE);
   const names = listTracks(root).map((t) => `${t.name}:${t.source}`).sort();
-  assert.deepEqual(names, ['code:bundled', 'concept:user', 'language:user']);
+  assert.deepEqual(names, ['code:user', 'language:user']);
   rmSync(root, { recursive: true, force: true });
+
+  // No user tracks directory at all: falls back to the bundled list, doesn't throw.
+  const bare = tmp();
+  const bareNames = listTracks(bare).map((t) => `${t.name}:${t.source}`);
+  assert.deepEqual(bareNames, ['code:bundled']);
+  rmSync(bare, { recursive: true, force: true });
 });
 
 test('trackFile refuses a name with a path separator', () => {
