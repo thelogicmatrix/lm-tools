@@ -87,3 +87,46 @@ test('listTracks labels bundled and user tracks and dedupes by name', () => {
 test('trackFile refuses a name with a path separator', () => {
   assert.throws(() => trackFile('/r', '../evil'), /invalid track name/);
 });
+
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { resolveRoot } from './learn.mjs';
+
+const withLearnHub = (value, fn) => {
+  const prev = process.env.LEARN_HUB;
+  if (value === undefined) delete process.env.LEARN_HUB; else process.env.LEARN_HUB = value;
+  try { return fn(); }
+  finally { if (prev === undefined) delete process.env.LEARN_HUB; else process.env.LEARN_HUB = prev; }
+};
+
+test('resolveRoot prefers LEARN_HUB when it is set', () => {
+  withLearnHub('/some/hub', () => {
+    assert.equal(resolveRoot(), '/some/hub');
+  });
+});
+
+test('resolveRoot falls back to git rev-parse --show-toplevel when LEARN_HUB is unset', () => {
+  withLearnHub(undefined, () => {
+    const expected = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+    assert.equal(resolveRoot(), expected);
+  });
+});
+
+test('resolveRoot exits 2 with a message when neither LEARN_HUB nor a git repo is available', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-norepo-'));
+  const cliPath = fileURLToPath(new URL('./learn.mjs', import.meta.url));
+  const env = { ...process.env };
+  delete env.LEARN_HUB;
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  // tmpdir() can itself sit inside an ambient git repo (it does on this machine: the
+  // home mirror), and GIT_CEILING_DIRECTORIES does not reliably stop discovery there.
+  // Blank PATH so the child can't find a git binary at all, which hits the same
+  // catch -> die(2) branch as "not in a repo" without depending on filesystem layout.
+  env.PATH = '';
+  env.Path = '';
+  const result = spawnSync(process.execPath, [cliPath, 'tracks'], { cwd: dir, env, encoding: 'utf8' });
+  assert.equal(result.status, 2);
+  assert.ok(result.stderr.length > 0);
+  rmSync(dir, { recursive: true, force: true });
+});
