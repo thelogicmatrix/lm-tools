@@ -49,6 +49,22 @@ pack on X"* — then answer the two scope questions it asks (doc shape, and what
 Don't use it for a one-off question; that's a search. Don't use it on a corpus you can't enumerate
 up front — scope it down until you can.
 
+It handles two kinds of corpus, and says which it assumed. An **authored** corpus is one mind
+across many items (a channel, a back catalogue) and the value is the author's method. An
+**authoritative** corpus is many first-party sources on one question (regulations, specs, official
+docs) and the value is which source outranks which. The synthesis skeleton reads differently for
+each, and getting the kind wrong is the most expensive mistake available here.
+
+## Called by another skill
+
+Any skill can drive it instead of you, by writing a **corpus brief** (`slug`, `root`, `shape`,
+`angle`, `corpus`) and handing it over — the same way a mail skill takes a batch file. A field the
+brief answers is never asked about, the output path is the return value, and this skill knows
+nothing about who called it. `SKILL.md` holds the format.
+
+That is what makes it a component rather than a destination: the caller keeps its own docs and
+links into the research pack, instead of copying the contents out and owning a second stale copy.
+
 ## Extending — your own reading angles
 
 logical-research follows the lm-tools three-tier contract: a core you don't touch, and a tier you own.

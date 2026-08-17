@@ -35,6 +35,33 @@ Ask these before phase 4, batched, then run autonomously:
 Everything else — corpus boundaries, which items are primary, how to bucket the bibliography —
 is a judgment call. Make it and say what you decided.
 
+## Driven by another skill — the brief
+
+This skill is usable on its own and as a callee. Another skill drives it by writing a **corpus
+brief** and handing it over, instead of holding a conversation:
+
+```markdown
+# Corpus brief
+slug:   <kebab-slug>            # names the output folder
+root:   docs/research           # where the pack lands. Default: research/
+shape:  synthesis+notes         # synthesis | synthesis+notes | synthesis+notes+raw
+angle:  <what this research is for, one line>
+corpus:                         # the enumerated items, or how to enumerate them
+  - <item or source>
+  - <item or source>
+```
+
+Three rules, and they are what make it composable:
+
+- **A field the brief answers is never asked about.** The two front-loaded questions are `shape`
+  and `angle`. If the brief carries them, run autonomously from there.
+- **The output path is the return value.** Finish by printing `<root>/<slug>/`. The caller links
+  to that folder, it does not copy the contents out — one fact, one home.
+- **Know nothing about the caller.** No branch in this skill reads "a learning sprint asked" or
+  "a review asked". If a caller needs something shaped differently, that belongs in its `angle`.
+
+An incomplete brief is not an error. Ask only for the missing fields, then proceed.
+
 ## Pipeline
 
 Six phases. 1–3 are mechanical and cheap. **Phase 4 is the expensive one and cannot be skipped
@@ -59,8 +86,12 @@ Then compute item count, total duration, total words, median length.
 | 150k–400k | Split by theme across sessions; write notes as you go, synthesise last |
 | > 400k | Narrow the scope, or sample deliberately **and say so in the output** |
 
-**Flag non-primary items now** — reuploads, guest content, anything not the author's own work.
-Those get factual notes, not principle extraction. Mislabelling them contaminates the synthesis.
+**Rank the items by authority now, not later.** On an authored corpus that means flagging what
+is not the author's own work — reuploads, guest content — which gets a factual note rather than
+principle extraction. On an authoritative corpus it means writing down which source outranks
+which *before* reading, because the whole synthesis turns on it: a first-party statement beats
+the public summary of it, and widely repeated secondary commentary is frequently the thing the
+primary source contradicts. Mislabelling here contaminates everything downstream.
 
 ### 2. Acquire
 
@@ -125,29 +156,46 @@ the angle section — that's your own extension tier (see the plugin README).
 
 ### 5. Synthesise
 
-The main doc:
+The main doc. Four sections are invariant, two read differently depending on what kind of
+corpus you have:
 
 1. **Why this corpus is worth the time** — what distinguishes it. Specific and falsifiable.
-2. **The author's method** — often the most transferable thing, and rarely stated by them explicitly.
-3. **Core theses** — 5–10, each with supporting evidence *and* the counter-case the author raises.
+2. **The structure** — *authored corpus:* the author's method, often the most transferable thing
+   and rarely stated by them explicitly. *Authoritative corpus:* how the rules actually stack,
+   which source outranks which, and where they interlock.
+3. **Core claims** — 5–10. *Authored:* their theses, each with supporting evidence and the
+   counter-case they raise. *Authoritative:* the findings, each with the source that settles it
+   and the common misreading it corrects.
 4. **Applicable principles** — the extract. Numbered, grouped, phrased as instructions. **This is
    the section a model will actually consume.**
 5. **Grounded vs speculative** — split every significant claim into well-grounded / reasonably
    supported / explicitly speculative. **Non-negotiable.** Without it the doc launders speculation
    into fact, and in three months nobody remembers which was which.
-6. **Reading order** — what to consume if not all of it.
+6. **Reading order** — what to consume if not all of it. Name the one item to read first.
+7. **What to do next** — only when the angle is a decision rather than a body of knowledge.
+   Omit it otherwise rather than padding it.
+
+**Which kind you have.** An *authored* corpus is one mind across many items: a channel, a back
+catalogue, an author's works. The value is their method. An *authoritative* corpus is many
+first-party sources on one question: regulations, official docs, specs, filings. There is no
+method to extract, and the value is in precedence between sources. A corpus with a single
+authoritative source and a pile of commentary is the second kind, not the first.
 
 ### 6. Verify
 
 - Every internal link resolves — slugs in the synthesis must match the filenames actually written.
-- Every claim attributed to the author is theirs, not your inference.
+- Every claim attributed to a source is that source's, not your inference from it.
 - Names and technical terms checked against **citations, not transcripts** (see gotchas).
 - The grounded/speculative split is honest, including where that's unflattering.
+- The headline answer, if the angle asked for one, is the one the highest-authority source
+  supports — not the one the most sources repeat.
 
 ## Output shape
 
+`root` from the brief, defaulting to `research/`:
+
 ```
-research/<slug>/
+<root>/<slug>/
   README.md          synthesis — themes, principles, evidence grading
   links.md           bibliography, grouped by theme
   notes/README.md    index table + by-theme groupings
