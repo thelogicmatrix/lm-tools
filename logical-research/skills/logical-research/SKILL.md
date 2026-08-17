@@ -143,7 +143,7 @@ only surface when one reader holds the whole corpus. That is the entire value-ad
 ## Applicable
 Bulleted. Each one an instruction, not an observation.
 
-## [Angle]          ← the angle the user named up front
+## [Angle]          ← the angle from the brief, or the one named up front
 ## Sources          ← citations from this item
 ```
 
