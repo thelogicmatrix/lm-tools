@@ -15,6 +15,7 @@ Then install whichever tools you want — they're independent:
 ```
 /plugin install gtg@lm-tools
 /plugin install due-diligence@lm-tools
+/plugin install logical-research@lm-tools
 /plugin install projects@lm-tools
 ```
 
@@ -38,6 +39,15 @@ each grounded in a research-backed knowledge file.
 **Extend it:** drop your own lenses in `.dd/lenses/` in your repo — DD reads them alongside
 the shipped ones, and a same-named lens overrides a built-in. → [due-diligence/README.md](due-diligence/README.md)
 
+### [logical-research](logical-research/README.md)
+Turn a **bounded corpus** — a channel, a book, a doc set, a set of papers — into reusable
+context instead of a summary you read once: a synthesis with every claim graded by evidence
+strength, one note per item, and a traceable bibliography, shaped to paste into a model later.
+The reading itself is deliberately not delegated — cross-item connections only surface when one
+reader holds the whole corpus.
+**Extend it:** drop recurring reading angles in `.lr/angles/*.md` in your repo — the pipeline
+reads them instead of you re-explaining the angle each run. → [logical-research/README.md](logical-research/README.md)
+
 ### [projects](projects/README.md)
 The portfolio layer above gtg: a **generated** index of everything you have going, one
 narrative page per project, and **`projects sync`** — which checks every row against
@@ -55,7 +65,7 @@ Every lm-tools framework follows the same three-tier shape:
 |---|---|---|
 | **Core** | the plugin | ships + updates with the tool |
 | **Bundled** | the plugin's defaults | on by default, updates with the tool |
-| **Yours** | a dot-dir in *your* repo (`.gtg/`, `.dd/`, …) | never touched by updates — you own it |
+| **Yours** | a dot-dir in *your* repo (`.gtg/`, `.dd/`, `.lr/`, …) | never touched by updates — you own it |
 
 The plugin only ever *reads* your tier, so a plugin update can't clobber your extensions.
 That's the point: a framework you add to and modify, not a black box.

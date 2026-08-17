@@ -10,7 +10,9 @@ export default ({ args, ownEntries, countHandoffFiles }) => {
   const shelved = [...shelvedRaw].sort(byProject);
 
   if (!active.length && !shelved.length) {
-    console.log('No learning sprints active. Phase 1.5 of docs/runbooks/learning-code.md creates one.');
+    // ponytail: name the mechanism, not a doc. A path here is this repo's own convention
+    // shipped to strangers, and it goes stale the moment that file is renamed.
+    console.log('No learning sprints tracked. A sprint becomes one with `gtg handoff --parent learning`.');
     return;
   }
 

@@ -288,7 +288,7 @@ const pack = ({ root, commit, ownParent }, argv, issues, packages) => {
     // nothing. The list still reaches the model, which ran the command.
     console.log('GTG-DIRECTIVE: propose themed batches from the loose issues below, then call');
     console.log('  gtg issues pack <pN> --name "<Name>" --next "<first concrete step>" [--eta "<eta>"] <slug>...');
-    console.log('  one call per accepted batch. Confirm the batches with Nathan before calling.');
+    console.log('  one call per accepted batch. Confirm the batches with the user before calling.');
     console.log('');
     printLoose(loose);
     return;
