@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -61,7 +61,60 @@ function help() {
   learn profile                   read the learner profile`);
 }
 
-const builtins = { help, '--help': help, '-h': help };
+export const TRACK_HEADINGS = [
+  'Pick this when', 'Artifact floor', 'Session shape',
+  'Mastery gate', 'Verify exercise', 'Sequencing',
+];
+
+// Fixed headings, so the skill can follow a track without knowing which one it is.
+export function parseTrack(text) {
+  const out = {};
+  let current = null;
+  for (const line of String(text).split('\n')) {
+    const m = /^##\s+(.+?)\s*$/.exec(line);
+    if (m) { current = m[1]; out[current] = []; continue; }
+    if (current) out[current].push(line);
+  }
+  return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.join('\n').trim()]));
+}
+
+const bundledTracksDir = () => join(CLI_DIR, 'extensions', 'tracks');
+const userTracksDir = (root) => join(root, '.learn', 'tracks');
+
+// User first, then bundled — yours overrides mine, the same precedence gtg gives
+// extension commands.
+export function trackFile(root, name) {
+  if (!SAFE.test(name)) throw new Error(`invalid track name ${JSON.stringify(name)}`);
+  const user = join(userTracksDir(root), `${name}.md`);
+  if (existsSync(user)) return { path: user, source: 'user' };
+  const bundled = join(bundledTracksDir(), `${name}.md`);
+  if (existsSync(bundled)) return { path: bundled, source: 'bundled' };
+  return null;
+}
+
+const mdNames = (dir) => {
+  try { return readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)); }
+  catch { return []; }
+};
+
+export function listTracks(root) {
+  const seen = new Map();
+  for (const name of mdNames(bundledTracksDir())) seen.set(name, 'bundled');
+  for (const name of mdNames(userTracksDir(root))) seen.set(name, 'user');
+  return [...seen].map(([name, source]) => ({ name, source }));
+}
+
+function tracks() {
+  const root = resolveRoot();
+  const found = listTracks(root);
+  if (!found.length) return console.log('No tracks found. Bundled tracks should ship at extensions/tracks/.');
+  console.log(`Tracks (${found.length}):`);
+  for (const t of found.sort((a, b) => a.name.localeCompare(b.name))) {
+    console.log(`  ${colour(t.name)}${t.source === 'user' ? '  (yours, overrides bundled)' : ''}`);
+  }
+}
+
+const builtins = { tracks, help, '--help': help, '-h': help };
 
 async function main(argv) {
   const [cmd, ...rest] = argv;
