@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { slugify, sprintPath, readSprint, writeSprint } from './learn.mjs';
+import { slugify, sprintPath, readSprint, writeSprint, UsageError } from './learn.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'learn-'));
 
@@ -32,6 +32,7 @@ test('reading a sprint that does not exist returns null, not a throw', () => {
 });
 
 test('sprintPath refuses a slug with a path separator', () => {
+  assert.throws(() => sprintPath('/r', '../escape'), UsageError);
   assert.throws(() => sprintPath('/r', '../escape'), /invalid slug/);
 });
 
@@ -98,6 +99,7 @@ test('listTracks labels bundled and user tracks and dedupes by name', () => {
 });
 
 test('trackFile refuses a name with a path separator', () => {
+  assert.throws(() => trackFile('/r', '../evil'), UsageError);
   assert.throws(() => trackFile('/r', '../evil'), /invalid track name/);
 });
 
@@ -145,6 +147,8 @@ test('resolveRoot exits 2 with a message when neither LEARN_HUB nor a git repo i
 });
 
 test('slugify throws on input that reduces to nothing', () => {
+  assert.throws(() => slugify('!!!'), UsageError);
   assert.throws(() => slugify('!!!'), /!!!/);
+  assert.throws(() => slugify('   '), UsageError);
   assert.throws(() => slugify('   '), /   /);
 });

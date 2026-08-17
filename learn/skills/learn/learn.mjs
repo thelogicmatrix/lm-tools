@@ -7,12 +7,17 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 const SAFE = /^[A-Za-z0-9_-]+$/;
 
+// Thrown by the input guards, and the only thing main() converts into an exit. Anything
+// else reaching main is a bug in this CLI, and a bug must crash loudly rather than
+// impersonate a usage error.
+export class UsageError extends Error {}
+
 // Throws rather than exiting, matching sprintPath and trackFile. main() turns any thrown
 // Error into die(2, message), so all three input guards behave identically at the CLI edge
 // and all three stay testable in-process.
 export function slugify(s) {
   const out = String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  if (!out) throw new Error(`cannot slugify ${JSON.stringify(s)} into a usable name`);
+  if (!out) throw new UsageError(`cannot slugify ${JSON.stringify(s)} into a usable name`);
   return out;
 }
 
@@ -24,7 +29,7 @@ export function die(code, msg) {
 // Every path segment is checked before it reaches join(). Untrusted-ish input reaching
 // path.join is a traversal waiting to happen.
 export function sprintPath(root, slug) {
-  if (!SAFE.test(slug)) throw new Error(`invalid slug ${JSON.stringify(slug)}`);
+  if (!SAFE.test(slug)) throw new UsageError(`invalid slug ${JSON.stringify(slug)}`);
   return join(root, '.learn', 'sprints', `${slug}.json`);
 }
 
@@ -87,7 +92,7 @@ const userTracksDir = (root) => join(root, '.learn', 'tracks');
 // User first, then bundled — yours overrides mine, the same precedence gtg gives
 // extension commands.
 export function trackFile(root, name) {
-  if (!SAFE.test(name)) throw new Error(`invalid track name ${JSON.stringify(name)}`);
+  if (!SAFE.test(name)) throw new UsageError(`invalid track name ${JSON.stringify(name)}`);
   const user = join(userTracksDir(root), `${name}.md`);
   if (existsSync(user)) return { path: user, source: 'user' };
   const bundled = join(bundledTracksDir(), `${name}.md`);
@@ -128,7 +133,8 @@ async function main(argv) {
   try {
     return await builtins[cmd](rest);
   } catch (e) {
-    die(2, e.message);
+    if (e instanceof UsageError) die(2, e.message);
+    throw e;
   }
 }
 
