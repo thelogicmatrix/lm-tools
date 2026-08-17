@@ -5,7 +5,7 @@
     {
       "name": "gtg",
       "source": "./gtg",
-      "description": "Got to Go — pause/resume framework for Claude Code: say 'gtg' to write a handoff before you leave, 'let's continue X' to resume cold days later. Extend with your own commands and hooks."
+      "description": "Got to Go - pause/resume framework for Claude Code: say 'gtg' to write a handoff before you leave, 'let's continue X' to resume cold days later. Extend with your own commands and hooks."
     },
     {
       "name": "due-diligence",

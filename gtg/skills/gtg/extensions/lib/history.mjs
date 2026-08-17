@@ -17,24 +17,36 @@ export function slugify(project) {
 }
 
 // One commit subject -> a typed event, or {type:'noise'}. Never returns null.
-// Two handoff formats coexist: legacy "— <phase>" and Plan-A "— session N".
-// The session suffix is matched ONLY by the anchored tail, because a project
-// name can itself contain " — " (e.g. "Widget — parts catalog").
+// Two handoff formats coexist: legacy "<sep> <phase>" and Plan-A "<sep> session N".
+// <sep> is EITHER a plain hyphen (what gtg writes since 2026-08-05) or an em dash
+// (what it wrote before, and 263 of the last 400 store commits still carry). Both
+// must parse forever, because git history is not rewritable. Every regex below
+// spells the em dash as a unicode escape, so this file itself stays pure ASCII.
+// The session suffix is matched ONLY by the anchored tail, because a project name
+// can itself contain the separator (e.g. "Widget - parts catalog").
 export function classify(subject) {
   const s = String(subject);
   let m;
   if ((m = s.match(/^handoff: (.+)$/))) {
     const body = m[1];
-    const sess = body.match(/ — session (\d+)$/);
-    const project = sess ? body.slice(0, body.length - sess[0].length) : body.replace(/ — [^—]*$/, '');
+    const sess = body.match(/ [-\u2014] session (\d+)$/);
+    // Legacy fallback: strip the trailing " <sep> <phase>". A greedy prefix binds
+    // the separator to the LAST one in the body, which is what the old
+    // negated-class form did. The negated class cannot survive widening: it
+    // excluded the dash CHARACTER, but a hyphen is legal inside a project name
+    // ("gtg-extensions"), so excluding it would break more than it fixed, and
+    // excluding neither would strip from the FIRST separator and truncate
+    // "Widget - parts catalog - executing" to "Widget".
+    const legacy = body.match(/^(.*) [-\u2014] .*$/);
+    const project = sess ? body.slice(0, body.length - sess[0].length) : (legacy ? legacy[1] : body);
     return { type: 'handoff', project, sessions: sess ? Number(sess[1]) : undefined };
   }
-  if ((m = s.match(/^gtg backlog: new (.+?) — session \d+$/))) return { type: 'park', project: m[1] };
+  if ((m = s.match(/^gtg backlog: new (.+?) [-\u2014] session \d+$/))) return { type: 'park', project: m[1] };
   if ((m = s.match(/^gtg backlog: park (.+)$/))) return { type: 'shelve', project: m[1] };
   if (/^gtg backlog: auto-park /.test(s)) return { type: 'autoshelf', project: undefined };
   if ((m = s.match(/^gtg activate: (.+)$/))) return { type: 'activate', project: m[1] };
   if ((m = s.match(/^gtg prune: remove (.+?)(?: from backlog)? - confirmed done$/))) return { type: 'prune', project: m[1] };
-  if ((m = s.match(/^gtg resume: (.+?) — (?:backlog )?handoff consumed$/))) return { type: 'resume', project: m[1] };
+  if ((m = s.match(/^gtg resume: (.+?) [-\u2014] (?:backlog )?handoff consumed$/))) return { type: 'resume', project: m[1] };
   // Neither a ship nor an abandonment: the entry was rolled up, or filed in error.
   // Lazy first group so the optional " into <target>" tail wins when present.
   if ((m = s.match(/^gtg supersede: (.+?)(?: into (.+))?$/))) return { type: 'supersede', project: m[1], into: m[2] };
@@ -70,7 +82,7 @@ export function readEvents(root) {
       { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', timeout: 10000 });
   } catch { return { events: [], available: false }; }
   // Guard against git walking up to an enclosing repo when root isn't itself
-  // a repo (e.g. an unvalidated GTG_HUB pointed at a plain scratch dir) —
+  // a repo (e.g. an unvalidated GTG_HUB pointed at a plain scratch dir) -
   // that would silently report an ancestor repo's history as root's own.
   try {
     const top = execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'],
@@ -84,7 +96,7 @@ export function readEvents(root) {
   return { events: classifyEvents(rawLog), available: true };
 }
 
-// One Session per handoff .md file. The filename carries the clock — hour-of-day
+// One Session per handoff .md file. The filename carries the clock - hour-of-day
 // comes free, no schema change.
 export function readSessions(root) {
   const dir = join(root, 'docs/handoffs');
@@ -140,7 +152,7 @@ export function habit(events, sessions) {
 }
 
 // Pure: shipped/parked/activated counts and days-to-ship. shipRate is left
-// null — the assembler (Task 6) fills it in once it knows the still-active count.
+// null - the assembler (Task 6) fills it in once it knows the still-active count.
 export function throughput(events) {
   const ships = events.filter((e) => e.type === 'prune' && e.shipped);
   const resumed = events.filter((e) => (e.type === 'resume') || (e.type === 'prune' && e.resumed)).length;
@@ -189,7 +201,7 @@ export function throughput(events) {
 // ponytail: two distinct projects that happen to slugify to the same key
 // would merge into one row; rare, acceptable.
 // `effort` is readDurations' output, optional: rows carry `minutes` only where a
-// project has timed sessions. Untimed projects get null, NOT 0 — pre-1.4.0 work
+// project has timed sessions. Untimed projects get null, NOT 0 - pre-1.4.0 work
 // took real time nobody recorded, and a 0 would read as "this was free".
 export function perProject(events, sessions, activeEntries, backlogEntries, effort) {
   const active = new Map((activeEntries || []).map((e) => [slugify(e.project), e]));
@@ -220,7 +232,7 @@ export function perProject(events, sessions, activeEntries, backlogEntries, effo
     const firstHandoff = evs.filter((e) => e.type === 'handoff').map((e) => e.date).sort()[0];
     const daysToShip = ship && firstHandoff ? dayNum(ship.date) - dayNum(firstHandoff) : null;
     // effort keys on the store's real slug (that's what a handoff commits), so
-    // join on realSlug — never the canonical slugify(project) key used above.
+    // join on realSlug - never the canonical slugify(project) key used above.
     const minutes = (effort?.bySlug?.[realSlug] || []).reduce((a, b) => a + b, 0);
     rows.push({
       slug: realSlug, project: name, parent: active.get(slug)?.parent ?? backlog.get(slug)?.parent,
@@ -235,7 +247,7 @@ export function perProject(events, sessions, activeEntries, backlogEntries, effo
   return rows.sort((a, b) => (b.sessions - a.sessions));
 }
 
-// Pure: group perProject rows by parent (rows without a parent are excluded —
+// Pure: group perProject rows by parent (rows without a parent are excluded -
 // families only exist where an INDEX join has assigned one).
 export function families(rows) {
   const byParent = new Map();
@@ -252,7 +264,7 @@ export function families(rows) {
     if (r.status === 'active') f.active++;
     byParent.set(r.parent, f);
   }
-  // totalMinutes is summed exactly then converted once — rounding per row first
+  // totalMinutes is summed exactly then converted once - rounding per row first
   // would drift a family's hours by up to 0.05h per sub-project.
   return [...byParent.values()]
     .map(({ totalMinutes, ...f }) => ({ ...f, totalHours: round1(totalMinutes / 60) }))
@@ -269,7 +281,7 @@ export function health(events, rows) {
     events.filter((e) => e.type === 'park' || e.type === 'shelve' || e.type === 'autoshelf').map((e) => e.slug));
   const activatedSlugs = new Set(events.filter((e) => e.type === 'activate').map((e) => e.slug));
   // parkedSlugs/activatedSlugs come from events, which only ever carry the
-  // canonical slugify(project) slug (see perProject) — never a row's real
+  // canonical slugify(project) slug (see perProject) - never a row's real
   // store slug. Index status under BOTH so the lookup hits regardless of
   // which one a caller's row happens to carry.
   const statusBySlug = new Map();
@@ -338,7 +350,7 @@ function isoWeek(dateStr) {
 // nearest preceding slug among ADDED lines, and to the commit's author date.
 //
 // Only HANDOFF commits count. `gtg activate` moves a backlog entry back into
-// _active.json and `gtg undo` restores a removed one — both re-add the entry
+// _active.json and `gtg undo` restores a removed one - both re-add the entry
 // with its duration_min unchanged, which billed the same session a second time
 // (~6% of the total on the live store before this guard). A handoff is the only
 // commit that actually re-times anything, so the subject is the exact filter.
@@ -377,7 +389,7 @@ export function readDurations(root) {
     if (line.startsWith('-')) continue;                // removed lines never inform current state
     // slug tracking reads context (' ') AND added ('+') lines: a commit that only
     // re-times a session (duration_min changes, slug doesn't) leaves "slug" as an
-    // unchanged context line, not a "+" line — added-only tracking would silently
+    // unchanged context line, not a "+" line - added-only tracking would silently
     // lose the pairing for that commit.
     const sm = line.match(/"slug":\s*"([^"]+)"/);
     if (sm) { curSlug = sm[1]; continue; }

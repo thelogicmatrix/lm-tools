@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readStore, writeStore, validateStatus, validateSlug, sortProjects, commit, resolveRoot, today, REL_STORE, STATUSES, renderIndex, parseIndex, assertRenderable } from '../skills/projects/projects.mjs';
+import { readStore, writeStore, validateStatus, validateSlug, sortProjects, commit, resolveRoot, today, REL_STORE, STATUSES, renderIndex, parseIndex, assertRenderable, THEMES, THEME_ORDER, validateTheme } from '../skills/projects/projects.mjs';
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'projects-test-'));
@@ -516,9 +516,11 @@ test('list prints numbered rows in status order with the page opening line', () 
     { slug: 'beacon', name: 'Beacon', status: 'active', where: [], page: 'beacon.md', lastTouched: '2026-07-29' },
   ] };
   const out = renderList(root, store);
-  const lines = out.split('\n').filter(Boolean);
-  assert.match(lines[0], /1\. Beacon \[beacon\] \(active\): Build the SuccessFactors adapter\./);
-  assert.match(lines[1], /2\. gtg \[gtg\] \(paused\): \(no current state\)/);
+  // The numbered rows only: the list groups, so the first line is a theme heading. Both rows
+  // here are themeless, which is why they share one section and their order is comparable.
+  const rows = out.split('\n').filter((l) => /^\s+\d+\. /.test(l));
+  assert.match(rows[0], /1\. Beacon \[beacon\] \(active\): Build the SuccessFactors adapter\./);
+  assert.match(rows[1], /2\. gtg \[gtg\] \(paused\): \(no current state\)/);
 });
 
 test('list says so when there are no projects', () => {
@@ -653,7 +655,7 @@ mtest('status validates, updates and re-renders the index', () => {
 mtest('register adds a row and a page skeleton carrying the unwritten marker', () => {
   const root = seeded();
   cmdRegister(root, ['newthing', '--name', 'New Thing', '--status', 'active',
-    '--where', 'C:/dev/newthing'], { commit: false, date: '2026-07-29' });
+    '--where', 'C:/dev/newthing', '--theme', 'tooling'], { commit: false, date: '2026-07-29' });
   const p = findProject(readStore(root), 'newthing');
   assert.equal(p.name, 'New Thing');
   assert.equal(p.page, 'newthing.md');
@@ -669,7 +671,7 @@ mtest('a skeleton page is stamped "last verified never", never with a date', () 
   // on exactly the pages that most need flagging. The field stays PRESENT, so no reader
   // downstream needs a missing-field branch.
   const root = seeded();
-  cmdRegister(root, ['fresh', '--name', 'Fresh'], { commit: false, date: '2026-07-29' });
+  cmdRegister(root, ['fresh', '--name', 'Fresh', '--theme', 'tooling'], { commit: false, date: '2026-07-29' });
   const page = readFileSync(join(root, 'docs/projects/fresh.md'), 'utf8');
   assert.match(page, /^\*last verified never · docs: none\*$/m);
   assert.doesNotMatch(page.split('\n')[1], /\d{4}-\d{2}-\d{2}/, 'no date on the header line');
@@ -683,7 +685,7 @@ mtest('register works in a repo that has no docs/projects yet', () => {
   // anything had created the folder, so it died on a raw ENOENT with no usable message.
   const root = fixture();
   rmSync(join(root, 'docs'), { recursive: true });
-  cmdRegister(root, ['first', '--name', 'First'], { commit: false, date: '2026-07-29' });
+  cmdRegister(root, ['first', '--name', 'First', '--theme', 'tooling'], { commit: false, date: '2026-07-29' });
   assert.ok(existsSync(join(root, 'docs/projects/first.md')));
   assert.equal(findProject(readStore(root), 'first').page, 'first.md');
 });
@@ -780,7 +782,7 @@ mtest('register adopts an existing page rather than clobbering the narrative', (
   const path = join(root, 'docs/projects/adopted.md');
   writeFileSync(path, '# Adopted\n\nhand-written long before the CLI existed\n');
   const before = readFileSync(path, 'utf8');
-  cmdRegister(root, ['adopted'], { commit: false, date: '2026-07-29' });
+  cmdRegister(root, ['adopted', '--theme', 'tooling'], { commit: false, date: '2026-07-29' });
   assert.equal(readFileSync(path, 'utf8'), before);
   assert.equal(findProject(readStore(root), 'adopted').page, 'adopted.md');
 });
@@ -800,7 +802,7 @@ test('an unrenderable name is refused before anything reaches disk', () => {
   // stored row that no render can emit bricks every later status, current and render call.
   const root = seeded();
   const store = readFileSync(join(root, REL_STORE), 'utf8');
-  assert.throws(() => cmdRegister(root, ['pipey', '--name', 'a|b'], { commit: false }),
+  assert.throws(() => cmdRegister(root, ['pipey', '--name', 'a|b', '--theme', 'tooling'], { commit: false }),
     /pipe or line break/);
   assert.equal(readFileSync(join(root, REL_STORE), 'utf8'), store);
   assert.ok(!existsSync(join(root, 'docs/projects/pipey.md')), 'and no orphan skeleton either');
@@ -848,7 +850,7 @@ function runCli(root, args, input = '') {
 
 test('main registers, writes a Current state from stdin and lists, all exit 0', () => {
   const { root, git } = gitFixture();
-  const reg = runCli(root, ['register', 'demo', '--name', 'Demo', '--status', 'active']);
+  const reg = runCli(root, ['register', 'demo', '--name', 'Demo', '--status', 'active', '--theme', 'tooling']);
   assert.equal(reg.status, 0, reg.stderr);
   assert.match(reg.stdout, /RENDERED/);
 
@@ -886,7 +888,7 @@ test('main exits 2 on an unknown verb and on a missing argument, 1 on a real fai
   // behaviour it guards against, blocking forever on a terminal, needs a tty to observe.
   assert.equal(runCli(root, ['current']).status, 2, 'no slug');
 
-  runCli(root, ['register', 'demo']);
+  runCli(root, ['register', 'demo', '--theme', 'tooling']);
   writeFileSync(join(root, 'docs/projects/demo.md'),
     `# Demo\n${CS_START}\na\n${CS_START}\nb\n${CS_END}\n`);
   const bad = runCli(root, ['current', 'demo'], 'new body\n');
@@ -1318,7 +1320,7 @@ test('a status body opening with a stamp line cannot pass as the header stamp', 
   // anchored to a line start but not bounded to the header looks, and the page reported clean
   // with a header still saying `never`. That is the false pass the anchor was added to close.
   const { root } = gitFixture();
-  assert.equal(runCli(root, ['register', 'beacon', '--name', 'Beacon']).status, 0);
+  assert.equal(runCli(root, ['register', 'beacon', '--name', 'Beacon', '--theme', 'tooling']).status, 0);
   assert.equal(runCli(root, ['current', 'beacon'],
     '*last verified 2026-08-03 after a full read*\nSweep is green.\n').status, 0);
 
@@ -1385,7 +1387,7 @@ test('an INDEX.md with no data rows is not mistaken for an unmigrated table', ()
   // only stop a new project from registering its first row.
   const { root } = gitFixture();
   writeFileSync(join(root, REL_INDEX), renderIndex({ version: 1, projects: [] }), 'utf8');
-  const r = runCli(root, ['register', 'demo']);
+  const r = runCli(root, ['register', 'demo', '--theme', 'tooling']);
   assert.equal(r.status, 0, r.stderr);
 });
 
@@ -1425,7 +1427,7 @@ mtest('sync does not report the code a day ahead of a status written the same lo
     const day = localDate(new Date());
     assert.notEqual(day, new Date().toISOString().slice(0, 10), 'the chosen zone has to diverge');
     const root = fixture();
-    cmdRegister(root, ['beacon', '--name', 'Beacon', '--repo', '.'], { commit: false });
+    cmdRegister(root, ['beacon', '--name', 'Beacon', '--repo', '.', '--theme', 'tooling'], { commit: false });
     cmdCurrent(root, ['beacon'], 'All current.', { commit: false });
     const out = cmdSync(root, [], { commitDateFor: () => day });
     assert.match(out, new RegExp(`^projects sync \\(${day}\\):`), 'the header is the local day');
@@ -1445,18 +1447,40 @@ test('a line break in a store field cannot forge a second numbered list row', ()
       status: 'active', where: [], page: null, lastTouched: '2026-07-29' },
     { slug: 'two', name: 'Two', status: 'active', where: [], page: null, lastTouched: '2026-07-28' },
   ] });
-  assert.equal(out.split('\n').filter(Boolean).length, 2, 'two projects, two rows');
+  assert.equal(out.split('\n').filter(Boolean).length, 3,
+    'two projects, two rows, and the one section heading they share');
   // U+2028, U+2029 and a lone CR are all line starts to /m, and the squash covers every one of
-  // them. Run on the unguarded fields too, so no field is left to a later reviewer.
+  // them. Run on the unguarded fields too, so no field is left to a later reviewer. `theme` is
+  // one of them: an unrecognised theme titles its own section with its raw value, so grouping
+  // gave the heading the same forging surface every row already had.
   const BREAKS = ['\n', '\r', '\u2028', '\u2029'];
   for (const sep of BREAKS) {
-    for (const field of ['name', 'slug', 'status']) {
-      const p = { slug: 'a', name: 'A', status: 'active', where: [], page: null,
+    for (const field of ['name', 'slug', 'status', 'theme']) {
+      const p = { slug: 'a', name: 'A', status: 'active', theme: 'work', where: [], page: null,
         lastTouched: '2026-07-29' };
       p[field] = `${p[field]}${sep}2. Ghost [ghost] (active): NO-PAGE forged`;
       const forged = renderList(fixture(), { version: 1, projects: [p] });
-      assert.equal(forged.split(/[\n\r\u2028\u2029]/).filter(Boolean).length, 1,
+      assert.equal(forged.split(/[\n\r\u2028\u2029]/).filter(Boolean).length, 2,
         `${field} forged a row with U+${sep.charCodeAt(0).toString(16)}`);
+      // The same forge through the WRITE path is REFUSED, not squashed. renderIndex's output is
+      // written to INDEX.md and committed, so a phantom row there survives every later re-render,
+      // where renderList's is terminal output the next command replaces. `slug` is excluded
+      // because renderIndex never renders it: only the catch message naming the row reads it.
+      if (field === 'slug') continue;
+      const store = { version: 1, projects: [p] };
+      const code = `U+${sep.charCodeAt(0).toString(16)}`;
+      // status is refused whatever the separator, by validateStatus rather than by this guard.
+      if (sep === '\n' || sep === '\r' || field === 'status') {
+        assert.throws(() => renderIndex(store), /pipe or line break|unknown status/,
+          `${field} was not refused on the write path with ${code}`);
+      } else {
+        // U+2028 and U+2029 are line starts to /m, which is why renderList has to squash them, but
+        // they are NOT breaks to parseIndex (`split('\n')`) or to a markdown table, so UNRENDERABLE
+        // deliberately does not list them. Asserted rather than assumed: forging an index row needs
+        // a pipe or a real break, and both of those are refused above.
+        assert.equal(parseIndex(renderIndex(store)).projects.length, 1,
+          `${field} forged an index row with ${code}`);
+      }
     }
   }
 });
@@ -1493,6 +1517,46 @@ test('a flag handed another flag as its value is refused, not taken as the value
   assert.ok(!existsSync(join(root, 'docs/projects/demo.md')), 'and no orphan page was left behind');
 });
 
+test('a flag with nothing after it is refused, not read as no flag at all', () => {
+  // flag() returned the fallback for a flag in final argv position, so `set alpha --theme` looked
+  // exactly like `set alpha` and set answered "nothing to set, pass at least one of ... --theme"
+  // at exit 1, naming the flag that had just been passed. The same typo on register exited 2, so
+  // one mistake had two exit codes and one misleading message. Guarded in flag(), so every flag on
+  // every verb answers the same way.
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--theme', 'work']);
+  for (const argv of [['set', 'alpha', '--theme'], ['set', 'alpha', '--name'],
+    ['set', 'alpha', '--where'], ['set', 'alpha', '--repo'], ['log', '-n'],
+    ['register', 'beta', '--theme']]) {
+    const r = runCli(root, argv);
+    assert.equal(r.status, 2, `${argv.join(' ')}: ${r.stderr}`);
+    assert.match(r.stderr, new RegExp(`${argv.at(-1)} was given no value`));
+    // A deliberate refusal, not a bug: no stack.
+    assert.doesNotMatch(r.stderr, /at .*projects\.mjs:/);
+  }
+  // The exit-1 answer still belongs to the request that really asks for nothing.
+  const empty = runCli(root, ['set', 'alpha']);
+  assert.equal(empty.status, 1);
+  assert.match(empty.stderr, /nothing to set/);
+});
+
+test('register with a valid --theme refuses a trailing --name or --status, and writes nothing', () => {
+  // Before the flag() guard, a flag in final position returned its fallback, so `register demo
+  // --theme work --name` silently defaulted the name to the slug and `--status` silently defaulted
+  // to active: both exited 0 with a row written. The guard changed the exit code, but the failure
+  // mode that actually matters is the row: pinned here so a future flag() refactor that restores
+  // defaulting breaks this test's store/page assertions, not just its exit-code one.
+  const { root } = gitFixture();
+  const noName = runCli(root, ['register', 'demo', '--theme', 'work', '--name']);
+  assert.equal(noName.status, 2, noName.stderr);
+  assert.match(noName.stderr, /--name was given no value/);
+  const noStatus = runCli(root, ['register', 'demo', '--theme', 'work', '--status']);
+  assert.equal(noStatus.status, 2, noStatus.stderr);
+  assert.match(noStatus.stderr, /--status was given no value/);
+  assert.ok(!existsSync(join(root, REL_STORE)), 'no row was ever written');
+  assert.ok(!existsSync(join(root, 'docs/projects/demo.md')), 'and no orphan page was left behind');
+});
+
 mtest('a store row that cannot render names its slug', () => {
   // Every mutating verb renders the whole index before writing anything, so one hand-edited row
   // refuses verbs that touch only healthy rows, while sync reports nothing about it. Neither throw
@@ -1517,21 +1581,23 @@ mtest('SKILL.md carries the page skeleton and the list row byte-exact', () => {
   // a model that has never seen this CLI, so a drifting fence is a false comment with a wider
   // blast radius than one in a source file.
   const root = fixture();
-  cmdRegister(root, ['demo', '--name', 'Demo Project'], { commit: false, date: '2026-08-04' });
+  cmdRegister(root, ['demo', '--name', 'Demo Project', '--theme', 'tooling'], { commit: false, date: '2026-08-04' });
   const skill = readFileSync(fileURLToPath(new URL('../skills/projects/SKILL.md', import.meta.url)), 'utf8')
     .replaceAll('\r\n', '\n');
   const skeleton = skill.match(/```markdown\n([\s\S]*?)```/)[1]
     .replace('# <Name>', '# Demo Project').replaceAll('YYYY-MM-DD', '2026-08-04');
   assert.equal(skeleton, readFileSync(join(root, 'docs/projects/demo.md'), 'utf8'));
-  assert.equal(skill.match(/```\n(1\.[^\n]*)\n```/)[1],
+  // The fence carries the section heading as well as the row, because a bare row is not what
+  // the CLI prints now that the list groups.
+  assert.equal(skill.match(/```\n([\s\S]*?\d+\.[^\n]*)\n```/)[1],
     renderList(root, readStore(root)).trimEnd());
 });
 
-import { cmdRename, cmdLog } from '../skills/projects/projects.mjs';
+import { cmdRename, cmdLog, builtins } from '../skills/projects/projects.mjs';
 
 test('rename moves the row and its page, and git records it as a rename', () => {
   const { root, git } = gitFixture();
-  runCli(root, ['register', 'ugly-derived-slug', '--name', 'Nice Project', '--status', 'active']);
+  runCli(root, ['register', 'ugly-derived-slug', '--name', 'Nice Project', '--status', 'active', '--theme', 'tooling']);
   const r = runCli(root, ['rename', 'ugly-derived-slug', 'nice']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /RENAMED/);
@@ -1554,8 +1620,8 @@ test('rename moves the row and its page, and git records it as a rename', () => 
 
 test('rename refuses a taken slug, an unknown one, and itself, and changes nothing', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active']);
-  runCli(root, ['register', 'beta', '--name', 'Beta', '--status', 'active']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
+  runCli(root, ['register', 'beta', '--name', 'Beta', '--status', 'active', '--theme', 'tooling']);
   const before = readFileSync(join(root, REL_STORE), 'utf8');
 
   // The exit codes split the way the rest of this CLI splits them. 2 is "what you named is not
@@ -1580,7 +1646,7 @@ test('rename refuses a taken slug, an unknown one, and itself, and changes nothi
 
 test('rename refuses to clobber an unrelated page already sitting at the new name', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
   // A page with no row pointing at it. sync calls this NO-ROW, and it is somebody's narrative.
   writeFileSync(join(root, 'docs/projects/gamma.md'), '# Gamma\n\nhand written, no row\n');
   const r = runCli(root, ['rename', 'alpha', 'gamma']);
@@ -1615,7 +1681,7 @@ test('rename does not bump lastTouched', () => {
 
 test('log reads history from git and follows a page across a rename', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
   runCli(root, ['current', 'alpha'], 'first state\n');
   runCli(root, ['rename', 'alpha', 'omega']);
 
@@ -1638,7 +1704,7 @@ test('log reads history from git and follows a page across a rename', () => {
 
 test('rename warns when a gtg entry still names the old slug as its parent', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
   mkdirSync(join(root, 'docs/handoffs'), { recursive: true });
   writeFileSync(join(root, 'docs/handoffs/_active.json'), JSON.stringify({ handoffs: [
     { slug: 'alpha', project: 'Alpha', parent: 'alpha' },
@@ -1662,7 +1728,7 @@ test('rename warns when a gtg entry still names the old slug as its parent', () 
 
 test('rename says nothing about gtg when there is no gtg store to read', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
   const r = runCli(root, ['rename', 'alpha', 'omega']);
   assert.equal(r.status, 0, r.stderr);
   assert.doesNotMatch(r.stdout, /gtg/, 'gtg not installed here is not a problem worth a word');
@@ -1685,7 +1751,7 @@ import { cmdSet } from '../skills/projects/projects.mjs';
 
 test('set changes where, repo and name, and clears repo with an empty string', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--where', 'old place']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--where', 'old place', '--theme', 'tooling']);
   assert.equal(readStore(root).projects[0].repo, undefined, 'register without --repo leaves it absent');
 
   const r = runCli(root, ['set', 'alpha', '--where', 'C:/dev/alpha', '--repo', 'C:/dev/alpha']);
@@ -1710,7 +1776,7 @@ test('set changes where, repo and name, and clears repo with an empty string', (
 
 test('set refuses an unknown project, an empty change, and an unrenderable value', () => {
   const { root } = gitFixture();
-  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active']);
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
   const before = readFileSync(join(root, REL_STORE), 'utf8');
 
   assert.equal(runCli(root, ['set', 'nope', '--repo', 'x']).status, 2, 'unknown project is a 2');
@@ -1751,4 +1817,187 @@ test('SKILL.md frontmatter carries no unquoted colon-space', () => {
     assert.ok(/^['"]/.test(m[2]) || !m[2].includes(': '), `${m[1]} holds ": " and is not quoted`);
   }
   assert.deepEqual(keys, ['name', 'description'], 'both keys are still there to check');
+});
+
+test('THEME_ORDER is the enum key order, and every theme has a label', () => {
+  assert.deepEqual(THEME_ORDER,
+    ['work', 'job-search', 'tooling', 'homelab', 'worldbuilding', 'personal']);
+  assert.equal(THEMES['job-search'], 'Job search');
+  assert.equal(THEME_ORDER.length, Object.keys(THEMES).length);
+});
+
+test('validateTheme returns a known theme and refuses an unknown one', () => {
+  assert.equal(validateTheme('homelab'), 'homelab');
+  assert.throws(() => validateTheme('wrok'), /unknown theme "wrok"/);
+  // No `projects: ` prefix, so DELIBERATE keeps recognising it as a deliberate refusal
+  // rather than a bug in this file, exactly as validateStatus is treated.
+  assert.throws(() => validateTheme('wrok'), (e) => !e.message.startsWith('projects: '));
+});
+
+const THEMED = { version: 1, projects: [
+  { slug: 'beacon', name: 'Beacon', status: 'active', theme: 'tooling',
+    where: ['C:/dev/beacon'], page: 'beacon.md', lastTouched: '2026-07-20' },
+  { slug: 'atlas', name: 'Atlas', status: 'paused', theme: 'work',
+    where: [], page: 'atlas.md', lastTouched: '2026-07-18' },
+] };
+
+test('renderIndex emits one section per non-empty theme in THEME_ORDER', () => {
+  const out = renderIndex(THEMED);
+  assert.match(out, /## Work/);
+  assert.match(out, /## Tooling/);
+  // Work is ahead of Tooling in THEME_ORDER, whatever the rows' own sort order says.
+  assert.ok(out.indexOf('## Work') < out.indexOf('## Tooling'));
+  // A theme with no rows renders no heading and no empty table.
+  assert.doesNotMatch(out, /## Homelab/);
+  // Each section carries its own header and separator.
+  assert.equal(out.split('| Project | Status | Where | Last touched |').length - 1, 2);
+});
+
+test('a themed index round-trips byte for byte through parseIndex', () => {
+  assert.equal(renderIndex(parseIndex(renderIndex(THEMED))), renderIndex(THEMED));
+  assert.deepEqual(parseIndex(renderIndex(THEMED)).projects.map((p) => p.theme),
+    ['work', 'tooling']);
+});
+
+test('an unrecognised theme names itself, and a themeless row lands in Unthemed last', () => {
+  const odd = { version: 1, projects: [
+    { slug: 'a', name: 'A', status: 'active', theme: 'wrok', where: [], page: 'a.md', lastTouched: '2026-08-01' },
+    { slug: 'b', name: 'B', status: 'active', where: [], page: 'b.md', lastTouched: '2026-08-01' },
+    { slug: 'c', name: 'C', status: 'active', theme: 'work', where: [], page: 'c.md', lastTouched: '2026-08-01' },
+  ] };
+  const out = renderIndex(odd);
+  assert.match(out, /## wrok/);
+  assert.match(out, /## Unthemed/);
+  assert.ok(out.indexOf('## Work') < out.indexOf('## wrok'));
+  assert.ok(out.indexOf('## wrok') < out.indexOf('## Unthemed'));
+  // A true inverse for all three cases, so nothing is silently relabelled on re-render.
+  assert.equal(renderIndex(parseIndex(out)), out);
+});
+
+test('a flat index with no headings still parses to the right row count', () => {
+  // This is the pre-change INDEX.md shape. indexRowCount reads it through parseIndex, and a
+  // wrong count here makes readStore refuse every verb.
+  const flat = [
+    '| Project | Status | Where | Last touched |',
+    '|---|---|---|---|',
+    '| [Beacon](beacon.md) | 🟢 active | C:/dev/beacon | 2026-07-20 |',
+    '| [Atlas](atlas.md) | 🟡 paused |  | 2026-07-18 |',
+  ].join('\n');
+  const parsed = parseIndex(flat);
+  assert.equal(parsed.projects.length, 2);
+  assert.equal(parsed.projects[0].theme, undefined);
+});
+
+// ── register requires a theme, set can change it ─────────────────────────────────────
+
+mtest('register refuses with no --theme and writes no page when it refuses', () => {
+  const root = fixture();
+  assert.throws(() => cmdRegister(root, ['demo', '--name', 'Demo'], { commit: false }),
+    /--theme is required, expected one of work, job-search/);
+  assert.equal(existsSync(join(root, 'docs/projects/demo.md')), false);
+});
+
+mtest('register stores a valid theme and refuses an unknown one before writing', () => {
+  const root = fixture();
+  cmdRegister(root, ['demo', '--name', 'Demo', '--theme', 'homelab'],
+    { commit: false, date: '2026-08-11' });
+  assert.equal(findProject(readStore(root), 'demo').theme, 'homelab');
+  assert.throws(() => cmdRegister(root, ['other', '--theme', 'wrok'], { commit: false }),
+    /unknown theme "wrok"/);
+  assert.equal(existsSync(join(root, 'docs/projects/other.md')), false);
+});
+
+mtest('set --theme moves a row between sections and does not bump lastTouched', () => {
+  const root = seeded();
+  cmdSet(root, ['beacon', '--theme', 'worldbuilding'], { commit: false });
+  const p = findProject(readStore(root), 'beacon');
+  assert.equal(p.theme, 'worldbuilding');
+  assert.equal(p.lastTouched, '2026-07-20');
+  assert.match(readFileSync(join(root, REL_INDEX), 'utf8'), /## Worldbuilding/);
+});
+
+test('the CLI exits 2 on an unknown theme, not 1', () => {
+  // 2 means "your input was wrong", 1 means "something failed". An agent reads the difference.
+  // This is the end-to-end half of validateTheme's unit test: it proves DELIBERATE recognises
+  // the message and the exit-code branch in main maps it.
+  const { root } = gitFixture();
+  const bad = runCli(root, ['register', 'demo', '--name', 'Demo', '--theme', 'wrok']);
+  assert.equal(bad.status, 2, bad.stderr);
+  assert.match(bad.stderr, /unknown theme "wrok"/);
+  // A real bug prints a stack. A deliberate refusal must not.
+  assert.doesNotMatch(bad.stderr, /at .*projects\.mjs:/);
+  // Missing the flag entirely is the SAME class of mistake as misspelling its value, so it exits
+  // the same way. Otherwise one user error has two exit codes decided by argv shape: `--theme`
+  // followed by another flag throws `was given` and exits 2, while omitting it exited 1.
+  const missing = runCli(root, ['register', 'demo', '--name', 'Demo']);
+  assert.equal(missing.status, 2, missing.stderr);
+  assert.match(missing.stderr, /--theme is required/);
+  assert.doesNotMatch(missing.stderr, /at .*projects\.mjs:/);
+});
+
+test('--theme "" is refused on both verbs, unlike --repo ""', () => {
+  // Two places promise this: projects.mjs's note above `if (theme !== null)` and SKILL.md's set
+  // row. '' does NOT clear a theme, because every row has one and a cleared row renders into a
+  // section it does not belong to. Pinned so the tempting "regularise --theme like --repo"
+  // refactor has to break a test rather than a promise. '' reaches validateTheme and exits 2.
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--theme', 'work']);
+  assert.equal(runCli(root, ['set', 'alpha', '--theme', '']).status, 2);
+  assert.equal(runCli(root, ['register', 'beta', '--name', 'Beta', '--theme', '']).status, 2);
+  assert.equal(findProject(readStore(root), 'alpha').theme, 'work', 'and the row is unchanged');
+});
+
+test('no theme key shadows a verb', () => {
+  // main routes `Object.hasOwn(THEMES, cmd)` BEFORE the builtins lookup, so a seventh theme keyed
+  // `set`, `log`, `sync`, `render`, `list` or `help` would silently turn that verb into a filter.
+  // No collision today. A test rather than a comment because it cannot be skimmed past and it
+  // fires at the one moment it matters, when the seventh theme is added.
+  for (const t of THEME_ORDER) {
+    assert.ok(!(t in builtins), `theme "${t}" would shadow the verb of the same name`);
+  }
+});
+
+mtest('set refuses an unknown theme without touching the row', () => {
+  const root = seeded();
+  cmdSet(root, ['beacon', '--theme', 'tooling'], { commit: false });
+  assert.throws(() => cmdSet(root, ['beacon', '--name', 'Renamed', '--theme', 'wrok'],
+    { commit: false }), /unknown theme "wrok"/);
+  const p = findProject(readStore(root), 'beacon');
+  assert.equal(p.name, 'Beacon', 'the name must not have been assigned before the throw');
+  assert.equal(p.theme, 'tooling');
+});
+
+test('the bare list groups by theme with continuous numbering', () => {
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--theme', 'work']);
+  runCli(root, ['register', 'beta', '--name', 'Beta', '--theme', 'homelab']);
+  const out = runCli(root, []);
+  assert.equal(out.status, 0, out.stderr);
+  assert.match(out.stdout, /Work:/);
+  assert.match(out.stdout, /Homelab:/);
+  assert.match(out.stdout, /1\. Alpha \[alpha\] \(active\)/);
+  // Continuous across sections, because the number is only a reading aid and every mutation
+  // takes the slug from the square brackets.
+  assert.match(out.stdout, /2\. Beta \[beta\] \(active\)/);
+});
+
+test('a theme as the first argument filters the list', () => {
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--theme', 'work']);
+  runCli(root, ['register', 'beta', '--name', 'Beta', '--theme', 'homelab']);
+  const work = runCli(root, ['work']);
+  assert.equal(work.status, 0, work.stderr);
+  assert.match(work.stdout, /Alpha/);
+  assert.doesNotMatch(work.stdout, /Beta/);
+});
+
+test('a theme with no rows says so, and a non-theme non-verb still exits 2', () => {
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--theme', 'work']);
+  const empty = runCli(root, ['personal']);
+  assert.equal(empty.status, 0, empty.stderr);
+  assert.match(empty.stdout, /No projects under personal\./);
+  const bogus = runCli(root, ['wrok']);
+  assert.equal(bogus.status, 2);
+  assert.match(bogus.stderr, /unknown command "wrok"/);
 });

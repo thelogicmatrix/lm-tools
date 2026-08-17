@@ -42,6 +42,7 @@ Requires Node.js ≥ 18 and git on PATH.
 | "gtg" (or any departure phrase) | Handoff written to `docs/handoffs/`, entry pinned, both committed |
 | "let's continue <project>" | Handoff found, read, resumed from its Next Action; entry consumed |
 | "gtg resume <n\|slug>" | Consume a handoff on pick-up — **not** a ship |
+| "gtg <project>" as the first thing you say | Resumes that project. At session start a project name outranks an *extension* verb; if both exist (a project called `issues` **and** your own `gtg issues` command) you get a numbered pick list instead of a guess. Mid-session the verb wins, and core verbs (`list`, `report`, `stats`, …) are always commands |
 | "gtg stats" | A terminal snapshot: streak, shipped count, deepest project, effort, velocity |
 | "gtg report" | Writes `docs/handoffs/_report.json`, then `/reporter` builds an HTML habit-grid report from it |
 | "gtg list" | Active handoffs (idle >7d auto-shelf to the backlog) |
@@ -50,6 +51,7 @@ Requires Node.js ≥ 18 and git on PATH.
 | "gtg remove <n>" / undo via "gtg undo" | Prune; git history is the undo stack, scoped to your own session |
 | "gtg supersede <n\|slug> [--into <n\|slug>]" | Rolled up into another entry, or filed in error — neither a ship nor an abandonment |
 | "gtg rename <n\|slug> <new>" | Change a slug, re-pointing any sub-projects that named it as their parent. Given a slug no entry carries, it repairs a stale `parent` reference instead, which is what a rename on the portfolio side leaves behind |
+| "gtg unparent <n\|slug>" | Clear one entry's `parent`, so it lists as standalone. `rename` re-**points** a parent, this **removes** one — re-pointing a dangling parent at the entry's own slug would only make it a self-parent |
 | "gtg log [n\|slug]" | What happened, read from git rather than a ledger |
 
 Handoffs live in *your repo* (`<repo>/docs/handoffs/`), committed to *your* history.
@@ -66,7 +68,7 @@ gtg has three tiers. You only ever touch the third.
 | Tier | Lives in | Active |
 |---|---|---|
 | **Core** | the plugin's `gtg.mjs` + `SKILL.md` | always |
-| **Bundled** | the plugin's `extensions/` | on by default (`gtg stats`, reattachment hooks) |
+| **Bundled** | the plugin's `extensions/` | on by default (`gtg issues`, `gtg learn`, `gtg stats`, `gtg report`, reattachment hooks) |
 | **Yours** | `<storage-root>/.gtg/` | when you add a file |
 
 Two extension points:
@@ -83,7 +85,7 @@ export default async ({ root, args, readStore, writeStore, commit, countHandoffF
 };
 ```
 
-`ctx` = `{ root, args, readStore(path), writeStore(path, data), commit(paths, message), countHandoffFiles(slug) }`.
+`ctx` = `{ root, args, readStore(path), writeStore(path, data), commit(paths, message), countHandoffFiles(slug), ownEntries() }`.
 `countHandoffFiles(slug)` returns how many `docs/handoffs/*.md` files exist for that slug — the
 same true-count fallback the CLI itself uses when an entry's `sessions` field is absent (legacy
 entries), so an extension doesn't have to re-implement the file-count logic to avoid the same
@@ -94,7 +96,49 @@ the skill follows the instruction on that line instead. That lets a custom comma
 back to a skill procedure rather than just printing, e.g.
 `console.log('GTG-DIRECTIVE: resume my-project — read references/resume.md and follow it.')`
 makes `gtg <yourverb> <arg>` resolve an argument to a slug and then run the real Resume Procedure,
-consume step and hooks included, instead of reimplementing it.
+consume step and hooks included, instead of reimplementing it. Both bundled extensions use it:
+`gtg issues <name>` and `gtg learn <topic>` resolve their argument and then hand off to the
+skill's Resume Procedure.
+
+`ownEntries()` returns `{ active, shelved }`, this command's own handoff entries, read from
+`_active.json` and `_backlog.json` and filtered to the `parent` namespace it owns. Both shelves
+every time, because `gtg list` auto-shelves anything idle over 7 days and an active-only read
+would report a live package as missing. A command that owns no namespace gets two empty arrays.
+
+**Extensions vs mods.** An *extension* owns entries in the handoff store and renders its own
+separated list, so its entries are excluded from the bare `gtg list` and `gtg backlog` (and from
+their counts) to avoid listing the same work twice. `issues` and `learn` are extensions, owning the
+`issues` and `learning` parent namespaces. A *mod* owns no entries and only adds a view, so it
+sees the whole store: `stats` and `report` are mods and their counts stay whole-store totals.
+Adding a third extension is one line in the `EXTENSIONS` map in `gtg.mjs`, and that is the
+whole of it: an extension is a registered `parent` namespace and nothing more. **It must not
+add a field to the entry.** Membership is read off the existing `parent` field precisely
+because `gtg handoff` rebuilds each entry as a fresh literal and drops fields it does not
+know, so a marker field of your own would survive exactly until the next wrap and then go
+missing with no error.
+
+**Seed documents live in `skills/gtg/templates/`.** An extension whose data lives in a folder
+of the user's own needs that folder to explain itself on a fresh install, so the plugin ships
+the starting document rather than pointing at a file that may not exist. `gtg:issues` copies
+`templates/issues-README.md` to `docs/issues/README.md` the first time it files into a folder
+without one, and never overwrites an existing one, because that file is the folder's own
+conventions and whoever wrote it outranks the template.
+
+**Decluttering is not lookup.** Only the *bare* listing hides extension entries. `gtg list
+<name-or-slug>` is you naming what you want, so it searches every entry and will surface an issue
+package or a learning sprint. A queried extension entry is labelled with its slug instead of a row
+number, because row numbers index the bare listing and that is the order `gtg back <n>` resolves
+against. Use the slug, which every verb accepts, and which is what the bring-back hints print for
+these entries for the same reason.
+
+A targeted query also reaches a **shelved** extension entry, printed as its own `shelved:` line
+rather than as a numbered row, since it is not active work, and printed whether or not the same
+query also matched active work. That case is not an edge: an issue
+package sits idle between fix sessions, so the 7-day auto-shelf catches it routinely, and without
+this the exit procedure's reuse probe would go blind again the moment a package was parked. This is
+deliberately narrower than the general rule that `gtg list` never shows backlog items: a shelved
+*normal* project is still invisible to a query, because widening that is a behaviour change rather
+than a fix.
 
 **2. Procedure hooks** — the exit and resume flows load markdown hooks if present, so you
 can add project-specific steps without forking the skill:
@@ -141,7 +185,9 @@ nothing is inferred by a model. Top-level keys:
 | `fun` | best week, longest-lived shipped project, most-resumed, velocity label |
 
 `gtg stats` prints a few of these as terminal lines. Both are read-only — unlike
-`gtg list`, they never touch the store.
+`gtg list`, they never touch the store. Both are mods, so their `counts.active`
+covers every entry including the extension namespaces, which is why it can read
+higher than the number of rows `gtg list` shows.
 
 ### Entry fields
 

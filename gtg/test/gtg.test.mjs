@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// gtg self-check — assert-based, no framework. Runs every command against
+// gtg self-check - assert-based, no framework. Runs every command against
 // throwaway temp git repos. Non-zero exit on any failure.
 import { execSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
@@ -33,7 +33,7 @@ function tempRepoNoIdentity() {
 // temp dir can't resolve to an enclosing repo (e.g. a git-tracked home dir).
 // opts.session pins the session id undo scopes itself to: a string names one, null
 // strips it entirely (the no-identity case). Defaulted rather than inherited so a run
-// inside a Claude session and a run in CI behave identically — a real
+// inside a Claude session and a run in CI behave identically - a real
 // CLAUDE_CODE_SESSION_ID leaking in would make undo pass locally and fail in CI.
 function gtg(cwd, args, opts = {}) {
   const env = { ...process.env, ...(opts.env || {}) };
@@ -119,7 +119,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const r3 = gtg(repo, HANDOFF_ARGS('x', 'X'), { input: '' });
   assert.equal(r3.status, 2);
   assert.match(r3.stderr, /empty body/);
-  // slug must not traverse paths or inject shell — rejected before any write
+  // slug must not traverse paths or inject shell - rejected before any write
   for (const bad of ['../evil', 'a/b', 'a;rm -rf', 'a b']) {
     const rb = gtg(repo, HANDOFF_ARGS(bad, 'X'), { input: BODY });
     assert.equal(rb.status, 2, `bad slug '${bad}' should exit 2`);
@@ -168,7 +168,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 
 // --- 2c. list numbering matches resolveEntry's full-list order (not filtered subset) ---
 // resolveEntry (used by remove/back/active) resolves a numeric "<n>" against the
-// FULL sorted active list — so `list <filter>` must number entries by their
+// FULL sorted active list - so `list <filter>` must number entries by their
 // position in that full list, not by their index within the filtered subset.
 {
   const repo = tempRepo();
@@ -177,7 +177,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   gtg(repo, HANDOFF_ARGS('charlie', 'Charlie'), { input: BODY });
   const r = gtg(repo, ['list', 'bravo']);
   assert.equal(r.status, 0, r.stderr);
-  // Full sorted order is Alpha, Bravo, Charlie — Bravo is position 2, even though
+  // Full sorted order is Alpha, Bravo, Charlie - Bravo is position 2, even though
   // it's the only entry shown here. Numbering by filtered-subset index would wrongly show "1.".
   assert.match(r.stdout, /^\s*2\. Bravo/m, 'list <filter> must number by full sorted-list position, not filtered index');
   console.log('ok 2c - list numbering matches resolve order');
@@ -292,7 +292,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 {
   const repo = tempRepo();
   // back: shelve Zebra first (backlog = [Zebra]), then shelve Apple.
-  // Sorted backlog = [Apple, Zebra] — Apple's hint must be 1, not length (2).
+  // Sorted backlog = [Apple, Zebra] - Apple's hint must be 1, not length (2).
   gtg(repo, HANDOFF_ARGS('zebra', 'Zebra'), { input: BODY });
   gtg(repo, ['back', 'zebra']);
   gtg(repo, HANDOFF_ARGS('apple', 'Apple'), { input: BODY });
@@ -304,7 +304,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 {
   const repo = tempRepo();
   // active: Zebra stays active, Apple parked straight to backlog, then activated.
-  // Sorted active after move = [Apple, Zebra] — Apple's hint must be 1, not length (2).
+  // Sorted active after move = [Apple, Zebra] - Apple's hint must be 1, not length (2).
   gtg(repo, HANDOFF_ARGS('zebra', 'Zebra'), { input: BODY });
   gtg(repo, ['backlog', '--project', 'Apple', '--slug', 'apple',
     '--eta', '~2h', '--next', 'do the next thing'], { input: BODY });
@@ -370,7 +370,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 
 // --- Finding T5-1: unknown <cmd> must not traverse paths outside .gtg/commands ---
 // `gtg ../evil` builds join(ROOT, '.gtg', 'commands', '../evil.mjs') which path.join
-// normalizes to ROOT/.gtg/evil.mjs — outside the commands dir. Unvalidated, this would
+// normalizes to ROOT/.gtg/evil.mjs - outside the commands dir. Unvalidated, this would
 // import and execute that file. cmd must be constrained the same way --slug is.
 {
   const repo = tempRepo();
@@ -417,7 +417,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   // "sessions: N total · deepest: X (Y)" line is gone. Assert the counts line
   // plus the new session-depth line ("N sessions · deepest: X (Y)"), not the
   // exact total (perProject can split a row when --slug diverges from
-  // slugify(project) — a pre-existing Tasks 1-5 quirk, out of scope here).
+  // slugify(project) - a pre-existing Tasks 1-5 quirk, out of scope here).
   const sessLine = r.stdout.match(/(\d+) sessions · deepest: (.+?) \((\d+)\)/);
   assert.ok(sessLine, `session-depth line missing/malformed in stats output: ${r.stdout}`);
   assert.equal(sessLine[2], 'Project A');
@@ -469,7 +469,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(active(repo).handoffs.length, 0, 'resume did not remove the entry');
 
   const subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
-  assert.match(subject, /^gtg resume: Project R — handoff consumed$/,
+  assert.match(subject, /^gtg resume: Project R - handoff consumed$/,
     `resume must not reuse the prune subject, got: ${subject}`);
 
   // falls back to the backlog when the slug is not active
@@ -479,7 +479,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   r = gtg(repo, ['resume', 'idea-z']);
   assert.equal(r.status, 0, `backlog resume failed: ${r.stderr}`);
   const blSubject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
-  assert.match(blSubject, /^gtg resume: Idea Z — backlog handoff consumed$/);
+  assert.match(blSubject, /^gtg resume: Idea Z - backlog handoff consumed$/);
 
   // no match exits 2
   r = gtg(repo, ['resume', 'nope']);
@@ -504,7 +504,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.ok(!/^Phase:/m.test(doc), 'handoff doc must not carry a Phase: line');
 
   let subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
-  assert.match(subject, /^handoff: Project S — session 1$/, `got: ${subject}`);
+  assert.match(subject, /^handoff: Project S - session 1$/, `got: ${subject}`);
 
   // second handoff for the same slug: sessions increments, created is carried
   r = gtg(repo, HANDOFF_ARGS('proj-s', 'Project S'), { input: BODY });
@@ -513,7 +513,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(e.sessions, 2, 'second handoff should be session 2');
   assert.equal(e.created, firstCreated, 'created must not move on later handoffs');
   subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
-  assert.match(subject, /^handoff: Project S — session 2$/, `got: ${subject}`);
+  assert.match(subject, /^handoff: Project S - session 2$/, `got: ${subject}`);
 
   // --phase is no longer required
   r = gtg(repo, ['handoff', '--project', 'Project T', '--slug', 'proj-t',
@@ -537,7 +537,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const e = active(repo).handoffs[0];
   // minor fix: firstHandoffDate() now carries the same local-offset suffix
   // nowIso() uses (a bare vs aware datetime otherwise breaks Python fromisoformat
-  // comparisons) — assert via regex so the test isn't tied to the CI box's own tz.
+  // comparisons) - assert via regex so the test isn't tied to the CI box's own tz.
   assert.match(e.created, /^2026-01-05T00:00:00[+-]\d{2}:\d{2}$/,
     'created must backfill to the EARLIEST pre-existing handoff file, not today, with a local-offset suffix');
   assert.equal(e.sessions, 3, 'sessions must count the 2 pre-existing files plus this one');
@@ -611,14 +611,14 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   e = active(repo).handoffs.find((x) => x.slug === 'widget-stats-page');
   assert.equal(e.parent, 'widget', 'widget-* should infer the widget family');
 
-  // fallback: two pages qualify ('widget' and 'widget-ads') — longest wins,
+  // fallback: two pages qualify ('widget' and 'widget-ads') - longest wins,
   // not whichever the shorter page happened to be listed first in INDEX.md
   r = gtg(repo, HANDOFF_ARGS('widget-ads-report', 'Widget Ads Report'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
   e = active(repo).handoffs.find((x) => x.slug === 'widget-ads-report');
   assert.equal(e.parent, 'widget-ads', 'longest matching page slug must win the tie-break, not the first one found');
 
-  // fallback: exact match — a project that IS the family
+  // fallback: exact match - a project that IS the family
   r = gtg(repo, HANDOFF_ARGS('bench-and-bar', 'Bench & Bar'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
   e = active(repo).handoffs.find((x) => x.slug === 'bench-and-bar');
@@ -662,7 +662,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.ok(e.duration_min >= 89 && e.duration_min <= 92,
     `expected ~90 minutes, got: ${e.duration_min}`);
 
-  // concurrency isolation: a stamp keyed to a DIFFERENT cwd must be ignored —
+  // concurrency isolation: a stamp keyed to a DIFFERENT cwd must be ignored -
   // this session's clock is absent, not another session's.
   const other = tempRepo();
   mkdirSync(join(other, 'docs/handoffs'), { recursive: true });
@@ -711,14 +711,14 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(r.status, 0, r.stderr);
   r = gtg(repo, [...HANDOFF_ARGS('fam-two', 'Fam Two'), '--parent', 'fam'], { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  // two standalone projects sharing one worktree AND branch — a collision
+  // two standalone projects sharing one worktree AND branch - a collision
   r = gtg(repo, [...HANDOFF_ARGS('solo-a', 'Solo A'), '--worktree', wt], { input: BODY });
   assert.equal(r.status, 0, r.stderr);
   r = gtg(repo, [...HANDOFF_ARGS('solo-b', 'Solo B'), '--worktree', wt], { input: BODY });
   assert.equal(r.status, 0, r.stderr);
   // a standalone project sorting BEFORE the family alphabetically. Numbering
-  // follows DISPLAY order (family group first, then standalone) — NOT full-sorted
-  // order — so AAA First, though alphabetically first, numbers AFTER the two
+  // follows DISPLAY order (family group first, then standalone) - NOT full-sorted
+  // order - so AAA First, though alphabetically first, numbers AFTER the two
   // family members. displayOrder = [Fam One, Fam Two, AAA First, Solo A, Solo B].
   r = gtg(repo, HANDOFF_ARGS('aaa-first', 'AAA First'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
@@ -729,7 +729,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 
   assert.match(out, /▸ fam/, 'family header missing');
   assert.match(out, /▸ standalone/, 'standalone group missing');
-  // assert on the warning LINE, not just the project name — the name also
+  // assert on the warning LINE, not just the project name - the name also
   // appears in the listing above, which would pass a weaker match vacuously.
   const warnLine = out.split('\n').find((l) => /projects share/.test(l) && /Solo A/.test(l));
   assert.ok(warnLine, `no collision warning naming Solo A; got:\n${out}`);
@@ -758,7 +758,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 }
 
 // --- 15. Finding C1: undo anchors on whichever store the last commit touched,
-// not _active.json alone — a backlog-only mutation (park a new idea) undoes
+// not _active.json alone - a backlog-only mutation (park a new idea) undoes
 // itself, not an unrelated older active-list commit ---
 {
   const repo = tempRepo();
@@ -770,7 +770,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const ru = gtg(repo, ['undo']);
   assert.equal(ru.status, 0, ru.stderr);
   // Match on WHICH commit got undone (Idea X's park, not Project B's unrelated
-  // handoff) rather than the exact subject wording — that wording is Finding I4's
+  // handoff) rather than the exact subject wording - that wording is Finding I4's
   // concern, this test's concern is purely the anchor-commit selection (C1).
   assert.match(ru.stdout, /Undone:.*Idea X/,
     `undo must target the backlog-only park commit, not an unrelated active-list commit, got: ${ru.stdout}`);
@@ -807,7 +807,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 }
 
 // --- 16. Finding C1: undoing the very first-ever handoff removes _active.json
-// entirely (no last^ to restore) rather than exiting 2 — the intended behaviour
+// entirely (no last^ to restore) rather than exiting 2 - the intended behaviour
 // change called out in the finding ---
 {
   const repo = tempRepo();
@@ -868,7 +868,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 18 - Finding I2: list() computes true session count for legacy entries');
 }
 
-// --- 19. Finding I3: sessions is monotonic — Math.max(disk count, prior + 1)
+// --- 19. Finding I3: sessions is monotonic - Math.max(disk count, prior + 1)
 // so deleted handoff files (or a same-minute filename collision) never make the
 // next handoff report a LOWER session number than one already recorded ---
 {
@@ -898,13 +898,13 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 
 // --- 20. Finding I4 (part 1): parking a NEW idea gets an unambiguous commit
 // subject ('gtg backlog: new ...'), distinct from `back` shelving an active
-// entry ('gtg backlog: park ...', unchanged — historical commits use it) ---
+// entry ('gtg backlog: park ...', unchanged - historical commits use it) ---
 {
   const repo = tempRepo();
   const rp = gtg(repo, ['backlog', '--project', 'Fresh Idea', '--slug', 'fresh-idea', '--next', 'TBD'], { input: BODY });
   assert.equal(rp.status, 0, rp.stderr);
   let subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
-  assert.match(subject, /^gtg backlog: new Fresh Idea — session 1$/, `got: ${subject}`);
+  assert.match(subject, /^gtg backlog: new Fresh Idea - session 1$/, `got: ${subject}`);
 
   gtg(repo, HANDOFF_ARGS('proj-shelve', 'Project Shelve'), { input: BODY });
   const rb = gtg(repo, ['back', 'proj-shelve']);
@@ -967,7 +967,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 }
 
 // --- 23b. minor: entries with worktree 'repo root' (or legacy-undefined) must
-// NEVER show a dirty flag, even when the hub itself is dirty — that count
+// NEVER show a dirty flag, even when the hub itself is dirty - that count
 // belongs to the hub, not to any one project (misattribution fix) ---
 {
   const repo = tempRepo();
@@ -981,7 +981,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 23b - minor: repo-root entries never misattributed with hub dirty count');
 }
 
-// --- 24. minor: `list()`'s resolveDir duplication is gone — both the dirty-map
+// --- 24. minor: `list()`'s resolveDir duplication is gone - both the dirty-map
 // build and per-entry render agree on where a project's worktree resolves,
 // proven end-to-end via the SAME dirty flag appearing for the entry that owns it ---
 {
@@ -1030,6 +1030,29 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.deepEqual(H.classify('handoff: Widget — parts catalog — session 2'),
     { type: 'handoff', project: 'Widget — parts catalog', sessions: 2 });
 
+  // Hyphen twins. Every em-dash assertion in this case is a backward-compatibility
+  // guard over commit subjects already in git history, so none of them may be swept.
+  // These mirror them in the hyphen format gtg has written since 2026-08-05.
+  assert.deepEqual(H.classify('handoff: Project A - session 3'),
+    { type: 'handoff', project: 'Project A', sessions: 3 });
+  assert.deepEqual(H.classify('handoff: Legacy Proj - executing'),
+    { type: 'handoff', project: 'Legacy Proj', sessions: undefined });
+  // the anchored session tail saves a project name that contains the separator
+  assert.deepEqual(H.classify('handoff: Widget - parts catalog - session 2'),
+    { type: 'handoff', project: 'Widget - parts catalog', sessions: 2 });
+  // The legacy fallback has no anchor, so it must bind to the LAST separator.
+  // Widening only the separator of the old negated-class pattern, and leaving the
+  // negated class itself on the em dash, passes every other line in this case and
+  // fails exactly here: it would strip from the FIRST separator and yield 'Widget'.
+  assert.deepEqual(H.classify('handoff: Widget - parts catalog - executing'),
+    { type: 'handoff', project: 'Widget - parts catalog', sessions: undefined });
+  // a hyphen with no spaces around it is part of the name, not a separator
+  assert.deepEqual(H.classify('handoff: gtg-extensions - session 4'),
+    { type: 'handoff', project: 'gtg-extensions', sessions: 4 });
+  assert.equal(H.classify('gtg backlog: new Idea Z - session 1').type, 'park');
+  assert.equal(H.classify('gtg resume: Picked Up - handoff consumed').type, 'resume');
+  assert.equal(H.classify('gtg resume: Picked Up - backlog handoff consumed').type, 'resume');
+
   // the other verbs
   assert.equal(H.classify('gtg backlog: new Idea Z — session 1').type, 'park');
   assert.equal(H.classify('gtg backlog: park Shelf Me').type, 'shelve');
@@ -1076,7 +1099,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   execSync('git add -A', { cwd: repo });
   execSync('git commit -q -m "handoff: Alpha — session 2"', { cwd: repo });
   // a real prune touches _active.json under docs/handoffs/ (unlike --allow-empty,
-  // which the readEvents pathspec would filter out — pathspec follows real usage).
+  // which the readEvents pathspec would filter out - pathspec follows real usage).
   writeFileSync(join(repo, 'docs/handoffs/_active.json'), '{"handoffs":[]}');
   execSync('git add -A', { cwd: repo });
   execSync('git commit -q -m "gtg prune: remove Alpha - confirmed done"', { cwd: repo });
@@ -1092,7 +1115,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.ok(sessions.every((s) => s.slug === 'alpha'));
 
   // a non-git dir degrades, never throws. GIT_CEILING_DIRECTORIES pins git's
-  // upward search at tmpdir — readEvents() is called in-process here (unlike the
+  // upward search at tmpdir - readEvents() is called in-process here (unlike the
   // gtg() CLI helper above), so it inherits process.env directly; without the
   // ceiling, git would walk up and resolve the enclosing dev-machine repo.
   const bare = mkdtempSync(join(tmpdir(), 'gtg-nogit-'));
@@ -1112,7 +1135,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 // --- 28. readEvents walk-up guard: a subdir of a real repo that is NOT itself
 // a repo must NOT inherit the enclosing repo's history as its own. Without the
 // guard, `git -C <subdir> log` walks up and returns the OUTER repo's commits
-// with available:true — a wrong answer presented as good data.
+// with available:true - a wrong answer presented as good data.
 {
   const H = await import('../skills/gtg/extensions/lib/history.mjs');
   const outer = tempRepo();
@@ -1309,7 +1332,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 
   // walk-up guard: a non-repo subdir nested in an outer repo that HAS committed
   // durations (tracked at a path that lines up with cwd-relative pathspec
-  // resolution — git's pathspec is relative to cwd, so the nested file's repo
+  // resolution - git's pathspec is relative to cwd, so the nested file's repo
   // path must physically match "scratch-hub/docs/handoffs/_active.json" for the
   // leak to be reachable at all) must yield the empty result, never that data.
   const outer = tempRepo();
@@ -1351,7 +1374,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   execSync('git add -A && git commit -q -m "gtg activate: R"', { cwd: repo });
 
   const d = H.readDurations(repo);
-  assert.equal(d.total, 60, 'one real session, counted once — the activate re-add must not re-bill it');
+  assert.equal(d.total, 60, 'one real session, counted once - the activate re-add must not re-bill it');
   assert.equal(d.sessionsTimed, 1);
   assert.deepEqual(d.bySlug.r, [60]);
 
@@ -1387,6 +1410,18 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.ok(doc.habit && doc.perProject && doc.families && doc.health && doc.fun, 'all sections present');
   assert.ok(doc.effort, 'effort section present');
   assert.ok(typeof doc.throughput.shipRate === 'number', 'assembler fills shipRate');
+
+  // The ONLY assertion tying the subject gtg.mjs WRITES to the regex history.mjs PARSES.
+  // Everything above is store-derived or survives a broken parse: counts.active reads the
+  // store, and a prune with no later handoff counts as shipped either way. Case 26 cannot
+  // cover this either, because its subjects are string literals rather than this writer's
+  // output. Break the separator or the session suffix in one place only and the session
+  // number folds into the project NAME, so the handoff joins to no store entry and appears
+  // as an extra phantom row here. That is the corruption the separator sweep existed to
+  // prevent, and the row count is what detects it.
+  assert.equal(doc.perProject.length, 2, 'a phantom project row means the subject no longer parses');
+  assert.ok(doc.perProject.some((p) => p.project === 'Live One' && p.sessions === 1),
+    'the handoff subject did not round-trip from writer to report');
 
   // --json override
   r = gtg(repo, ['report', '--json', join(repo, 'custom.json')]);
@@ -1426,7 +1461,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(upgradeRows[0].slug, 'gtg-stats-history', 'display slug is the store\'s REAL slug');
   assert.equal(upgradeRows[0].parent, 'gtg');
 
-  // matching slug (slugify(project) already equals the store slug) — unaffected
+  // matching slug (slugify(project) already equals the store slug) - unaffected
   const sameRows = rows.filter((r) => r.project === 'Same Slug Project');
   assert.equal(sameRows.length, 1, 'matching-slug case must still yield exactly one row');
   assert.equal(sameRows[0].status, 'active');
@@ -1445,7 +1480,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   let out = gtg(repo, ['list']).stdout;
   assert.doesNotMatch(out, /projects share/, 'main @ repo root must not be flagged as a collision');
 
-  // two projects sharing a FEATURE branch at repo root — a real tangle
+  // two projects sharing a FEATURE branch at repo root - a real tangle
   gtg(repo, [...HANDOFF_ARGS('feat-a', 'Feat A'), '--branch', 'feat/x'], { input: BODY });
   gtg(repo, [...HANDOFF_ARGS('feat-b', 'Feat B'), '--branch', 'feat/x'], { input: BODY });
   out = gtg(repo, ['list']).stdout;
@@ -1468,7 +1503,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(rb.status, 0, rb.stderr);
   assert.match(rb.stdout, /Parked: Project A/);
   assert.doesNotMatch(rb.stdout, /active gtg project/,
-    'a piped move must not dump the list — that is the wasted-context case');
+    'a piped move must not dump the list - that is the wasted-context case');
 
   // --list forces the full render even when piped
   const ra = gtg(repo, ['active', 'proj-a', '--list']);
@@ -1696,6 +1731,361 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const { abandonmentRate } = health(events, []);
   assert.equal(abandonmentRate, 0.5, 'only the genuinely dropped slug should count as abandoned');
   console.log('ok 44 - a superseded slug stops counting as abandoned');
+}
+
+// --- 45. an entry in a registered extension namespace does not render in `list` ---
+// Extensions (issues, learn) own handoff entries and render their own separated
+// list, so leaving them in `gtg list` shows the same work twice and buries the
+// projects the list exists for. Asserted on the project NAME, which is what the
+// renderer prints, not the slug.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('learning-go', 'Learning: Go'), '--parent', 'learning'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('real-project', 'Real Project'), '--parent', 'gtg'], { input: BODY });
+  const r = gtg(repo, ['list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!r.stdout.includes('Issues P9: x'), 'issue package leaked into gtg list');
+  assert.ok(!r.stdout.includes('Learning: Go'), 'learning sprint leaked into gtg list');
+  assert.ok(r.stdout.includes('Real Project'), 'a real project was wrongly excluded');
+  // The families the header counts must not include the excluded namespaces either.
+  assert.doesNotMatch(r.stdout, /▸ issues/, 'an extension namespace rendered as a family group');
+  assert.doesNotMatch(r.stdout, /▸ learning/, 'an extension namespace rendered as a family group');
+  console.log('ok 45 - an extension namespace does not render in list');
+}
+
+// --- 46. the same exclusion applies to `backlog` ---
+{
+  const repo = tempRepo();
+  gtg(repo, ['backlog', '--project', 'Issues P8: y', '--slug', 'issues-p8-y',
+    '--next', 'TBD', '--parent', 'issues'], { input: '## The Idea\nsomething\n' });
+  gtg(repo, ['backlog', '--project', 'Parked Idea', '--slug', 'parked-idea',
+    '--next', 'TBD'], { input: '## The Idea\nsomething\n' });
+  const r = gtg(repo, ['backlog']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!r.stdout.includes('Issues P8: y'), 'issue package leaked into gtg backlog');
+  assert.ok(r.stdout.includes('Parked Idea'), 'a real backlog item was wrongly excluded');
+  assert.match(r.stdout, /^1 backlogged project\b/m, 'the shelf count still includes extension entries');
+  // b<n> is what `gtg active <n>` resolves, so it has to number the rows shown.
+  assert.match(r.stdout, /b1\. Parked Idea/, 'shelf numbering must run 1..N over the rows rendered');
+  console.log('ok 46 - the exclusion applies to backlog too');
+}
+
+// --- 47. the count in the rendered summary agrees with what was rendered ---
+// A banner or header saying 17 while the rows show 12 is the whole defect this
+// exclusion exists to prevent.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('real-project', 'Real Project'), '--parent', 'gtg'], { input: BODY });
+  const r = gtg(repo, ['list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /1 active gtg project\b/, 'the count still includes extension entries');
+  console.log('ok 47 - the rendered count agrees with the rendered rows');
+}
+
+// --- 48. autoShelf still acts on extension entries even though list hides them ---
+// The regression guard for filtering at READ time instead of render time: `list` is
+// the only path that runs the 7-day sweep, so an early filter would stop extension
+// entries ever auto-shelving and silently empty `gtg learn`'s shelved section.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
+  const ap = join(repo, 'docs/handoffs/_active.json');
+  const data = JSON.parse(readFileSync(ap, 'utf8'));
+  data.handoffs[0].updated = new Date(Date.now() - 9 * 86400000).toISOString();
+  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+  const r = gtg(repo, ['list']);
+  assert.equal(r.status, 0, r.stderr);
+  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  assert.ok(bl.some((e) => e.slug === 'issues-p9-x'),
+    'an idle extension entry was not auto-shelved, so filtering happened before autoShelf');
+  assert.equal(active(repo).handoffs.length, 0, 'the shelved entry is gone from active');
+  console.log('ok 48 - autoShelf still sees extension entries');
+}
+
+// --- 49. ctx.ownEntries hands an extension both its shelves, and only its own ---
+// The interface the issues and learn extensions read their own entries through. A
+// user extension stands in for them here so this tests the ctx rather than either
+// extension's output.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('real-project', 'Real Project'), '--parent', 'gtg'], { input: BODY });
+  gtg(repo, ['backlog', '--project', 'Issues P8: y', '--slug', 'issues-p8-y',
+    '--next', 'TBD', '--parent', 'issues'], { input: '## The Idea\nsomething\n' });
+  gtg(repo, ['backlog', '--project', 'Parked Idea', '--slug', 'parked-idea',
+    '--next', 'TBD'], { input: '## The Idea\nsomething\n' });
+  const probe = 'export default async ({ ownEntries }) => {\n'
+    + '  const { active, shelved } = ownEntries();\n'
+    + '  console.log(JSON.stringify({ active: active.map((e) => e.slug), shelved: shelved.map((e) => e.slug) }));\n'
+    + '};\n';
+  mkdirSync(join(repo, '.gtg/commands'), { recursive: true });
+  writeFileSync(join(repo, '.gtg/commands/issues.mjs'), probe);
+  const r = gtg(repo, ['issues']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout.trim()), { active: ['issues-p9-x'], shelved: ['issues-p8-y'] },
+    'ownEntries must return only the calling command\'s namespace, from BOTH stores');
+  // A command that owns no namespace gets two empty arrays, never undefined.
+  writeFileSync(join(repo, '.gtg/commands/nomad.mjs'), probe);
+  const r2 = gtg(repo, ['nomad']);
+  assert.equal(r2.status, 0, r2.stderr);
+  assert.deepEqual(JSON.parse(r2.stdout.trim()), { active: [], shelved: [] },
+    'a command that owns no namespace must get empty arrays');
+  console.log('ok 49 - ctx.ownEntries returns the calling extension\'s own entries');
+}
+
+// --- 50. an explicit query finds an extension entry, the bare listing still hides it ---
+// Decluttering is not lookup. SKILL.md's exit procedure probes with `list <candidate>` before
+// slugifying and reuses the matched entry's slug, so a blind probe would mint a SECOND entry
+// beside a live issue package rather than updating it in place. The bare listing must still
+// hide them, and the row numbers on a queried listing must keep meaning the same rows that
+// `gtg back <n>` resolves, which is why a queried extension entry carries its slug instead of
+// a number it has no claim to.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('alpha-widget', 'Alpha Widget'), '--parent', 'gtg'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('beta-widget', 'Beta Widget'), '--parent', 'gtg'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-widget', 'Issues P9: widget'), '--parent', 'issues'],
+    { input: BODY });
+
+  // Exact slug, the form the reuse probe and every other verb use.
+  const rs = gtg(repo, ['list', 'issues-p9-widget']);
+  assert.equal(rs.status, 0, rs.stderr);
+  assert.ok(rs.stdout.includes('Issues P9: widget'),
+    'an exact-slug query must find an extension entry');
+  assert.match(rs.stdout, /1 active gtg project\b.*matching 'issues-p9-widget'/,
+    'a queried extension entry must be counted in the header it appears under');
+
+  // Fuzzy project name, the form the exit procedure actually probes with.
+  const rn = gtg(repo, ['list', 'Issues P9']);
+  assert.equal(rn.status, 0, rn.stderr);
+  assert.ok(rn.stdout.includes('Issues P9: widget'),
+    'a project-name query must find an extension entry');
+
+  // A query matching both kinds: real entries keep their canonical numbers, the extension
+  // entry is labelled by slug because it has no position in the list those numbers index.
+  const rq = gtg(repo, ['list', 'widget']);
+  assert.equal(rq.status, 0, rq.stderr);
+  assert.match(rq.stdout, /1\. Alpha Widget/, 'a queried real entry keeps its canonical number');
+  assert.match(rq.stdout, /2\. Beta Widget/, 'a queried real entry keeps its canonical number');
+  assert.match(rq.stdout, /issues-p9-widget: Issues P9: widget/,
+    'a queried extension entry must be labelled by slug');
+  assert.doesNotMatch(rq.stdout, /\d+\. Issues P9: widget/,
+    'a queried extension entry must NOT carry a row number, it would address a different row');
+
+  // The bare listing is unchanged: still hidden, still numbered the same way.
+  const rb = gtg(repo, ['list']);
+  assert.equal(rb.status, 0, rb.stderr);
+  assert.ok(!rb.stdout.includes('Issues P9: widget'), 'the bare listing must still hide it');
+  assert.match(rb.stdout, /1\. Alpha Widget/, 'bare and queried numbering must agree');
+  assert.match(rb.stdout, /2\. Beta Widget/, 'bare and queried numbering must agree');
+
+  // The consistency that matters: `<n>` resolves to the row the listing numbered <n>.
+  const rback = gtg(repo, ['back', '2', '--no-list']);
+  assert.equal(rback.status, 0, rback.stderr);
+  assert.match(rback.stdout, /Parked: Beta Widget/,
+    'back <n> must target the row both listings numbered <n>');
+
+  // And an extension entry stays reachable by slug, which is what its label tells you to use.
+  const rbe = gtg(repo, ['back', 'issues-p9-widget', '--no-list']);
+  assert.equal(rbe.status, 0, rbe.stderr);
+  assert.match(rbe.stdout, /Parked: Issues P9: widget/,
+    'an extension entry must stay reachable by slug');
+  // The hint on that same line must name something that resolves. sortByProject is filtered, so
+  // indexOf is -1 and the number would be a 0 that `gtg active` cannot resolve.
+  assert.match(rbe.stdout, /Bring back: gtg active issues-p9-widget/,
+    'the bring-back hint must name the slug, not the 0 the filtered order yields');
+  assert.doesNotMatch(rbe.stdout, /gtg active 0\b/, 'a 0 hint is not a resolvable target');
+  console.log('ok 50 - an explicit query finds an extension entry, the bare listing hides it');
+}
+
+// --- 51. a targeted query reaches a SHELVED extension entry ---
+// autoShelf parks anything idle over 7 days (case 48), which is normal for an issue package
+// between fix sessions, and `backlog` hides extension entries. So without this, the moment a
+// package is shelved no builtin listing shows it, `list <candidate>` goes blind again, and a
+// departure mints the duplicate case 50 exists to prevent.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-shelved', 'Issues P9: shelved'), '--parent', 'issues'],
+    { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('real-shelved', 'Real Shelved'), '--parent', 'gtg'], { input: BODY });
+  // Backdate both past the 7-day cutoff, then let `list` run the sweep (same trick as case 2b).
+  const ap = join(repo, 'docs/handoffs/_active.json');
+  const data = JSON.parse(readFileSync(ap, 'utf8'));
+  for (const e of data.handoffs) e.updated = new Date(Date.now() - 9 * 86400000).toISOString();
+  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+  gtg(repo, ['list']);
+  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  assert.equal(bl.length, 2, 'setup: both entries must be on the shelf');            // GUARD
+  assert.equal(active(repo).handoffs.length, 0, 'setup: nothing left active');       // GUARD
+
+  // The "No active gtg projects matching '<filter>'" line echoes the query back, so each
+  // assertion below deliberately looks for the OTHER identifier: querying by slug asserts on the
+  // project name, querying by name asserts on the slug. Asserting on the echoed one would pass
+  // with no fix at all.
+  // FAIL-PRE-FIX: exact slug, the form the reuse probe uses.
+  const rs = gtg(repo, ['list', 'issues-p9-shelved']);
+  assert.equal(rs.status, 0, rs.stderr);
+  assert.ok(rs.stdout.includes('Issues P9: shelved'),
+    'a targeted query must reach a shelved extension entry');
+  assert.match(rs.stdout, /gtg active issues-p9-shelved/,
+    'the shelved line must name the command that brings it back');
+  // FAIL-PRE-FIX: fuzzy project name, the form the exit procedure probes with.
+  const rn = gtg(repo, ['list', 'Issues P9']);
+  assert.equal(rn.status, 0, rn.stderr);
+  assert.ok(rn.stdout.includes('issues-p9-shelved'),
+    'a project-name query must reach a shelved extension entry');
+
+  // GUARD: the bare listing is still the decluttered view and says nothing is active.
+  const rb = gtg(repo, ['list']);
+  assert.match(rb.stdout, /No active gtg projects/, 'the bare listing must not gain shelved rows');
+  assert.ok(!rb.stdout.includes('issues-p9-shelved'), 'the bare listing must not name it');
+
+  // GUARD, and the scope boundary: a shelved NORMAL project is still invisible to a query. That
+  // hole predates the extension model and widening it is a documented-behaviour change.
+  const rr = gtg(repo, ['list', 'Real Shelved']);
+  assert.ok(!rr.stdout.includes('real-shelved'),
+    'the generic shelved-project case is deliberately unchanged');
+
+  // The co-occurrence case, and the one that was missing: a query matching ACTIVE work AND a
+  // shelved extension entry. printShelved was called only on the `!shown.length` branch, so any
+  // query that also hit active work silently dropped the shelved entry, which is exactly when
+  // SKILL.md's "reuse the slug if EXACTLY ONE matches" rule does damage: two matches look like
+  // one, and it is the wrong one. Live example: `gtg list Issues` matched an active package plus
+  // two shelved ones and printed only the active rows.
+  gtg(repo, [...HANDOFF_ARGS('issues-tracker-rewrite', 'Issues Tracker Rewrite'), '--parent', 'gtg'],
+    { input: BODY });
+  const rc = gtg(repo, ['list', 'Issues']);
+  assert.equal(rc.status, 0, rc.stderr);
+  // GUARD: the active match still renders as a numbered row on the normal path.
+  assert.match(rc.stdout, /1\. Issues Tracker Rewrite/,
+    'the active match must still render as a numbered row');
+  // FAIL-PRE-FIX: the shelved hit must survive a query that also matched active work.
+  assert.ok(rc.stdout.includes('Issues P9: shelved'),
+    'a shelved extension entry was dropped because the query also matched active work');
+  assert.match(rc.stdout, /gtg active issues-p9-shelved/,
+    'the shelved line must still name its bring-back command on the non-empty path');
+
+  // GUARD: `activate` resolves by slug and always did, so this only pins that the command the
+  // shelved line advertises is a real one.
+  const ra = gtg(repo, ['active', 'issues-p9-shelved', '--no-list']);
+  assert.equal(ra.status, 0, ra.stderr);
+  assert.match(ra.stdout, /Activated: Issues P9: shelved/);
+  console.log('ok 51 - a targeted query reaches a shelved extension entry');
+}
+
+// --- 52. the hints back and active print are runnable for an extension entry ---
+// Not a cosmetic bug: the README now tells you to address an extension entry by slug, so this is
+// the documented flow. Before the fix `back <slug>` printed 'gtg active 0', and running it exits
+// 2 because resolveEntry indexes arr[-1]. The test executes whatever the hint printed rather than
+// asserting a shape, so it cannot pass while the advice is unrunnable.
+{
+  const repo = tempRepo();
+  gtg(repo, [...HANDOFF_ARGS('issues-p9-round', 'Issues P9: round'), '--parent', 'issues'],
+    { input: BODY });
+
+  const rb = gtg(repo, ['back', 'issues-p9-round', '--no-list']);
+  assert.equal(rb.status, 0, rb.stderr);
+  const backHint = /Bring back: gtg (\S+ \S+)/.exec(rb.stdout);
+  assert.ok(backHint, 'back must print a bring-back hint');                          // GUARD
+  // FAIL-PRE-FIX: pre-fix this runs `gtg active 0` and exits 2.
+  const ra = gtg(repo, [...backHint[1].split(' '), '--no-list']);
+  assert.equal(ra.status, 0, `the printed hint 'gtg ${backHint[1]}' failed: ${ra.stderr}`);
+  assert.match(ra.stdout, /Activated: Issues P9: round/);
+
+  const activeHint = /Shelve again: gtg (\S+ \S+)/.exec(ra.stdout);
+  assert.ok(activeHint, 'active must print a shelve-again hint');                    // GUARD
+  // FAIL-PRE-FIX: the mirror-image bug in activate(), 'gtg back 0'.
+  const rb2 = gtg(repo, [...activeHint[1].split(' '), '--no-list']);
+  assert.equal(rb2.status, 0, `the printed hint 'gtg ${activeHint[1]}' failed: ${rb2.stderr}`);
+  assert.match(rb2.stdout, /Parked: Issues P9: round/);
+  console.log('ok 52 - the hints back and active print are runnable for an extension entry');
+}
+
+// --- 53. the two stores partition: one slug never sits in both ---
+// writeHandoff used to dedupe against only the store it was writing, so a handoff for a
+// shelved slug appended an active entry and left the backlog copy behind. The two stores
+// drive different renderers, so the same project then read as active or shelved depending on
+// which command ran. Both directions, because `backlog` writes through the same function.
+{
+  const repo = tempRepo();
+  const backlogOf = (r) => JSON.parse(readFileSync(join(r, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  const slugs = (xs) => (xs ?? []).map((e) => e.slug);
+
+  gtg(repo, ['backlog', '--project', 'Thing', '--slug', 'thing', '--next', 'TBD'], { input: BODY });
+  gtg(repo, HANDOFF_ARGS('thing', 'Thing'), { input: BODY });
+  assert.deepEqual(slugs(active(repo).handoffs), ['thing'], 'handoff did not unpark the shelved slug');
+  assert.deepEqual(slugs(backlogOf(repo)), [], 'the backlog copy survived a handoff for the same slug');
+
+  gtg(repo, ['backlog', '--project', 'Thing', '--slug', 'thing', '--next', 'TBD'], { input: BODY });
+  assert.deepEqual(slugs(backlogOf(repo)), ['thing'], 'parking did not land on the backlog');
+  assert.deepEqual(slugs(active(repo).handoffs), [], 'the active copy survived a park of the same slug');
+
+  const st = execSync('git status --porcelain', { cwd: repo, encoding: 'utf8' });
+  assert.equal(st.trim(), '', `the unpark left the tree dirty:\n${st}`);
+  console.log('ok 53 - a slug lives in exactly one store, both directions, and the unpark is committed');
+}
+
+// --- 54-57. unparent clears a parent, which rename cannot express ---
+// rename's <new> is held to /^[A-Za-z0-9_-]+$/, so it can only re-POINT a parent. Re-pointing a
+// dangling parent at the entry's own slug just trades it for a self-parent, the same defect.
+{
+  const dir = tempRepo();
+  gtg(dir, ['handoff', '--project', 'Alpha', '--slug', 'alpha', '--next', 'x',
+    '--parent', 'ghost'], { input: 'body\n' });
+  // Bookkeeping is not work, so the idle clock `list` auto-shelves on must not restart.
+  // Backdated first, the way the auto-shelf tests do it, and captured BEFORE the unparent:
+  // reading `updated` afterwards can only catch a deletion, and nowIso() is second-
+  // granularity, so a stamp taken "now" would compare equal to a restamp in the same second.
+  const ap = join(dir, 'docs/handoffs/_active.json');
+  const before = new Date(Date.now() - 2 * 86400000).toISOString();
+  const pre = JSON.parse(readFileSync(ap, 'utf8'));
+  pre.handoffs[0].updated = before;
+  writeFileSync(ap, JSON.stringify(pre, null, 2) + '\n');
+  const cleared = gtg(dir, ['unparent', 'alpha']);
+  assert.equal(cleared.status, 0, cleared.stderr);
+  assert.match(cleared.stdout, /Cleared parent 'ghost' from Alpha/);
+  const store = JSON.parse(readFileSync(ap, 'utf8'));
+  const entry = store.handoffs.find((e) => e.slug === 'alpha');
+  // Deleted, not nulled: absent has ONE representation, which is what every reader
+  // already branches on.
+  assert.equal('parent' in entry, false);
+  assert.equal(entry.updated, before, 'updated must not be restamped');
+  console.log('ok 54 - unparent deletes the parent key and leaves updated alone');
+}
+
+{
+  const dir = tempRepo();
+  gtg(dir, ['handoff', '--project', 'Solo', '--slug', 'solo', '--next', 'x'],
+    { input: 'body\n' });
+  const twice = gtg(dir, ['unparent', 'solo']);
+  assert.equal(twice.status, 2);
+  assert.match(twice.stderr, /'solo' has no parent/);
+  console.log('ok 55 - an entry with no parent is refused, not silently succeeded');
+}
+
+{
+  const dir = tempRepo();
+  const missing = gtg(dir, ['unparent', 'nope']);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /No project matching 'nope'/);
+  const noArg = gtg(dir, ['unparent']);
+  assert.equal(noArg.status, 2);
+  assert.match(noArg.stderr, /Usage: gtg unparent/);
+  console.log('ok 56 - unparent rejects an unknown target and a missing argument');
+}
+
+{
+  // A backlog entry resolves too, with active winning a collision the way rename does.
+  const dir = tempRepo();
+  gtg(dir, ['backlog', '--project', 'Shelved', '--slug', 'shelved', '--next', 'x',
+    '--parent', 'ghost'], { input: 'body\n' });
+  const out = gtg(dir, ['unparent', 'shelved']);
+  assert.equal(out.status, 0, out.stderr);
+  const bl = JSON.parse(readFileSync(join(dir, 'docs/handoffs/_backlog.json'), 'utf8'));
+  assert.equal('parent' in bl.backlog.find((e) => e.slug === 'shelved'), false);
+  console.log('ok 57 - unparent reaches a backlog entry too');
 }
 
 console.log('ALL PASS');

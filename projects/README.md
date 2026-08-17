@@ -30,8 +30,9 @@ Say "projects", "project status" or "portfolio" and the skill fires. Everything 
 also a plain CLI you can run yourself:
 
 ```
-projects                     list every project, its status and its page's opening line
-projects register <slug> [--name N --status S --where W --repo R]
+projects                     list every project grouped by theme, with its page's opening line
+projects <theme>             list one theme: work | job-search | tooling | homelab | worldbuilding | personal
+projects register <slug> --theme T [--name N --status S --where W --repo R]
 projects current <slug>      replace that page's Current state from stdin
 projects status <slug> <s>   active | paused | ops | done
 projects sync                check every row against reality
@@ -46,6 +47,10 @@ one portfolio for many repos.
 
 Statuses are deliberately four: `active`, `paused`, `ops` (running, not being worked on),
 `done`. Anything finer becomes a taxonomy you maintain instead of work you do.
+
+Themes are deliberately six: `work`, `job-search`, `tooling`, `homelab`, `worldbuilding`,
+`personal`. Every row has one, `register` refuses without it, and the only thing a theme
+decides is which section of the index and of the list a project appears under.
 
 ## Why `sync` reports and never fixes
 
