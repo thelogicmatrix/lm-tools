@@ -122,7 +122,39 @@ function tracks() {
   }
 }
 
-const builtins = { tracks, help, '--help': help, '-h': help };
+export const DEFAULT_CONTENT_ROOT = 'docs/learning';
+
+export function newSprint({ subject, track, contentRoot = DEFAULT_CONTENT_ROOT, now }) {
+  const slug = `learning-${slugify(subject)}`;
+  return {
+    slug, subject, track, created: now,
+    content: `${contentRoot}/${slug}`,
+    research: null, week: 1, concept: null, gates: [], verify: [],
+  };
+}
+
+function start(args) {
+  const root = resolveRoot();
+  const subject = args.filter((a) => !a.startsWith('--'))[0];
+  const ti = args.indexOf('--track');
+  const track = ti >= 0 ? args[ti + 1] : null;
+  if (!subject || !track) die(2, 'usage: learn start <subject> --track <name>');
+  if (!trackFile(root, track)) die(2, `no track '${track}'. Run 'learn tracks' to see what is available.`);
+
+  const sprint = newSprint({ subject, track, now: new Date().toISOString() });
+  if (readSprint(root, sprint.slug)) die(1, `sprint '${sprint.slug}' already exists. Run 'learn week'.`);
+  mkdirSync(join(root, sprint.content), { recursive: true });
+  writeSprint(root, sprint);
+
+  console.log(`STARTED ${sprint.slug}`);
+  console.log(`  track:   ${sprint.track}`);
+  console.log(`  content: ${sprint.content}/`);
+  // gtg owns the sprint as a resumable project, but learn never spawns it: the skill does,
+  // which is gtg's own GTG-DIRECTIVE convention. See the note in this task's brief.
+  console.log(`GTG-NEW ${sprint.slug} — create the gtg project for "Learning: ${subject}" with parent "learning". Skip if gtg is not installed.`);
+}
+
+const builtins = { tracks, help, '--help': help, '-h': help, start };
 
 async function main(argv) {
   const [cmd, ...rest] = argv;

@@ -152,3 +152,41 @@ test('slugify throws on input that reduces to nothing', () => {
   assert.throws(() => slugify('   '), UsageError);
   assert.throws(() => slugify('   '), /   /);
 });
+
+import { newSprint } from './learn.mjs';
+
+test('newSprint builds a sprint at week 1 with no concept and no history', () => {
+  const s = newSprint({
+    subject: 'Growth Marketing', track: 'concept',
+    contentRoot: 'docs/learning', now: '2026-08-17T09:00:00.000Z',
+  });
+  assert.equal(s.slug, 'learning-growth-marketing');
+  assert.equal(s.subject, 'Growth Marketing');
+  assert.equal(s.track, 'concept');
+  assert.equal(s.week, 1);
+  assert.equal(s.concept, null);
+  assert.equal(s.research, null);
+  assert.deepEqual(s.gates, []);
+  assert.deepEqual(s.verify, []);
+  assert.equal(s.content, 'docs/learning/learning-growth-marketing');
+  assert.equal(s.created, '2026-08-17T09:00:00.000Z');
+});
+
+test('newSprint slugifies a subject that would break a path', () => {
+  const s = newSprint({ subject: 'node.js', track: 'code', contentRoot: 'docs/learning', now: 'T' });
+  assert.equal(s.slug, 'learning-node-js');
+});
+
+// Closes a gap deferred from Task 1: nothing previously exercised main()'s catch, because
+// no verb reached a throwing guard. `start` is the first one that does, via newSprint ->
+// slugify. This proves the guard throws, main classifies it as a usage error, and the
+// process exits 2, which no in-process test can show together.
+test('start exits 2 when the subject slugifies to nothing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-startslug-'));
+  const cliPath = fileURLToPath(new URL('./learn.mjs', import.meta.url));
+  const env = { ...process.env, LEARN_HUB: dir };
+  const result = spawnSync(process.execPath, [cliPath, 'start', '!!!', '--track', 'code'], { encoding: 'utf8', env });
+  assert.equal(result.status, 2);
+  assert.ok(result.stderr.length > 0);
+  rmSync(dir, { recursive: true, force: true });
+});
