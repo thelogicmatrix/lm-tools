@@ -14,7 +14,7 @@ If a verify exercise is due (see below), it also prints `VERIFY-DUE  the verify 
 
 ## 2. Source the week's one concept, then `learn page`
 
-Do one research pass on this week's single new concept — not the whole sprint, matching the one-concept-at-a-time rule. Look for real, current, canonical sources: official docs, well-regarded course or textbook material, primary references, the same rigor as any other reliable-answers pass. If the research path is unavailable, proceed with a disclosed "unsourced, verify later" flag rather than skipping the page.
+Do one research pass on this week's single new concept — not the whole sprint, matching the one-concept-at-a-time rule. Look for real, current, canonical sources: official docs, well-regarded course or textbook material, primary references — checkable sources, not recalled from memory. If the research path is unavailable, proceed with a disclosed "unsourced, verify later" flag rather than skipping the page.
 
 Then run `learn page <concept>`. This stamps `docs/learning/<slug>/week-<N>-<concept>.md` from a fixed template — objective callout, worked example, the principle it generalizes to, a caution callout for simplifications, a worksheet, and sources — sets the concept on the sprint, and prints `PAGE <path>`. It refuses to overwrite a file that already exists there, so running it twice for the same week is a no-op guard, not a way to regenerate. Fill in the template's placeholders with the actual worked example and sources before the session's build work starts — it's what session A's read/example step consumes.
 
