@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { slugify, sprintPath, readSprint, writeSprint, UsageError } from './learn.mjs';
@@ -240,10 +240,11 @@ test('verify floor reads the LATEST verify, not the first', () => {
   assert.equal(verifyDue(sprintAt(4, [1, 3])), false);
 });
 
-// The brief's list happens to be sorted, so last-element and max agree there. Unsorted
-// input separates them: reading verify[length-1] gives 1 and wrongly reports due.
-test('verify floor takes the max of verify, not the last element', () => {
-  assert.equal(verifyDue(sprintAt(4, [3, 1])), false);
+// The brief's [1, 3] is sorted, so last-entry and max agree there and cannot be told apart.
+// Unsorted input separates them: the last entry is 1, so the gap is 3 and the floor fires.
+// Reading the max would give 3, a gap of 1, and would swallow the nag.
+test('verify floor takes the LAST entry of verify, not the largest', () => {
+  assert.equal(verifyDue(sprintAt(4, [3, 1])), true);
 });
 
 test('gate pass advances the week and clears the concept', () => {
@@ -284,6 +285,9 @@ test('gate --verified records the pre-increment week', () => {
 
 test('gate rejects a result that is not pass or fail', () => {
   assert.throws(() => applyGate(sprintAt(1), 'maybe', { now: 'T' }), /pass or fail/);
+  // A UsageError specifically: main() maps only that to exit 2, so a plain Error here would
+  // give the first non-CLI caller exit 1 and a stack where the contract says 2.
+  assert.throws(() => applyGate(sprintAt(1), 'maybe', { now: 'T' }), UsageError);
 });
 
 test('the verify floor constant is 2 weeks', () => {
@@ -380,5 +384,65 @@ test('gate exits 2 when --sprint names a sprint that does not exist', () => {
   const r = run(dir, 'gate', 'pass', '--sprint', 'learning-nope');
   assert.equal(r.status, 2);
   assert.match(r.stderr, /no sprint 'learning-nope'/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// Every sprint reachable today has concept null, so an unguarded interpolation puts the
+// literal string "null" into a marker line the skill relays verbatim.
+test('gate fail prints REPEAT with no literal null, and keeps the concept', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-gatefail-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+
+  const r = run(dir, 'gate', 'fail');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /REPEAT the same concept at week 2/);
+  assert.ok(!r.stdout.includes('null'), `marker line leaked null: ${r.stdout}`);
+
+  const s = readSprint(dir, 'learning-growth-marketing');
+  assert.equal(s.week, 2);
+  assert.equal(s.concept, null, 'a fail must not clear the concept');
+  assert.deepEqual(s.gates.map((g) => g.result), ['fail']);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// Seeds a concept directly, which is the only way to reach week()'s REPEAT branch until a
+// verb sets one. Both verbs must name the concept when there is one to name.
+test('week and gate name the concept when the sprint has one', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-concept-'));
+  writeSprint(dir, {
+    slug: 'learning-seeded', subject: 'Seeded', track: 'code', created: 'T',
+    content: 'docs/learning/learning-seeded', research: null,
+    week: 3, concept: 'positioning', gates: [], verify: [],
+  });
+
+  const w = run(dir, 'week');
+  assert.equal(w.status, 0);
+  assert.match(w.stdout, /REPEAT\s+positioning/);
+
+  const g = run(dir, 'gate', 'fail');
+  assert.equal(g.status, 0);
+  assert.match(g.stdout, /REPEAT positioning at week 4/);
+  assert.equal(readSprint(dir, 'learning-seeded').concept, 'positioning');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// The global rule is that a failed write prints what is on disk and exits non-zero. The
+// guard lives in writeSprint, so start, gate and every later verb inherit it; a read-only
+// sprint file is the cheapest way to make a real write fail.
+test('a failed write exits 1 and prints the on-disk state, not ADVANCED', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-writefail-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  const file = sprintPath(dir, 'learning-growth-marketing');
+  chmodSync(file, 0o444);
+
+  const r = run(dir, 'gate', 'pass');
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /could not write/);
+  assert.match(r.stderr, /on disk now/);
+  assert.match(r.stderr, /"week": 1/, `on-disk state was not printed: ${r.stderr}`);
+  assert.ok(!r.stdout.includes('ADVANCED'), `a failed write printed success: ${r.stdout}`);
+
+  chmodSync(file, 0o666);
+  assert.equal(readSprint(dir, 'learning-growth-marketing').week, 1);
   rmSync(dir, { recursive: true, force: true });
 });

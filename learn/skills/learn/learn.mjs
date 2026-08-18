@@ -12,9 +12,9 @@ const SAFE = /^[A-Za-z0-9_-]+$/;
 // impersonate a usage error.
 export class UsageError extends Error {}
 
-// Throws rather than exiting, matching sprintPath and trackFile: a guard that exits cannot
-// be tested in-process. main() maps a UsageError, and only a UsageError, to die(2, message),
-// so all three guards still report identically at the CLI edge.
+// Throws rather than exiting, matching sprintPath, trackFile and applyGate: a guard that
+// exits cannot be tested in-process. main() maps a UsageError, and only a UsageError, to
+// die(2, message), so all four guards still report identically at the CLI edge.
 export function slugify(s) {
   const out = String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   if (!out) throw new UsageError(`cannot slugify ${JSON.stringify(s)} into a usable name`);
@@ -39,10 +39,19 @@ export function readSprint(root, slug) {
   return JSON.parse(readFileSync(p, 'utf8'));
 }
 
+// A failed write must never read as a success, so it reports what is actually on disk
+// before exiting 1: the next run needs to know whether the sprint moved or not.
 export function writeSprint(root, sprint) {
   const p = sprintPath(root, sprint.slug);
-  mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, `${JSON.stringify(sprint, null, 2)}\n`);
+  try {
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, `${JSON.stringify(sprint, null, 2)}\n`);
+  } catch (e) {
+    console.error(`learn: could not write ${p}: ${e.message}`);
+    console.error(existsSync(p) ? `learn: on disk now:` : `learn: ${p} is absent`);
+    if (existsSync(p)) console.error(readFileSync(p, 'utf8'));
+    die(1, 'sprint not saved, nothing was advanced.');
+  }
 }
 
 export function resolveRoot() {
@@ -100,15 +109,15 @@ export function trackFile(root, name) {
   return null;
 }
 
-const mdNames = (dir) => {
-  try { return readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)); }
+const namesWithExt = (dir, ext) => {
+  try { return readdirSync(dir).filter((f) => f.endsWith(ext)).map((f) => f.slice(0, -ext.length)); }
   catch { return []; }
 };
 
 export function listTracks(root) {
   const seen = new Map();
-  for (const name of mdNames(bundledTracksDir())) seen.set(name, 'bundled');
-  for (const name of mdNames(userTracksDir(root))) seen.set(name, 'user');
+  for (const name of namesWithExt(bundledTracksDir(), '.md')) seen.set(name, 'bundled');
+  for (const name of namesWithExt(userTracksDir(root), '.md')) seen.set(name, 'user');
   return [...seen].map(([name, source]) => ({ name, source }));
 }
 
@@ -156,15 +165,17 @@ function start(args) {
 
 export const VERIFY_FLOOR_WEEKS = 2;
 
-// "At least once every 2 weeks." Measured from the LATEST verify, not the first,
-// and a sprint that has never run one is due from week 2.
+// "At least once every 2 weeks." Measured from the LATEST verify recorded, meaning the
+// last entry and not the largest, and a sprint that has never run one is due from week 2.
+// Reading the last entry errs toward firing the nag if the log is ever out of order, which
+// is the safe direction for a floor.
 export function verifyDue(sprint) {
-  const last = sprint.verify.length ? Math.max(...sprint.verify) : 0;
+  const last = sprint.verify.at(-1) ?? 0;
   return sprint.week - last >= VERIFY_FLOOR_WEEKS;
 }
 
 export function applyGate(sprint, result, { verified = false, now } = {}) {
-  if (result !== 'pass' && result !== 'fail') throw new Error('gate result must be pass or fail');
+  if (result !== 'pass' && result !== 'fail') throw new UsageError('gate result must be pass or fail');
   sprint.gates.push({ week: sprint.week, concept: sprint.concept, result, at: now });
   if (verified) sprint.verify.push(sprint.week);
   sprint.week += 1;
@@ -176,16 +187,11 @@ export function applyGate(sprint, result, { verified = false, now } = {}) {
 // rather than guessing: a wrong guess writes a gate result onto the wrong sprint.
 export function activeSprint(root) {
   const dir = join(root, '.learn', 'sprints');
-  const slugs = mdNamesJson(dir);
+  const slugs = namesWithExt(dir, '.json');
   if (!slugs.length) die(2, "no sprint here. Start one with 'learn start <subject> --track <name>'.");
   if (slugs.length > 1) die(2, `more than one sprint (${slugs.join(', ')}). Pass --sprint <slug>.`);
   return readSprint(root, slugs[0]);
 }
-
-const mdNamesJson = (dir) => {
-  try { return readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)); }
-  catch { return []; }
-};
 
 function pick(root, args) {
   const i = args.indexOf('--sprint');
@@ -214,7 +220,7 @@ function gate(args) {
   const s = pick(root, args);
   applyGate(s, result, { verified: args.includes('--verified'), now: new Date().toISOString() });
   writeSprint(root, s);
-  console.log(result === 'pass' ? `ADVANCED to week ${s.week}` : `REPEAT ${s.concept} at week ${s.week}`);
+  console.log(result === 'pass' ? `ADVANCED to week ${s.week}` : `REPEAT ${s.concept ?? 'the same concept'} at week ${s.week}`);
   if (verifyDue(s)) console.log('VERIFY-DUE  next session must include a verify exercise.');
 }
 
