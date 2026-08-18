@@ -124,6 +124,14 @@ export function parseTrack(text) {
   return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.join('\n').trim()]));
 }
 
+// README.md promises "nothing here is validated beyond the headings being present", so
+// validate exactly that and nothing more. A user track missing `Mastery gate` otherwise
+// breaks section 4 of every session with no error anywhere.
+export function missingHeadings(text) {
+  const parsed = parseTrack(text);
+  return TRACK_HEADINGS.filter((h) => !Object.hasOwn(parsed, h));
+}
+
 const bundledTracksDir = () => join(CLI_DIR, 'extensions', 'tracks');
 const userTracksDir = (root) => join(root, '.learn', 'tracks');
 
@@ -171,21 +179,59 @@ export function newSprint({ subject, track, contentRoot = DEFAULT_CONTENT_ROOT, 
   };
 }
 
+// The four scoping questions from references/starting-a-sprint.md section 4, and the sprint
+// goal plus milestone sequence they produce. `start` writes it so that artifact has a home on
+// disk rather than existing only in the session that scoped it.
+export function renderSprintDoc({ subject, track, slug }) {
+  return `# ${subject} — sprint scope
+
+*${slug} · ${track} track. Fill this in from the scoping pass before the first session.*
+
+## Sprint goal
+
+<One paragraph. What will be built, or written, by the end of this sprint — concrete and small enough to picture.>
+
+## What this requires that I do not have yet
+
+<The skill the goal needs and I do not have. This is what the weekly concepts have to deliver.>
+
+## Smallest working version
+
+<What I could produce in a single session, calibrated against my current level.>
+
+## The real problem this solves
+
+<The real problem, or "practicing" — in which case find a real problem first: the project is the motivation, not a container for it.>
+
+## Weekly milestones
+
+<One line per week, paced against the weekly time budget. These week numbers are the plan; \`learn week\` holds the actual count.>
+
+- Week 1 — <milestone>
+`;
+}
+
 function start(args) {
   const root = resolveRoot();
   const subject = positionals(args)[0];
   const track = flag(args, '--track');
   if (!subject || !track) die(2, 'usage: learn start <subject> --track <name>');
-  if (!trackFile(root, track)) die(2, `no track '${track}'. Run 'learn tracks' to see what is available.`);
+  const found = trackFile(root, track);
+  if (!found) die(2, `no track '${track}'. Run 'learn tracks' to see what is available.`);
+  const missing = missingHeadings(readFileSync(found.path, 'utf8'));
+  if (missing.length) die(2, `track '${track}' (${found.path}) is missing: ${missing.join(', ')}`);
 
   const sprint = newSprint({ subject, track, now: new Date().toISOString() });
   if (readSprint(root, sprint.slug)) die(1, `sprint '${sprint.slug}' already exists. Run 'learn week'.`);
   mkdirSync(join(root, sprint.content), { recursive: true });
+  const scope = join(root, sprint.content, 'sprint.md');
+  writeFileSync(scope, renderSprintDoc(sprint));
   writeSprint(root, sprint);
 
   console.log(`STARTED ${sprint.slug}`);
   console.log(`  track:   ${sprint.track}`);
   console.log(`  content: ${sprint.content}/`);
+  console.log(`  scope:   ${sprint.content}/sprint.md — write the goal and milestones into it`);
   // gtg owns the sprint as a resumable project, but learn never spawns it: the skill does,
   // which is gtg's own GTG-DIRECTIVE convention. See the note in this task's brief.
   console.log(`GTG-NEW ${sprint.slug} — create the gtg project for "Learning: ${subject}" with parent "learning". Skip if gtg is not installed.`);
@@ -238,14 +284,17 @@ function week(args) {
   // brand-new week that has never been gated, so "concept is non-null" stopped being a safe
   // stand-in for "the last gate failed" once page() existed.
   if (s.gates.at(-1)?.result === 'fail') {
-    console.log(`REPEAT  ${s.concept} — the last gate failed, so a DIFFERENT worked example on the same concept.`);
+    // Same fallback as gate(): a fail on a week whose concept was never set leaves concept
+    // null, and the marker line is relayed verbatim, so an unguarded interpolation ships the
+    // literal string "null" to the reader.
+    console.log(`REPEAT  ${s.concept ?? 'the same concept'} — the last gate failed, so a DIFFERENT worked example on the same concept.`);
   } else if (s.concept) {
     console.log(`ADVANCED  ${s.concept} — picked, not yet gated.`);
   } else {
     console.log('ADVANCED  no concept set. Pick week ' + s.week + "'s one new concept.");
   }
   if (verifyDue(s)) console.log(`VERIFY-DUE  the verify exercise floor is ${VERIFY_FLOOR_WEEKS} weeks and it is due this session.`);
-  const last = s.gates[s.gates.length - 1];
+  const last = s.gates.at(-1);
   if (last) console.log(`  last gate: week ${last.week} ${last.concept ?? '?'} -> ${last.result}`);
 }
 
@@ -324,11 +373,21 @@ function brief(args) {
   const s = pick(root, args);
   const shape = flag(args, '--shape') ?? 'synthesis+notes';
   const researchRoot = flag(args, '--research-root') ?? 'docs/research';
+  const file = join(root, s.content, 'corpus-brief.md');
+  // Mirrors page(): a hand-edited angle is the whole value of this file, so a re-run must not
+  // destroy it. Checked before stdin is touched, so the refusal does not eat the input.
+  if (existsSync(file)) die(1, `${file} already exists, refusing to overwrite it.`);
+  // readFileSync(0) on a terminal blocks with no prompt on POSIX and throws EAGAIN on Windows,
+  // so the human affordance is gated on isTTY and reports the same usage error as empty stdin.
+  if (process.stdin.isTTY) die(2, 'learn brief reads angle and corpus on stdin. Pipe them in.');
   const body = readFileSync(0, 'utf8');
   if (!body.trim()) die(2, 'learn brief reads angle and corpus on stdin. Pipe them in.');
-  const file = join(root, s.content, 'corpus-brief.md');
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, renderBrief({ slug: `${s.slug}-curriculum`, root: researchRoot, shape, body }));
+  // The brief is the sprint's research home, so record where it went: nothing else ever wrote
+  // this field, and a null there is indistinguishable from "no cross-check was ever run".
+  s.research = `${s.content}/corpus-brief.md`;
+  writeSprint(root, s);
   console.log(`BRIEF-WRITTEN ${file}`);
   console.log('  Hand it to logical-research. It returns the pack path — LINK to it, never copy it out.');
 }

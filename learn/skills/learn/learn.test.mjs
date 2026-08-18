@@ -313,6 +313,9 @@ test('gate CLI advances the sprint on disk and prints ADVANCED', () => {
   const r = run(dir, 'gate', 'pass');
   assert.equal(r.status, 0);
   assert.match(r.stdout, /ADVANCED to week 2/);
+  // gate emits its own VERIFY-DUE, separately from week()'s. Only the week() call further down
+  // used to be asserted, so deleting gate's line would not have failed anything.
+  assert.match(r.stdout, /^VERIFY-DUE  next session must include a verify exercise\.$/m);
 
   const s = readSprint(dir, 'learning-growth-marketing');
   assert.equal(s.week, 2);
@@ -690,5 +693,121 @@ test('a valued flag with no value exits 2 and does not report a sprint called un
   assert.match(r.stderr, /--sprint needs a value/);
   assert.ok(!r.stderr.includes('undefined'), `leaked undefined: ${r.stderr}`);
   assert.equal(readSprint(dir, 'learning-rust').week, 1, 'a rejected gate must not advance');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+import { missingHeadings, renderSprintDoc } from './learn.mjs';
+
+// The sibling of the guarded line in gate(). A fail on a week whose concept was never set
+// leaves concept null, and week() interpolated it straight into a marker line the skill
+// relays verbatim, so the reader got the literal word "null".
+test('week prints REPEAT with no literal null when a fail left the concept unset', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-weekfailnull-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  assert.equal(run(dir, 'gate', 'fail').status, 0);
+  assert.equal(readSprint(dir, 'learning-growth-marketing').concept, null);
+
+  const w = run(dir, 'week');
+  assert.equal(w.status, 0);
+  assert.match(w.stdout, /^REPEAT  the same concept — the last gate failed/m);
+  assert.ok(!w.stdout.includes('null'), `marker line leaked null: ${w.stdout}`);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('missingHeadings names every required heading a track lacks', () => {
+  assert.deepEqual(missingHeadings(TRACK_FIXTURE), []);
+  const noGate = TRACK_FIXTURE.replace('## Mastery gate', '## Something else');
+  assert.deepEqual(missingHeadings(noGate), ['Mastery gate']);
+  assert.deepEqual(missingHeadings('# nothing but a title\n').sort(), [...TRACK_HEADINGS].sort());
+});
+
+// parseTrack and TRACK_HEADINGS were exported and tested but called by nothing in production,
+// while README.md told strangers the headings are validated. A track missing `Mastery gate`
+// used to start a sprint that then broke section 4 of every session with no error at all.
+test('start exits 2 naming the heading a user track is missing, and creates nothing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-badtrack-'));
+  mkdirSync(join(dir, '.learn', 'tracks'), { recursive: true });
+  writeFileSync(join(dir, '.learn', 'tracks', 'broken.md'), TRACK_FIXTURE.replace('## Mastery gate', '## Grading'));
+
+  const r = run(dir, 'start', 'Growth Marketing', '--track', 'broken');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /is missing: Mastery gate/);
+  assert.equal(readSprint(dir, 'learning-growth-marketing'), null, 'a rejected track must not seed a sprint');
+
+  // The bundled tracks must still pass the same check, or this guard breaks every sprint.
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('renderSprintDoc carries the goal and the milestone sequence', () => {
+  const md = renderSprintDoc({ subject: 'Growth Marketing', track: 'concept', slug: 'learning-growth-marketing' });
+  assert.match(md, /^# Growth Marketing — sprint scope$/m);
+  assert.match(md, /^## Sprint goal$/m);
+  assert.match(md, /^## Weekly milestones$/m);
+  assert.match(md, /^- Week 1 — /m);
+});
+
+// spec:87 asked start to scaffold sprint.md and it was never built, so the four-question
+// scoping pass in starting-a-sprint.md produced a goal and a milestone sequence with nowhere
+// on disk to live.
+test('start scaffolds sprint.md in the content directory and says so', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-startscope-'));
+  const r = run(dir, 'start', 'Growth Marketing', '--track', 'code');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /sprint\.md/);
+
+  const s = readSprint(dir, 'learning-growth-marketing');
+  const scope = join(dir, s.content, 'sprint.md');
+  assert.ok(existsSync(scope), `expected ${scope} to exist`);
+  const md = readFileSync(scope, 'utf8');
+  assert.match(md, /^## Sprint goal$/m);
+  assert.match(md, /^## Weekly milestones$/m);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// newSprint seeded research: null and nothing ever wrote it, so a null there could not be told
+// apart from "no cross-check was ever run".
+test('brief records the brief path on the sprint', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-briefresearch-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  assert.equal(readSprint(dir, 'learning-growth-marketing').research, null);
+
+  assert.equal(runWithInput(dir, 'angle: x\ncorpus:\n  - a\n', 'brief').status, 0);
+  const s = readSprint(dir, 'learning-growth-marketing');
+  assert.equal(s.research, `${s.content}/corpus-brief.md`);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// page refuses to overwrite; brief clobbered. The angle is hand-edited, so a re-run destroyed
+// the only copy of it.
+test('brief refuses to overwrite a corpus brief that already exists', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-briefexists-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  assert.equal(runWithInput(dir, 'angle: first\ncorpus:\n  - a\n', 'brief').status, 0);
+  const file = join(dir, readSprint(dir, 'learning-growth-marketing').content, 'corpus-brief.md');
+
+  const r = runWithInput(dir, 'angle: second\ncorpus:\n  - b\n', 'brief');
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /already exists/);
+  assert.match(readFileSync(file, 'utf8'), /angle: first/);
+  assert.ok(!readFileSync(file, 'utf8').includes('second'), 'the hand-edited brief was clobbered');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// page's documented fallback: with no concept argument it uses the one already on the sprint.
+// Nothing covered it, so removing `|| s.concept` would only have shown up as an exit 2 in use.
+test('page with no concept argument falls back to the concept on the sprint', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-pagefallback-'));
+  writeSprint(dir, {
+    slug: 'learning-seeded3', subject: 'Seeded', track: 'code', created: 'T',
+    content: 'docs/learning/learning-seeded3', research: null,
+    week: 3, concept: 'positioning', gates: [], verify: [],
+  });
+
+  const r = run(dir, 'page');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /week-3-positioning\.md/);
+  assert.ok(existsSync(join(dir, 'docs/learning/learning-seeded3', 'week-3-positioning.md')));
+  assert.equal(readSprint(dir, 'learning-seeded3').concept, 'positioning');
   rmSync(dir, { recursive: true, force: true });
 });
