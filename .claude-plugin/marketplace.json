@@ -21,6 +21,11 @@
       "name": "projects",
       "source": "./projects",
       "description": "projects — the portfolio layer: a generated index of everything you have going, one narrative page per project, and a sync that checks every row against reality instead of trusting a table a model maintained."
+    },
+    {
+      "name": "learn",
+      "source": "./learn",
+      "description": "learn — self-directed learning sprints on any subject: pick a track, build something real, and let a graded mastery gate decide whether you advance or repeat. Bring your own track for anything the built-in two do not cover."
     }
   ]
 }

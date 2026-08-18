@@ -1,0 +1,10 @@
+{
+  "name": "learn",
+  "version": "0.1.0",
+  "description": "Self-directed learning sprints: one concept a session, closed by a graded mastery gate.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/learn.test.mjs"
+  }
+}
