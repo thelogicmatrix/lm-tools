@@ -87,14 +87,18 @@ test('listTracks labels bundled and user tracks and dedupes by name', () => {
   mkdirSync(join(root, '.learn', 'tracks'), { recursive: true });
   writeFileSync(join(root, '.learn', 'tracks', 'code.md'), TRACK_FIXTURE);
   writeFileSync(join(root, '.learn', 'tracks', 'language.md'), TRACK_FIXTURE);
+  // Sorted, not directory order: the point is which names exist and which source each
+  // carries (bundled vs. user), not the order the filesystem happens to hand them back —
+  // and the bundled-tracks count grows over time (code, concept, ...) without this test
+  // caring how many there are.
   const names = listTracks(root).map((t) => `${t.name}:${t.source}`).sort();
-  assert.deepEqual(names, ['code:user', 'language:user']);
+  assert.deepEqual(names, ['code:user', 'concept:bundled', 'language:user']);
   rmSync(root, { recursive: true, force: true });
 
   // No user tracks directory at all: falls back to the bundled list, doesn't throw.
   const bare = tmp();
-  const bareNames = listTracks(bare).map((t) => `${t.name}:${t.source}`);
-  assert.deepEqual(bareNames, ['code:bundled']);
+  const bareNames = listTracks(bare).map((t) => `${t.name}:${t.source}`).sort();
+  assert.deepEqual(bareNames, ['code:bundled', 'concept:bundled']);
   rmSync(bare, { recursive: true, force: true });
 });
 
