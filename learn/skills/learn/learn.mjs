@@ -12,9 +12,9 @@ const SAFE = /^[A-Za-z0-9_-]+$/;
 // impersonate a usage error.
 export class UsageError extends Error {}
 
-// Throws rather than exiting, matching sprintPath and trackFile. main() turns any thrown
-// Error into die(2, message), so all three input guards behave identically at the CLI edge
-// and all three stay testable in-process.
+// Throws rather than exiting, matching sprintPath and trackFile: a guard that exits cannot
+// be tested in-process. main() maps a UsageError, and only a UsageError, to die(2, message),
+// so all three guards still report identically at the CLI edge.
 export function slugify(s) {
   const out = String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   if (!out) throw new UsageError(`cannot slugify ${JSON.stringify(s)} into a usable name`);
@@ -160,8 +160,9 @@ async function main(argv) {
   const [cmd, ...rest] = argv;
   if (!cmd) return help();
   if (!builtins[cmd]) die(2, `unknown command '${cmd}'. Try 'learn help'.`);
-  // One catch at the edge. Every input guard throws; this is the only place that exits,
-  // so a guard is never the reason a function cannot be tested in-process.
+  // One catch at the edge: a guard's UsageError becomes die(2, message), anything else is
+  // re-thrown so a real bug crashes loudly with its stack. That is what lets the guards
+  // throw instead of exiting, and so stay testable in-process.
   try {
     return await builtins[cmd](rest);
   } catch (e) {
