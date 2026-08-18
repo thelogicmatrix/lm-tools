@@ -66,6 +66,35 @@ export function resolveRoot() {
 export const colour = (s) =>
   process.stdout.isTTY && !process.env.NO_COLOR ? `\u001b[36m${s}\u001b[0m` : s;
 
+// Every flag in this CLI that takes a following value. `--verified` is the only boolean, so
+// it is deliberately absent. A new valued flag must be added here as well as at its call site.
+export const VALUED_FLAGS = new Set(['--track', '--sprint', '--shape', '--research-root']);
+
+// A valued flag's value is NOT a positional. Filtering on startsWith('--') alone read
+// `learn start --track code "Systems Design"` as subject "code" and slugged the sprint
+// learning-code, and no downstream guard could catch it: the eaten token is by definition a
+// valid track name. Shared by every verb, so a new verb's flags cannot reintroduce the bug.
+export function positionals(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (VALUED_FLAGS.has(args[i])) { i += 1; continue; }
+    if (args[i].startsWith('--')) continue;
+    out.push(args[i]);
+  }
+  return out;
+}
+
+// undefined when the flag is absent. Present with no value is a usage error, not a silent
+// default: reading args[i + 1] blind handed `--sprint` at the end of the line the string
+// "undefined" and reported `no sprint 'undefined'`, and handed `--shape` the next flag.
+export function flag(args, name) {
+  const i = args.indexOf(name);
+  if (i < 0) return undefined;
+  const value = args[i + 1];
+  if (value === undefined || value.startsWith('--')) throw new UsageError(`${name} needs a value`);
+  return value;
+}
+
 function help() {
   console.log(`learn — self-directed learning sprints
 
@@ -144,9 +173,8 @@ export function newSprint({ subject, track, contentRoot = DEFAULT_CONTENT_ROOT, 
 
 function start(args) {
   const root = resolveRoot();
-  const subject = args.filter((a) => !a.startsWith('--'))[0];
-  const ti = args.indexOf('--track');
-  const track = ti >= 0 ? args[ti + 1] : null;
+  const subject = positionals(args)[0];
+  const track = flag(args, '--track');
   if (!subject || !track) die(2, 'usage: learn start <subject> --track <name>');
   if (!trackFile(root, track)) die(2, `no track '${track}'. Run 'learn tracks' to see what is available.`);
 
@@ -194,10 +222,10 @@ export function activeSprint(root) {
 }
 
 function pick(root, args) {
-  const i = args.indexOf('--sprint');
-  if (i >= 0) {
-    const s = readSprint(root, args[i + 1]);
-    if (!s) die(2, `no sprint '${args[i + 1]}'`);
+  const slug = flag(args, '--sprint');
+  if (slug !== undefined) {
+    const s = readSprint(root, slug);
+    if (!s) die(2, `no sprint '${slug}'`);
     return s;
   }
   return activeSprint(root);
@@ -223,7 +251,7 @@ function week(args) {
 
 function gate(args) {
   const root = resolveRoot();
-  const result = args.find((a) => a === 'pass' || a === 'fail');
+  const result = positionals(args).find((a) => a === 'pass' || a === 'fail');
   if (!result) die(2, 'usage: learn gate <pass|fail> [--verified] [--sprint <slug>]');
   const s = pick(root, args);
   applyGate(s, result, { verified: args.includes('--verified'), now: new Date().toISOString() });
@@ -280,7 +308,7 @@ export const profilePath = (root) => join(root, '.learn', 'profile.md');
 function page(args) {
   const root = resolveRoot();
   const s = pick(root, args);
-  const concept = args.filter((a) => !a.startsWith('--'))[0] || s.concept;
+  const concept = positionals(args)[0] || s.concept;
   if (!concept) die(2, 'usage: learn page <concept>');
   const file = join(root, s.content, `week-${s.week}-${slugify(concept)}.md`);
   if (existsSync(file)) die(1, `${file} already exists, refusing to overwrite it.`);
@@ -294,10 +322,8 @@ function page(args) {
 function brief(args) {
   const root = resolveRoot();
   const s = pick(root, args);
-  const si = args.indexOf('--shape');
-  const shape = si >= 0 ? args[si + 1] : 'synthesis+notes';
-  const ri = args.indexOf('--research-root');
-  const researchRoot = ri >= 0 ? args[ri + 1] : 'docs/research';
+  const shape = flag(args, '--shape') ?? 'synthesis+notes';
+  const researchRoot = flag(args, '--research-root') ?? 'docs/research';
   const body = readFileSync(0, 'utf8');
   if (!body.trim()) die(2, 'learn brief reads angle and corpus on stdin. Pipe them in.');
   const file = join(root, s.content, 'corpus-brief.md');

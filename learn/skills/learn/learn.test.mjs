@@ -619,3 +619,76 @@ test('profile prints the file at profilePath when one exists', () => {
   assert.match(r.stdout, /learns fast\./);
   rmSync(dir, { recursive: true, force: true });
 });
+
+import { positionals, flag, VALUED_FLAGS } from './learn.mjs';
+
+// The unit half of the argument fix. Every valued flag in the CLI must be in the set, or its
+// value gets read as a positional again: that is the exact shape of the corruption below.
+test('VALUED_FLAGS covers every flag the CLI reads a value from', () => {
+  assert.deepEqual([...VALUED_FLAGS].sort(), ['--research-root', '--shape', '--sprint', '--track']);
+  assert.ok(!VALUED_FLAGS.has('--verified'), '--verified is a boolean and must not consume a token');
+});
+
+test('positionals skips a valued flag together with its value', () => {
+  assert.deepEqual(positionals(['--track', 'code', 'Systems Design']), ['Systems Design']);
+  assert.deepEqual(positionals(['--sprint', 'learning-rust', 'ownership']), ['ownership']);
+  // The boolean must not eat the token after it.
+  assert.deepEqual(positionals(['pass', '--verified', '--sprint', 's']), ['pass']);
+  assert.deepEqual(positionals(['a', '--shape', 'synthesis', 'b']), ['a', 'b']);
+});
+
+test('flag returns undefined when absent and refuses a missing value', () => {
+  assert.equal(flag(['start', 'X'], '--track'), undefined);
+  assert.equal(flag(['--track', 'code'], '--track'), 'code');
+  assert.throws(() => flag(['gate', 'pass', '--sprint'], '--sprint'), UsageError);
+  assert.throws(() => flag(['gate', 'pass', '--sprint'], '--sprint'), /--sprint needs a value/);
+  // A following flag is not a value either, or `--shape --verified` sets the shape to a flag.
+  assert.throws(() => flag(['--shape', '--verified'], '--shape'), /--shape needs a value/);
+});
+
+// The Critical, end to end. Flag-first ordering is documented, and it used to slug the sprint
+// after the TRACK: subject "code", sprint learning-code, exit 0. The trackFile guard can never
+// catch that, because the eaten token is by definition a valid track name.
+test('start with --track before the subject slugs the SUBJECT, not the track', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-startflagfirst-'));
+  const r = run(dir, 'start', '--track', 'code', 'Systems Design');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /^STARTED learning-systems-design$/m);
+
+  const s = readSprint(dir, 'learning-systems-design');
+  assert.ok(s, 'expected a sprint slugged from the subject');
+  assert.equal(s.subject, 'Systems Design');
+  assert.equal(s.track, 'code');
+  assert.equal(readSprint(dir, 'learning-code'), null, 'the track name must not become a sprint');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// The other half: `--sprint` on page used to be read as the concept, naming the page after the
+// slug and stamping the slug onto sprint.concept. README and running-a-session both document
+// this ordering, so only the undocumented one worked.
+test('page with --sprint before the concept names the page after the CONCEPT', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-pageflagfirst-'));
+  assert.equal(run(dir, 'start', 'Rust', '--track', 'code').status, 0);
+
+  const r = run(dir, 'page', '--sprint', 'learning-rust', 'ownership');
+  assert.equal(r.status, 0);
+
+  const s = readSprint(dir, 'learning-rust');
+  assert.equal(s.concept, 'ownership');
+  assert.ok(existsSync(join(dir, s.content, 'week-1-ownership.md')), 'page must be named for the concept');
+  assert.ok(!existsSync(join(dir, s.content, 'week-1-learning-rust.md')), 'page must not be named for the slug');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// --sprint with nothing after it used to coerce undefined to the string "undefined" inside
+// SAFE.test and report `no sprint 'undefined'`, which reads like a real missing sprint.
+test('a valued flag with no value exits 2 and does not report a sprint called undefined', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-flagnovalue-'));
+  assert.equal(run(dir, 'start', 'Rust', '--track', 'code').status, 0);
+  const r = run(dir, 'gate', 'pass', '--sprint');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--sprint needs a value/);
+  assert.ok(!r.stderr.includes('undefined'), `leaked undefined: ${r.stderr}`);
+  assert.equal(readSprint(dir, 'learning-rust').week, 1, 'a rejected gate must not advance');
+  rmSync(dir, { recursive: true, force: true });
+});
