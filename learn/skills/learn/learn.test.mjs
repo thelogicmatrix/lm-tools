@@ -190,3 +190,16 @@ test('start exits 2 when the subject slugifies to nothing', () => {
   assert.ok(result.stderr.length > 0);
   rmSync(dir, { recursive: true, force: true });
 });
+
+test('start exits 1 when a sprint with that slug already exists', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-startexists-'));
+  const cliPath = fileURLToPath(new URL('./learn.mjs', import.meta.url));
+  const env = { ...process.env, LEARN_HUB: dir };
+  const args = [cliPath, 'start', 'Growth Marketing', '--track', 'code'];
+  const first = spawnSync(process.execPath, args, { encoding: 'utf8', env });
+  assert.equal(first.status, 0);
+  const second = spawnSync(process.execPath, args, { encoding: 'utf8', env });
+  assert.equal(second.status, 1);
+  assert.ok(second.stderr.length > 0);
+  rmSync(dir, { recursive: true, force: true });
+});
