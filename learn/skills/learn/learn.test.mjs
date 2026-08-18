@@ -444,6 +444,11 @@ test('week does not report REPEAT when the last gate passed, even with a concept
   const w = run(dir, 'week');
   assert.equal(w.status, 0);
   assert.ok(!w.stdout.includes('REPEAT'), `expected no REPEAT after a pass, got: ${w.stdout}`);
+  // Positive pin, not just the negative above: gates is non-empty here, so the unconditional
+  // "last gate: week 2 positioning -> pass" line also contains "positioning", and a regression
+  // that fell into the wrong (no-concept) branch would still be REPEAT-free. This line can only
+  // come from the middle branch actually firing.
+  assert.match(w.stdout, /^ADVANCED  positioning — picked, not yet gated\.$/m);
   rmSync(dir, { recursive: true, force: true });
 });
 
