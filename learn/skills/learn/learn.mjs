@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 export const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 const SAFE = /^[A-Za-z0-9_-]+$/;
@@ -426,6 +426,12 @@ async function main(argv) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Compare the FILENAME, not the path. Comparing import.meta.url against
+// pathToFileURL(argv[1]) looks stricter but breaks the moment the two disagree on path form,
+// and an installed plugin is exactly where they disagree: the work account reaches its plugin
+// cache through a junction, so node resolved this module to its real path while argv[1] kept
+// the junction path it was handed. main() then never ran and every verb exited 0 with no
+// output — a silent no-op, worse than a crash. projects.mjs already used the filename form.
+if (process.argv[1] && basename(process.argv[1]) === 'learn.mjs') {
   await main(process.argv.slice(2));
 }

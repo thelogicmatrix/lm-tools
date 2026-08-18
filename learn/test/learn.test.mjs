@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { mkdtempSync, rmSync, chmodSync } from 'node:fs';
+import { mkdtempSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { slugify, sprintPath, readSprint, writeSprint, UsageError } from '../skills/learn/learn.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'learn-'));
@@ -303,6 +303,29 @@ const run = (dir, ...args) =>
   spawnSync(process.execPath, [learnCli, ...args], {
     encoding: 'utf8', env: { ...process.env, LEARN_HUB: dir, NO_COLOR: '1' },
   });
+
+// Every other CLI test invokes learn.mjs by its real path, which is why the entry-point guard
+// could compare path FORMS and still look correct. An installed plugin is not reached by its
+// real path: the work account's plugin cache sits behind a junction, node resolved the module
+// to its real target, argv[1] kept the link path, the guard's equality failed, and every verb
+// exited 0 printing nothing. This invokes through a link so the guard is pinned to behaviour
+// rather than to a path shape.
+test('the CLI runs when invoked through a linked path, not only its real path', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-link-'));
+  const link = join(dir, 'linked-skill');
+  try {
+    symlinkSync(dirname(learnCli), link, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (e) {
+    rmSync(dir, { recursive: true, force: true });
+    return t.skip(`cannot create a link here: ${e.code ?? e.message}`);
+  }
+  const r = spawnSync(process.execPath, [join(link, 'learn.mjs'), 'help'], {
+    encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' },
+  });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /learn tracks/, 'main() did not run through the link');
+  rmSync(dir, { recursive: true, force: true });
+});
 
 // Proves the whole chain the pure tests cannot: the counter is read from disk, advanced,
 // and written back, and the marker the skill relays matches the stored state.
