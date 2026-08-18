@@ -16,4 +16,4 @@ jobs:
       # chmods a sprint file to 0444 and expects the write to be denied. The runner's non-root
       # `runner` user honours that; root in a container would write anyway and the test would
       # pass while proving nothing.
-      - run: node learn/skills/learn/learn.test.mjs
+      - run: node learn/test/learn.test.mjs

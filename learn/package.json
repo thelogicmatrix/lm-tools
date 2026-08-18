@@ -1,7 +1,10 @@
 {
-  "name": "@lm-tools/learn",
+  "name": "learn",
   "version": "0.1.0",
-  "private": true,
+  "description": "Self-directed learning sprints: one concept a session, closed by a graded mastery gate.",
   "type": "module",
-  "scripts": { "test": "node --test skills/learn/learn.test.mjs" }
+  "private": true,
+  "scripts": {
+    "test": "node --test test/learn.test.mjs"
+  }
 }
