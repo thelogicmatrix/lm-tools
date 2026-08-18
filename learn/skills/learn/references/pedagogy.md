@@ -18,7 +18,7 @@ Stated narrowly: andragogy is an influential framework of practice rather than a
 
 ### Chi and Wylie — ICAP
 
-Micheline Chi and Ruth Wylie's ICAP framework sorts learner behaviour into four modes of cognitive engagement and predicts that learning outcomes improve in this order: **Passive** (taking information in, such as reading or watching), **Active** (doing something physical with it, such as highlighting or copying out), **Constructive** (producing something beyond what you were given, such as explaining it in your own words or drawing an inference), **Interactive** (substantive back-and-forth in which both partners contribute constructively).
+Michelene Chi and Ruth Wylie's ICAP framework sorts learner behaviour into four modes of cognitive engagement and predicts that learning outcomes improve in this order: **Passive** (taking information in, such as reading or watching), **Active** (doing something physical with it, such as highlighting or copying out), **Constructive** (producing something beyond what you were given, such as explaining it in your own words or drawing an inference), **Interactive** (substantive back-and-forth in which both partners contribute constructively).
 
 What it supports: activities higher in that ordering tend to produce better learning than activities lower in it, across the body of studies Chi and colleagues reviewed and tested. It is the reason a session pushes toward building and explaining rather than reading, and the reason "I read the docs" does not count as a session.
 
