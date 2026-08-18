@@ -154,7 +154,71 @@ function start(args) {
   console.log(`GTG-NEW ${sprint.slug} — create the gtg project for "Learning: ${subject}" with parent "learning". Skip if gtg is not installed.`);
 }
 
-const builtins = { tracks, help, '--help': help, '-h': help, start };
+export const VERIFY_FLOOR_WEEKS = 2;
+
+// "At least once every 2 weeks." Measured from the LATEST verify, not the first,
+// and a sprint that has never run one is due from week 2.
+export function verifyDue(sprint) {
+  const last = sprint.verify.length ? Math.max(...sprint.verify) : 0;
+  return sprint.week - last >= VERIFY_FLOOR_WEEKS;
+}
+
+export function applyGate(sprint, result, { verified = false, now } = {}) {
+  if (result !== 'pass' && result !== 'fail') throw new Error('gate result must be pass or fail');
+  sprint.gates.push({ week: sprint.week, concept: sprint.concept, result, at: now });
+  if (verified) sprint.verify.push(sprint.week);
+  sprint.week += 1;
+  if (result === 'pass') sprint.concept = null;
+  return sprint;
+}
+
+// One sprint at a time is the normal case. More than one is ambiguous, so name it
+// rather than guessing: a wrong guess writes a gate result onto the wrong sprint.
+export function activeSprint(root) {
+  const dir = join(root, '.learn', 'sprints');
+  const slugs = mdNamesJson(dir);
+  if (!slugs.length) die(2, "no sprint here. Start one with 'learn start <subject> --track <name>'.");
+  if (slugs.length > 1) die(2, `more than one sprint (${slugs.join(', ')}). Pass --sprint <slug>.`);
+  return readSprint(root, slugs[0]);
+}
+
+const mdNamesJson = (dir) => {
+  try { return readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)); }
+  catch { return []; }
+};
+
+function pick(root, args) {
+  const i = args.indexOf('--sprint');
+  if (i >= 0) {
+    const s = readSprint(root, args[i + 1]);
+    if (!s) die(2, `no sprint '${args[i + 1]}'`);
+    return s;
+  }
+  return activeSprint(root);
+}
+
+function week(args) {
+  const s = pick(resolveRoot(), args);
+  console.log(`${colour(s.subject)} — week ${s.week} (${s.track} track)`);
+  if (s.concept) console.log(`REPEAT  ${s.concept} — the last gate failed, so a DIFFERENT worked example on the same concept.`);
+  else console.log('ADVANCED  no concept set. Pick week ' + s.week + "'s one new concept.");
+  if (verifyDue(s)) console.log(`VERIFY-DUE  the verify exercise floor is ${VERIFY_FLOOR_WEEKS} weeks and it is due this session.`);
+  const last = s.gates[s.gates.length - 1];
+  if (last) console.log(`  last gate: week ${last.week} ${last.concept ?? '?'} -> ${last.result}`);
+}
+
+function gate(args) {
+  const root = resolveRoot();
+  const result = args.find((a) => a === 'pass' || a === 'fail');
+  if (!result) die(2, 'usage: learn gate <pass|fail> [--verified] [--sprint <slug>]');
+  const s = pick(root, args);
+  applyGate(s, result, { verified: args.includes('--verified'), now: new Date().toISOString() });
+  writeSprint(root, s);
+  console.log(result === 'pass' ? `ADVANCED to week ${s.week}` : `REPEAT ${s.concept} at week ${s.week}`);
+  if (verifyDue(s)) console.log('VERIFY-DUE  next session must include a verify exercise.');
+}
+
+const builtins = { tracks, help, '--help': help, '-h': help, start, week, gate };
 
 async function main(argv) {
   const [cmd, ...rest] = argv;

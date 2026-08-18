@@ -203,3 +203,182 @@ test('start exits 1 when a sprint with that slug already exists', () => {
   assert.ok(second.stderr.length > 0);
   rmSync(dir, { recursive: true, force: true });
 });
+
+import { verifyDue, applyGate, VERIFY_FLOOR_WEEKS } from './learn.mjs';
+
+const sprintAt = (week, verify = []) => ({
+  slug: 's', subject: 'S', track: 'concept', created: 'T', content: 'c',
+  research: null, week, concept: 'positioning', gates: [], verify,
+});
+
+test('verify floor: never run, due from week 2', () => {
+  assert.equal(verifyDue(sprintAt(1)), false);
+  assert.equal(verifyDue(sprintAt(2)), true);
+});
+
+// A never-verified sprint stays due once it is past the floor. Pins the "treat no verify
+// as week 0" reading: anything that reset the baseline to the current week reads false here.
+test('verify floor: never run, still due past the floor', () => {
+  assert.equal(verifyDue(sprintAt(3)), true);
+  assert.equal(verifyDue(sprintAt(9)), true);
+});
+
+test('verify floor boundary at N-1, N, N+1 after a week-1 verify', () => {
+  assert.equal(verifyDue(sprintAt(2, [1])), false); // gap 1
+  assert.equal(verifyDue(sprintAt(3, [1])), true);  // gap 2, the floor
+  assert.equal(verifyDue(sprintAt(4, [1])), true);  // gap 3, overdue
+});
+
+// The same boundary one week further along, so an implementation that hardcoded week 3
+// rather than the gap fails here. The floor is a gap, not a week number.
+test('verify floor boundary walks with the latest verify', () => {
+  assert.equal(verifyDue(sprintAt(6, [5])), false); // gap 1
+  assert.equal(verifyDue(sprintAt(7, [5])), true);  // gap 2, the floor
+});
+
+test('verify floor reads the LATEST verify, not the first', () => {
+  assert.equal(verifyDue(sprintAt(4, [1, 3])), false);
+});
+
+// The brief's list happens to be sorted, so last-element and max agree there. Unsorted
+// input separates them: reading verify[length-1] gives 1 and wrongly reports due.
+test('verify floor takes the max of verify, not the last element', () => {
+  assert.equal(verifyDue(sprintAt(4, [3, 1])), false);
+});
+
+test('gate pass advances the week and clears the concept', () => {
+  const s = applyGate(sprintAt(2), 'pass', { now: 'T2' });
+  assert.equal(s.week, 3);
+  assert.equal(s.concept, null);
+  assert.deepEqual(s.gates, [{ week: 2, concept: 'positioning', result: 'pass', at: 'T2' }]);
+});
+
+test('gate fail advances the week but KEEPS the concept, so it repeats', () => {
+  const s = applyGate(sprintAt(2), 'fail', { now: 'T2' });
+  assert.equal(s.week, 3);
+  assert.equal(s.concept, 'positioning');
+});
+
+test('gate --verified records the week the verify exercise actually ran', () => {
+  const s = applyGate(sprintAt(3, [1]), 'pass', { now: 'T3', verified: true });
+  assert.deepEqual(s.verify, [1, 3]);
+  assert.equal(verifyDue(s), false);
+});
+
+// The gate log is the history; the verify list is the floor's input. A gate without
+// --verified must not feed the floor, or every session silently counts as a verify.
+test('a gate without --verified logs the gate but not a verify', () => {
+  const s = applyGate(sprintAt(3, [1]), 'pass', { now: 'T3' });
+  assert.deepEqual(s.verify, [1]);
+  assert.equal(s.gates.length, 1);
+  assert.equal(verifyDue(s), true);
+});
+
+// The week recorded is the week the exercise ran, not the week the sprint moved to.
+test('gate --verified records the pre-increment week', () => {
+  const s = applyGate(sprintAt(5), 'fail', { now: 'T5', verified: true });
+  assert.equal(s.week, 6);
+  assert.deepEqual(s.verify, [5]);
+  assert.equal(verifyDue(s), false); // gap 1 at week 6
+});
+
+test('gate rejects a result that is not pass or fail', () => {
+  assert.throws(() => applyGate(sprintAt(1), 'maybe', { now: 'T' }), /pass or fail/);
+});
+
+test('the verify floor constant is 2 weeks', () => {
+  assert.equal(VERIFY_FLOOR_WEEKS, 2);
+});
+
+const learnCli = fileURLToPath(new URL('./learn.mjs', import.meta.url));
+const run = (dir, ...args) =>
+  spawnSync(process.execPath, [learnCli, ...args], {
+    encoding: 'utf8', env: { ...process.env, LEARN_HUB: dir, NO_COLOR: '1' },
+  });
+
+// Proves the whole chain the pure tests cannot: the counter is read from disk, advanced,
+// and written back, and the marker the skill relays matches the stored state.
+test('gate CLI advances the sprint on disk and prints ADVANCED', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-gatecli-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+
+  const r = run(dir, 'gate', 'pass');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /ADVANCED to week 2/);
+
+  const s = readSprint(dir, 'learning-growth-marketing');
+  assert.equal(s.week, 2);
+  assert.equal(s.concept, null);
+  assert.deepEqual(s.gates.map((g) => g.result), ['pass']);
+  assert.deepEqual(s.verify, []);
+  assert.ok(s.gates[0].at, 'gate must stamp a time');
+
+  // Second session with no verify yet: week 2 against never-verified is the floor exactly,
+  // so the CLI must say so rather than the skill having to work it out.
+  const second = run(dir, 'week');
+  assert.equal(second.status, 0);
+  assert.match(second.stdout, /week 2/);
+  assert.match(second.stdout, /VERIFY-DUE/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('gate --verified clears VERIFY-DUE for the following week', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-gateverified-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  assert.equal(run(dir, 'gate', 'pass', '--verified').status, 0);
+
+  const s = readSprint(dir, 'learning-growth-marketing');
+  assert.deepEqual(s.verify, [1]);
+  const w = run(dir, 'week');
+  assert.equal(w.status, 0);
+  assert.ok(!w.stdout.includes('VERIFY-DUE'), `expected no VERIFY-DUE, got: ${w.stdout}`);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('gate exits 2 without a pass or fail argument', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-gatenoarg-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  const r = run(dir, 'gate');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /pass\|fail/);
+  // A rejected gate must not have moved the counter.
+  assert.equal(readSprint(dir, 'learning-growth-marketing').week, 1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('week and gate exit 2 when there is no sprint at all', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-nosprint-'));
+  for (const args of [['week'], ['gate', 'pass']]) {
+    const r = run(dir, ...args);
+    assert.equal(r.status, 2, `${args.join(' ')} should exit 2`);
+    assert.match(r.stderr, /no sprint here/);
+  }
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// Two sprints is the case where guessing writes a gate onto the wrong subject, so the
+// ambiguity must be an error, and --sprint must key off the slug.
+test('two sprints: bare gate exits 2, --sprint mutates only the named one', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-twosprints-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  assert.equal(run(dir, 'start', 'Statistics', '--track', 'code').status, 0);
+
+  const ambiguous = run(dir, 'gate', 'pass');
+  assert.equal(ambiguous.status, 2);
+  assert.match(ambiguous.stderr, /more than one sprint/);
+  assert.match(ambiguous.stderr, /--sprint/);
+
+  assert.equal(run(dir, 'gate', 'pass', '--sprint', 'learning-statistics').status, 0);
+  assert.equal(readSprint(dir, 'learning-statistics').week, 2);
+  assert.equal(readSprint(dir, 'learning-growth-marketing').week, 1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('gate exits 2 when --sprint names a sprint that does not exist', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-badsprint-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  const r = run(dir, 'gate', 'pass', '--sprint', 'learning-nope');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /no sprint 'learning-nope'/);
+  rmSync(dir, { recursive: true, force: true });
+});
