@@ -102,7 +102,7 @@ function help() {
   learn start <subject> --track <name>
   learn week                      what week, what concept, what is due
   learn gate <pass|fail> [--verified]
-  learn page <concept>            stamp the week-N reference page
+  learn page [concept]            stamp the week-N reference page
   learn brief                     write a logical-research corpus brief (body on stdin)
   learn profile                   read the learner profile`);
 }
@@ -396,7 +396,9 @@ function profile() {
   const root = resolveRoot();
   const p = profilePath(root);
   if (!existsSync(p)) {
-    console.log(`No profile yet at ${p}. It is created at a sprint's review, never silently.`);
+    // No verb writes this file: the CLI reads it and nothing else, so the message has to name
+    // a mechanism that exists. It used to promise a review that no verb performs.
+    console.log(`No profile yet at ${p}. Write one there yourself, or ask for a draft at the end of a sprint.`);
     return;
   }
   console.log(readFileSync(p, 'utf8'));

@@ -16,7 +16,9 @@ If a verify exercise is due (see below), it also prints `VERIFY-DUE  the verify 
 
 Do one research pass on this week's single new concept — not the whole sprint, matching the one-concept-at-a-time rule. Look for real, current, canonical sources: official docs, well-regarded course or textbook material, primary references — checkable sources, not recalled from memory. If the research path is unavailable, proceed with a disclosed "unsourced, verify later" flag rather than skipping the page.
 
-Then run `learn page <concept>`. This stamps `docs/learning/<slug>/week-<N>-<concept>.md` from a fixed template — objective callout, worked example, the principle it generalizes to, a caution callout for simplifications, a worksheet, and sources — sets the concept on the sprint, and prints `PAGE <path>`. It refuses to overwrite a file that already exists there, so running it twice for the same week is a no-op guard, not a way to regenerate. Fill in the template's placeholders with the actual worked example and sources before the session's build work starts — it's what session A's read/example step consumes.
+Then run `learn page <concept>`. This stamps `docs/learning/<slug>/week-<N>-<concept>.md` from a fixed template — objective callout, worked example, the principle it generalizes to, a caution callout for simplifications, a worksheet, and sources — sets the concept on the sprint, and prints `PAGE <path>`. It refuses to overwrite a file that already exists there, so running it twice for the same week is a no-op guard, not a way to regenerate. Fill in the template's placeholders with the actual worked example and sources before the session's build work starts — the first block of the track's own `Session shape` (section 3 below) opens by reading a worked example, and this page is it.
+
+The concept argument is optional. With none given, `learn page` uses the concept already on the sprint, which is what a repeat week wants: `learn week` printed `REPEAT <concept>`, the concept has not changed, and only the week number has. It still exits 2 if no concept is set and none was passed.
 
 Because the week number moves forward after every gate, pass or fail, a repeated concept always gets a fresh filename (`week-<N+1>-<concept>.md`, not the old one) — the "different worked example" rule is enforced structurally, not just by instruction.
 
@@ -44,3 +46,11 @@ When the week's concept lends itself to a genuine "spot the bug" exercise — a 
 ## 6. End every session with a gtg departure
 
 Close every study session with a normal gtg departure ("gtg"), even a rushed one. `learn`'s own state file (`.learn/sprints/<slug>.json`) tracks week, concept and gate history, but it holds no narrative — no "what got built", no "where we stopped mid-thought", no next-action text. The gtg handoff is the sprint's only record of that, which is what makes it resumable session to session. This is gtg's own Exit Procedure, not a `learn` verb — nothing here spawns it automatically.
+
+## 7. At the end of a sprint, propose the profile update
+
+The learner profile at `.learn/profile.md` is the one file `learn` reads and never writes. That is deliberate: a profile the learner never agreed to is a model's opinion filed as a fact, and the next sprint's intake reads it as fact. So the profile only ever gets written by a human, or by you when the learner asks for it in so many words.
+
+When a sprint finishes, draft the update and hand it over. Run `learn profile` first: if it prints `No profile yet at <path>`, the draft is the whole file, otherwise propose it as a change against what is already there. Cover what the gate history actually shows rather than an impression of how it went — which concepts passed first time, which needed a repeat and what the repeat changed, whether the verify floor was met or the gap got recorded, and what plain-language level the learner now reads as for this subject. That last one is what [starting-a-sprint.md](starting-a-sprint.md)'s intake question 2 asks for, and having it on file is why the next sprint does not have to ask cold.
+
+Then name the path and stop: the learner writes it to `.learn/profile.md`, or asks you to write it for them. Never save it unasked, and never say `learn` created it — no verb does.

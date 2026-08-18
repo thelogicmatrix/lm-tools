@@ -19,10 +19,10 @@ Say "I want to learn X" and the skill fires. Everything below is also a plain CL
 
 ```
 learn tracks                           list every track, bundled and your own
-learn start <subject> --track <name>   create the sprint and its content directory
+learn start <subject> --track <name>   create the sprint, its content directory and its sprint.md
 learn week                             what week, what concept, what is due
 learn gate <pass|fail> [--verified]    record the mastery gate and advance the week
-learn page <concept>                   stamp this week's reference page from the template
+learn page [concept]                   stamp this week's reference page from the template
 learn brief                            write a corpus brief for logical-research (body on stdin)
 learn profile                          read the learner profile
 learn help                             print the verb list
@@ -30,7 +30,7 @@ learn help                             print the verb list
 
 `week`, `gate`, `page` and `brief` act on the one sprint in the tree. With more than one they refuse rather than guess, and take `--sprint <slug>`. `brief` also takes `--shape <synthesis|synthesis+notes|synthesis+notes+raw>` (default `synthesis+notes`) and `--research-root <dir>` (default `docs/research`).
 
-Sprint state lives in `.learn/` inside the current git repo — `sprints/<slug>.json`, your own tracks in `tracks/`, the profile at `profile.md`. Set `LEARN_HUB` to keep one learning hub across many repos. Week pages are written under `docs/learning/<slug>/`, one per week, and `learn page` refuses to overwrite one that already exists.
+Sprint state lives in `.learn/` inside the current git repo — `sprints/<slug>.json`, your own tracks in `tracks/`, the profile at `profile.md`. Set `LEARN_HUB` to keep one learning hub across many repos. Everything you write lives under `docs/learning/<slug>/`: `sprint.md`, scaffolded by `learn start` for the sprint goal and the weekly milestones, and then one week page per week. `page` and `brief` both refuse to overwrite a file that already exists, so a hand-edited one is never clobbered by a re-run. Nothing writes `profile.md` — `learn profile` reads it, and you write it.
 
 Exit `2` is a usage or environment error, exit `1` is a real operation that failed with nothing advanced, exit `0` is success.
 
@@ -49,7 +49,7 @@ A track is a markdown file with six `##` headings, and the skill reads it by hea
 | `Verify exercise` | what a "spot the flaw" exercise looks like for this kind of material |
 | `Sequencing` | project-first, syllabus-first, or something else |
 
-**Your own tracks go in `.learn/tracks/<name>.md` in your repo, and a file there overrides a bundled track of the same name.** Copy `code.md` or `concept.md`, keep the six headings, change the bodies. Names are `[A-Za-z0-9_-]+`. `learn tracks` marks yours as overriding. Nothing here is validated beyond the headings being present, so a track that suits how you actually study beats the two shipped ones.
+**Your own tracks go in `.learn/tracks/<name>.md` in your repo, and a file there overrides a bundled track of the same name.** Copy `code.md` or `concept.md`, keep the six headings, change the bodies. Names are `[A-Za-z0-9_-]+`. `learn tracks` marks yours as overriding. `learn start` checks that all six headings are present and exits 2 naming any that are missing, and nothing here is validated beyond that, so a track that suits how you actually study beats the two shipped ones.
 
 ## Pairs with
 
