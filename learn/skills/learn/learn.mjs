@@ -12,9 +12,9 @@ const SAFE = /^[A-Za-z0-9_-]+$/;
 // impersonate a usage error.
 export class UsageError extends Error {}
 
-// Throws rather than exiting, matching sprintPath, trackFile and applyGate: a guard that
-// exits cannot be tested in-process. main() maps a UsageError, and only a UsageError, to
-// die(2, message), so all four guards still report identically at the CLI edge.
+// Throws rather than exiting, matching sprintPath, trackFile, applyGate and renderBrief: a
+// guard that exits cannot be tested in-process. main() maps a UsageError, and only a
+// UsageError, to die(2, message), so all five guards still report identically at the CLI edge.
 export function slugify(s) {
   const out = String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   if (!out) throw new UsageError(`cannot slugify ${JSON.stringify(s)} into a usable name`);
@@ -206,8 +206,16 @@ function pick(root, args) {
 function week(args) {
   const s = pick(resolveRoot(), args);
   console.log(`${colour(s.subject)} — week ${s.week} (${s.track} track)`);
-  if (s.concept) console.log(`REPEAT  ${s.concept} — the last gate failed, so a DIFFERENT worked example on the same concept.`);
-  else console.log('ADVANCED  no concept set. Pick week ' + s.week + "'s one new concept.");
+  // Keyed off the last gate's result, not sprint.concept: page() also sets concept, on a
+  // brand-new week that has never been gated, so "concept is non-null" stopped being a safe
+  // stand-in for "the last gate failed" once page() existed.
+  if (s.gates.at(-1)?.result === 'fail') {
+    console.log(`REPEAT  ${s.concept} — the last gate failed, so a DIFFERENT worked example on the same concept.`);
+  } else if (s.concept) {
+    console.log(`ADVANCED  ${s.concept} — picked, not yet gated.`);
+  } else {
+    console.log('ADVANCED  no concept set. Pick week ' + s.week + "'s one new concept.");
+  }
   if (verifyDue(s)) console.log(`VERIFY-DUE  the verify exercise floor is ${VERIFY_FLOOR_WEEKS} weeks and it is due this session.`);
   const last = s.gates[s.gates.length - 1];
   if (last) console.log(`  last gate: week ${last.week} ${last.concept ?? '?'} -> ${last.result}`);
@@ -224,7 +232,92 @@ function gate(args) {
   if (verifyDue(s)) console.log('VERIFY-DUE  next session must include a verify exercise.');
 }
 
-const builtins = { tracks, help, '--help': help, '-h': help, start, week, gate };
+// One paragraph is one line, never hard-wrapped: a single newline inside a paragraph
+// renders as a visible line break in GFM/Typora.
+export function renderPage({ subject, week, concept }) {
+  return `# Week ${week} — ${concept}
+
+> [!TIP]
+> By the end of this session you will be able to <state the one objective here>.
+
+*${subject} · week ${week} · one concept, practiced to fluency.*
+
+## Worked example
+
+<A complete, runnable, fully working example. Never pseudo-code.>
+
+## The principle it generalises to
+
+<What this is an instance of. This is the part that transfers.>
+
+> [!CAUTION]
+> <Every simplification, flagged. Never present a beginner approximation as complete.>
+
+## Worksheet
+
+<Write what you worked out here. It gets graded, not just read.>
+
+## Sources
+
+- <real, checkable source>
+`;
+}
+
+export const BRIEF_SHAPES = ['synthesis', 'synthesis+notes', 'synthesis+notes+raw'];
+
+export function renderBrief({ slug, root, shape, body }) {
+  if (!BRIEF_SHAPES.includes(shape)) throw new UsageError(`shape must be one of ${BRIEF_SHAPES.join(', ')}`);
+  return `# Corpus brief
+slug:   ${slug}
+root:   ${root}
+shape:  ${shape}
+${String(body).trim()}
+`;
+}
+
+export const profilePath = (root) => join(root, '.learn', 'profile.md');
+
+function page(args) {
+  const root = resolveRoot();
+  const s = pick(root, args);
+  const concept = args.filter((a) => !a.startsWith('--'))[0] || s.concept;
+  if (!concept) die(2, 'usage: learn page <concept>');
+  const file = join(root, s.content, `week-${s.week}-${slugify(concept)}.md`);
+  if (existsSync(file)) die(1, `${file} already exists, refusing to overwrite it.`);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, renderPage({ subject: s.subject, week: s.week, concept }));
+  s.concept = concept;
+  writeSprint(root, s);
+  console.log(`PAGE ${file}`);
+}
+
+function brief(args) {
+  const root = resolveRoot();
+  const s = pick(root, args);
+  const si = args.indexOf('--shape');
+  const shape = si >= 0 ? args[si + 1] : 'synthesis+notes';
+  const ri = args.indexOf('--research-root');
+  const researchRoot = ri >= 0 ? args[ri + 1] : 'docs/research';
+  const body = readFileSync(0, 'utf8');
+  if (!body.trim()) die(2, 'learn brief reads angle and corpus on stdin. Pipe them in.');
+  const file = join(root, s.content, 'corpus-brief.md');
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, renderBrief({ slug: `${s.slug}-curriculum`, root: researchRoot, shape, body }));
+  console.log(`BRIEF-WRITTEN ${file}`);
+  console.log('  Hand it to logical-research. It returns the pack path — LINK to it, never copy it out.');
+}
+
+function profile() {
+  const root = resolveRoot();
+  const p = profilePath(root);
+  if (!existsSync(p)) {
+    console.log(`No profile yet at ${p}. It is created at a sprint's review, never silently.`);
+    return;
+  }
+  console.log(readFileSync(p, 'utf8'));
+}
+
+const builtins = { tracks, help, '--help': help, '-h': help, start, week, gate, page, brief, profile };
 
 async function main(argv) {
   const [cmd, ...rest] = argv;

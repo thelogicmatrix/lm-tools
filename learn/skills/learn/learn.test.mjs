@@ -405,9 +405,11 @@ test('gate fail prints REPEAT with no literal null, and keeps the concept', () =
   rmSync(dir, { recursive: true, force: true });
 });
 
-// Seeds a concept directly, which is the only way to reach week()'s REPEAT branch until a
-// verb sets one. Both verbs must name the concept when there is one to name.
-test('week and gate name the concept when the sprint has one', () => {
+// Seeds a concept directly. Before this task, week() inferred REPEAT from sprint.concept
+// being non-null, which stops being sound once page() sets concept on a week that was never
+// gated at all. This sprint has no gates, so week() must NOT claim REPEAT; gate() still can,
+// since its branch is keyed off the result it was actually just called with, not this predicate.
+test('week does not report REPEAT for a fresh concept with no gates yet, and gate still names it on fail', () => {
   const dir = mkdtempSync(join(tmpdir(), 'learn-concept-'));
   writeSprint(dir, {
     slug: 'learning-seeded', subject: 'Seeded', track: 'code', created: 'T',
@@ -417,12 +419,43 @@ test('week and gate name the concept when the sprint has one', () => {
 
   const w = run(dir, 'week');
   assert.equal(w.status, 0);
-  assert.match(w.stdout, /REPEAT\s+positioning/);
+  assert.ok(!w.stdout.includes('REPEAT'), `expected no REPEAT with no gates yet, got: ${w.stdout}`);
+  assert.match(w.stdout, /positioning/);
 
   const g = run(dir, 'gate', 'fail');
   assert.equal(g.status, 0);
   assert.match(g.stdout, /REPEAT positioning at week 4/);
   assert.equal(readSprint(dir, 'learning-seeded').concept, 'positioning');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// The other half of the same fix: a concept picked (by page()) for the week AFTER a pass
+// also leaves sprint.concept non-null, with the last gate result 'pass'. week() must not
+// report REPEAT here either — this is the case the task-5 brief calls out explicitly.
+test('week does not report REPEAT when the last gate passed, even with a concept already picked', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-concept-pass-'));
+  writeSprint(dir, {
+    slug: 'learning-seeded2', subject: 'Seeded', track: 'code', created: 'T',
+    content: 'docs/learning/learning-seeded2', research: null,
+    week: 3, concept: 'positioning',
+    gates: [{ week: 2, concept: 'positioning', result: 'pass', at: 'T' }], verify: [],
+  });
+
+  const w = run(dir, 'week');
+  assert.equal(w.status, 0);
+  assert.ok(!w.stdout.includes('REPEAT'), `expected no REPEAT after a pass, got: ${w.stdout}`);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// And a sprint with no gates at all and NO concept: the plain "pick one" message, unaffected
+// by the fix, stays correct.
+test('week with no concept and no gates reports ADVANCED with no REPEAT', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-noconcept-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  const w = run(dir, 'week');
+  assert.equal(w.status, 0);
+  assert.ok(!w.stdout.includes('REPEAT'));
+  assert.match(w.stdout, /ADVANCED/);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -444,5 +477,136 @@ test('a failed write exits 1 and prints the on-disk state, not ADVANCED', () => 
 
   chmodSync(file, 0o666);
   assert.equal(readSprint(dir, 'learning-growth-marketing').week, 1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+import { readFileSync, existsSync } from 'node:fs';
+import { renderPage, renderBrief, profilePath } from './learn.mjs';
+
+test('renderPage opens with a GFM TIP objective callout', () => {
+  const md = renderPage({ subject: 'Marketing', week: 2, concept: 'positioning' });
+  assert.match(md, /^# Week 2 — positioning$/m);
+  assert.match(md, /^> \[!TIP\]$/m);
+  assert.match(md, /^## Worked example$/m);
+  assert.match(md, /^## The principle it generalises to$/m);
+  assert.match(md, /^## Sources$/m);
+  assert.match(md, /^## Worksheet$/m);
+});
+
+test('renderBrief emits the contract fields in contract order', () => {
+  const md = renderBrief({
+    slug: 'marketing-curriculum', root: 'docs/research', shape: 'synthesis+notes',
+    body: 'angle:  seed a concept-track sprint\ncorpus:\n  - Ries and Trout, Positioning',
+  });
+  const lines = md.split('\n');
+  assert.equal(lines[0], '# Corpus brief');
+  assert.equal(lines.findIndex((l) => l.startsWith('slug:')), 1);
+  assert.ok(lines.findIndex((l) => l.startsWith('root:')) === 2);
+  assert.ok(lines.findIndex((l) => l.startsWith('shape:')) === 3);
+  assert.ok(lines.findIndex((l) => l.startsWith('angle:')) > 3);
+  assert.ok(lines.findIndex((l) => l.startsWith('corpus:')) >
+            lines.findIndex((l) => l.startsWith('angle:')));
+});
+
+test('renderBrief does not hard-wrap the angle it was handed', () => {
+  const long = 'angle:  ' + 'x'.repeat(200) + '\ncorpus:\n  - a';
+  assert.ok(renderBrief({ slug: 's', root: 'r', shape: 'synthesis', body: long }).includes('x'.repeat(200)));
+});
+
+test('renderBrief rejects a shape outside the contract', () => {
+  assert.throws(() => renderBrief({ slug: 's', root: 'r', shape: 'bogus', body: 'angle: x\ncorpus:\n  - a' }), UsageError);
+});
+
+test('page writes the week page, stamps the concept onto the sprint, and prints PAGE', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-page-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+
+  const r = run(dir, 'page', 'Positioning');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /^PAGE /m);
+
+  const s = readSprint(dir, 'learning-growth-marketing');
+  assert.equal(s.concept, 'Positioning');
+  const file = join(dir, s.content, 'week-1-positioning.md');
+  assert.ok(existsSync(file), `expected ${file} to exist`);
+  assert.match(readFileSync(file, 'utf8'), /^# Week 1 — Positioning$/m);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('page exits 2 with no concept argument and none already on the sprint', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-pagenoarg-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  const r = run(dir, 'page');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /usage: learn page/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('page refuses to overwrite a page that already exists', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-pageexists-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  assert.equal(run(dir, 'page', 'Positioning').status, 0);
+  const r = run(dir, 'page', 'Positioning');
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /already exists/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+const runWithInput = (dir, input, ...args) =>
+  spawnSync(process.execPath, [learnCli, ...args], {
+    encoding: 'utf8', input, env: { ...process.env, LEARN_HUB: dir, NO_COLOR: '1' },
+  });
+
+test('brief writes the corpus brief in contract order and prints BRIEF-WRITTEN', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-brief-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+
+  const stdin = 'angle:  seed a concept-track sprint\ncorpus:\n  - Ries and Trout, Positioning\n';
+  const r = runWithInput(dir, stdin, 'brief');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /^BRIEF-WRITTEN /m);
+
+  const s = readSprint(dir, 'learning-growth-marketing');
+  const file = join(dir, s.content, 'corpus-brief.md');
+  const md = readFileSync(file, 'utf8');
+  assert.match(md, /^# Corpus brief$/m);
+  assert.match(md, /^root:\s+docs\/research$/m);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('brief exits 2 when stdin is empty', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-briefempty-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  const r = runWithInput(dir, '', 'brief');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /reads angle and corpus on stdin/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('brief exits 2 when --shape is outside the contract', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-briefshape-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  const r = runWithInput(dir, 'angle: x\ncorpus:\n  - a\n', 'brief', '--shape', 'bogus');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /shape must be one of/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('profile reports no profile yet when none has been written', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-profileabsent-'));
+  const r = run(dir, 'profile');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /No profile yet/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('profile prints the file at profilePath when one exists', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-profile-'));
+  const p = profilePath(dir);
+  mkdirSync(join(dir, '.learn'), { recursive: true });
+  writeFileSync(p, '# Profile\n\nlearns fast.\n');
+  const r = run(dir, 'profile');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /learns fast\./);
   rmSync(dir, { recursive: true, force: true });
 });
