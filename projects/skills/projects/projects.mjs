@@ -498,6 +498,12 @@ export function commit(root, paths, message) {
     if (/^(nothing (added )?to commit|no changes added)/im.test(out)) return true;
     console.error(`projects: git commit failed, changes are on disk but uncommitted. ${
       (e.stderr || e.message || '').toString().trim().split('\n')[0]}`);
+    // The `false` below is not enough on its own: saveAndRender discards it, and a batch
+    // caller reads $? rather than our stderr. On 2026-08-11 a 39-call `projects set`
+    // backfill hit a stale index.lock and ran to completion on warnings alone, ending with
+    // 14 uncommitted rows and files staged ownerless in the shared checkout. Setting the
+    // exit code here covers every caller, including the ones that drop the boolean.
+    process.exitCode = 1;
     return false;
   }
 }

@@ -184,8 +184,18 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 }
 
 // --- 3. commit() failure discrimination: a genuine (non-"nothing to commit") git
-// failure must still let the CLI succeed (files are written regardless) while
-// surfacing a warning to stderr, not swallowing it as silent success ---
+// failure must exit NON-ZERO while still reporting the write that did happen.
+//
+// This assertion was inverted on 2026-08-18. It previously required exit 0, reasoning
+// that the files are written regardless so the verb succeeded. The 2026-08-11 incident
+// in docs/issues/2026-08-11-verb-commit-failure-exits-zero.md is the counter-evidence:
+// a 39-call `projects set` backfill hit a stale .git/index.lock, and because every call
+// warned on stderr and exited 0, the batch ran to completion and ended with 14 rows
+// changed-but-uncommitted plus files left staged and ownerless in the shared home
+// checkout, which blocks every other session's merges. A caller checking $? could not
+// see it. Exit 0 on a partial success is what made the batch undetectable, so the exit
+// code now reports the commit while stdout still reports the write - the four
+// assertions below are unchanged from the original test.
 {
   const repo = tempRepoNoIdentity();
   const noConfig = join(tmpdir(), `gtg-no-such-gitconfig-${process.pid}-${Date.now()}`);
@@ -193,12 +203,12 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
     input: BODY,
     env: { GIT_CONFIG_GLOBAL: noConfig, GIT_CONFIG_SYSTEM: noConfig, GIT_CONFIG_NOSYSTEM: '1' },
   });
-  assert.equal(r.status, 0, `CLI should still exit 0 even if the git commit fails: ${r.stderr}`);
+  assert.notEqual(r.status, 0, `a genuine git commit failure must exit non-zero so a batch caller can detect it: ${r.stderr}`);
   assert.match(r.stdout, /^docs\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-proj-c\.md$/m, 'handoff success output missing from stdout');
   assert.match(r.stdout, /RESUME: "let's continue Project C"/);
   assert.match(r.stderr, /uncommitted/i, 'genuine git commit failure must be surfaced as a warning, not swallowed');
   assert.ok(existsSync(join(repo, 'docs/handoffs/_active.json')), 'entry should still be written to disk despite commit failure');
-  console.log('ok 3 - commit failure surfaces warning, CLI still succeeds');
+  console.log('ok 3 - commit failure exits non-zero, write still reported');
 }
 
 // --- 3+4. remove empties _active.json; undo restores it ---

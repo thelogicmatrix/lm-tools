@@ -139,11 +139,40 @@ test('a real git failure returns false and says the files are uncommitted', () =
   // `git add` would stage files into the real shared index.
   const errs = [];
   const orig = console.error;
+  const beforeExit = process.exitCode;
   console.error = (m) => errs.push(String(m));
   try {
     assert.equal(commit(join(tmpdir(), 'projects-no-such-dir-9f3a'), ['x.md'], 'nope'), false);
-  } finally { console.error = orig; }
+  } finally {
+    console.error = orig;
+    // commit() sets process.exitCode on failure and it runs in-process here, so without
+    // this restore one deliberate failure would make the whole suite exit non-zero while
+    // reporting 0 failures - a green run with a red exit code is worse than either.
+    process.exitCode = beforeExit;
+  }
   assert.match(errs.join('\n'), /on disk but uncommitted/);
+});
+
+test('a real git failure also sets a non-zero exit code, because callers drop the return', () => {
+  // The `false` above is necessary but not sufficient. saveAndRender (projects.mjs:527)
+  // discards it, which is how the 2026-08-11 batch ran 39 calls to completion while the
+  // commits had stopped landing - see docs/issues/2026-08-11-verb-commit-failure-exits-zero.md.
+  // Setting the exit code inside commit() covers every caller at once, including the ones
+  // that ignore the boolean.
+  //
+  // commit() runs IN-PROCESS here, so its exit code lands on this test runner. Save and
+  // restore it, or one deliberate failure would fail the whole suite.
+  const before = process.exitCode;
+  const orig = console.error;
+  console.error = () => {};
+  try {
+    commit(join(tmpdir(), 'projects-no-such-dir-9f3a'), ['x.md'], 'nope');
+    assert.notEqual(process.exitCode, 0, 'a failed commit must leave a non-zero exit code behind');
+    assert.notEqual(process.exitCode, undefined, 'a failed commit must leave a non-zero exit code behind');
+  } finally {
+    console.error = orig;
+    process.exitCode = before;
+  }
 });
 
 const SAMPLE = { version: 1, projects: [

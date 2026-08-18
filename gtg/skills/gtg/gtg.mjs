@@ -86,6 +86,12 @@ function commit(paths, message) {
     if (/nothing to commit|no changes added/i.test(out)) return; // identical content - files already on disk
     // Don't let a real git failure masquerade as success: the files are written, but say so.
     console.error(`gtg: git commit failed, changes are on disk but uncommitted - ${(e.stderr || e.message || '').toString().trim().split('\n')[0]}`);
+    // ...and say so in the EXIT CODE, not only on stderr. A batch caller reads $?, not our
+    // warnings: on 2026-08-11 a 39-call backfill hit a stale index.lock and every call after
+    // it warned, exited 0 and kept going, ending with 14 uncommitted rows and files left
+    // staged and ownerless in the shared checkout. exitCode rather than a throw because the
+    // store write already landed - this reports a partial success, it does not roll back.
+    process.exitCode = 1;
   }
 }
 function entries(rel, key) {
