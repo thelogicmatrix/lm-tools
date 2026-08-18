@@ -834,3 +834,71 @@ test('page with no concept argument falls back to the concept on the sprint', ()
   assert.equal(readSprint(dir, 'learning-seeded3').concept, 'positioning');
   rmSync(dir, { recursive: true, force: true });
 });
+
+// A store root that is also a git toplevel: the only shape learn commits into. Committing is
+// the point of the store living in a git repo at all, and the bug it fixes is invisible to
+// every other test here, which run against a bare temp dir where committing is correctly a
+// no-op — a dirty shared checkout only shows up when the root really is a repo root.
+const repoRoot = (prefix) => {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  const git = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
+  git('init', '-q');
+  git('config', 'user.email', 'test@example.com');
+  git('config', 'user.name', 'learn test');
+  git('config', 'commit.gpgsign', 'false');
+  return dir;
+};
+const porcelain = (dir) =>
+  execFileSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' });
+
+test('start and gate commit their own writes, leaving the store root clean', () => {
+  const dir = repoRoot('learn-commit-');
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  assert.equal(porcelain(dir).trim(), '', `start left the tree dirty:\n${porcelain(dir)}`);
+
+  assert.equal(run(dir, 'gate', 'pass').status, 0);
+  assert.equal(porcelain(dir).trim(), '', `gate left the tree dirty:\n${porcelain(dir)}`);
+
+  const log = execFileSync('git', ['-C', dir, 'log', '--format=%s'], { encoding: 'utf8' });
+  // The gated week is 1, not the 2 the sprint now sits on: applyGate advances before we commit.
+  assert.match(log, /learn gate: learning-growth-marketing week 1 pass/);
+  assert.match(log, /learn start: learning-growth-marketing \(code track\)/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('page and brief commit the file they scaffold, not just the sprint', () => {
+  const dir = repoRoot('learn-commit2-');
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  assert.equal(run(dir, 'page', 'positioning').status, 0);
+  assert.equal(porcelain(dir).trim(), '', `page left the tree dirty:\n${porcelain(dir)}`);
+
+  const r = spawnSync(process.execPath, [learnCli, 'brief'], {
+    encoding: 'utf8', input: 'angle\ncorpus\n',
+    env: { ...process.env, LEARN_HUB: dir, NO_COLOR: '1' },
+  });
+  assert.equal(r.status, 0);
+  assert.equal(porcelain(dir).trim(), '', `brief left the tree dirty:\n${porcelain(dir)}`);
+
+  const files = execFileSync('git', ['-C', dir, 'ls-files'], { encoding: 'utf8' });
+  assert.match(files, /week-1-positioning\.md/);
+  assert.match(files, /corpus-brief\.md/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// LEARN_HUB may point somewhere untracked, or merely inside somebody else's checkout — a temp
+// dir under the home repo is the everyday case, and every other CLI test here is exactly that
+// shape. Writing into a repo that never asked for the sprint is worse than not committing, so
+// the guard is toplevel EQUALITY and its failure mode is silence, not an error.
+test('a store root that is not the repo toplevel is written but never committed', () => {
+  const dir = repoRoot('learn-nested-');
+  const nested = join(dir, 'store');
+  mkdirSync(nested, { recursive: true });
+
+  const r = run(nested, 'start', 'Growth Marketing', '--track', 'code');
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(existsSync(join(nested, '.learn', 'sprints', 'learning-growth-marketing.json')),
+    'the sprint was not written');
+  const log = spawnSync('git', ['-C', dir, 'log', '--oneline'], { encoding: 'utf8' });
+  assert.notEqual(log.status, 0, 'a nested store was committed into the enclosing repo');
+  rmSync(dir, { recursive: true, force: true });
+});

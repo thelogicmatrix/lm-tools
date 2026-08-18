@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
-import { join, dirname, basename } from 'node:path';
+import { join, dirname, basename, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -28,10 +28,14 @@ export function die(code, msg) {
 
 // Every path segment is checked before it reaches join(). Untrusted-ish input reaching
 // path.join is a traversal waiting to happen.
-export function sprintPath(root, slug) {
+export function sprintRel(slug) {
   if (!SAFE.test(slug)) throw new UsageError(`invalid slug ${JSON.stringify(slug)}`);
-  return join(root, '.learn', 'sprints', `${slug}.json`);
+  return `.learn/sprints/${slug}.json`;
 }
+
+// Absolute form for reading and writing; sprintRel is the same path in the form git wants it.
+// Both go through the one guard, so a new caller cannot reach join() without it.
+export const sprintPath = (root, slug) => join(root, sprintRel(slug));
 
 export function readSprint(root, slug) {
   const p = sprintPath(root, slug);
@@ -60,6 +64,42 @@ export function resolveRoot() {
     return execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
   } catch {
     return die(2, 'no LEARN_HUB set and not inside a git repo. Set LEARN_HUB or run from a repo.');
+  }
+}
+
+// The gate is toplevel EQUALITY, not "is this inside a repo". LEARN_HUB may point at an
+// untracked directory, with nothing to commit to, or at one that merely sits inside somebody
+// else's repo - a temp dir under a home checkout is the everyday case - and committing there
+// writes sprint state into a repo that never asked for it.
+export function isRepoRoot(root) {
+  try {
+    const top = execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return Boolean(top) && resolve(top) === resolve(root);
+  } catch {
+    return false;
+  }
+}
+
+// Every state-changing verb commits its OWN files and nothing else. The store lives in a
+// checkout shared by concurrent sessions, where a file left dirty blocks everyone else's
+// merges and a pathspec-less `git commit` takes the WHOLE index - so whatever another session
+// staged rides along in ours. Explicit paths on BOTH add and commit is what gtg.mjs settled on
+// after exactly that happened (2026-07-27); this mirrors it rather than inventing a second
+// convention. `--` keeps a path starting with a dash from being read as a flag.
+export function commit(root, rels, message) {
+  if (!isRepoRoot(root)) return;
+  const opts = { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] };
+  try {
+    execFileSync('git', ['add', ...rels], opts);
+    execFileSync('git', ['commit', '-q', '-m', message, '--', ...rels], opts);
+  } catch (e) {
+    const out = `${e.stdout || ''}${e.stderr || ''}`;
+    if (/nothing to commit|no changes added/i.test(out)) return; // same content already committed
+    // A write that landed but did not commit is a partial success, so say so on stderr AND in
+    // the exit code: a batch caller reads $?, not our warnings.
+    console.error(`learn: git commit failed, changes are on disk but uncommitted - ${(e.stderr || e.message || '').toString().trim().split('\n')[0]}`);
+    process.exitCode = 1;
   }
 }
 
@@ -232,6 +272,8 @@ function start(args) {
   // existsSync guard here, mirroring page(), if that turns out to bite.
   writeFileSync(scope, renderSprintDoc(sprint));
   writeSprint(root, sprint);
+  commit(root, [sprintRel(sprint.slug), `${sprint.content}/sprint.md`],
+    `learn start: ${sprint.slug} (${sprint.track} track)`);
 
   console.log(`STARTED ${sprint.slug}`);
   console.log(`  track:   ${sprint.track}`);
@@ -310,6 +352,8 @@ function gate(args) {
   const s = pick(root, args);
   applyGate(s, result, { verified: args.includes('--verified'), now: new Date().toISOString() });
   writeSprint(root, s);
+  // applyGate has already advanced the counter, so the week that was GATED is one behind.
+  commit(root, [sprintRel(s.slug)], `learn gate: ${s.slug} week ${s.week - 1} ${result}`);
   console.log(result === 'pass' ? `ADVANCED to week ${s.week}` : `REPEAT ${s.concept ?? 'the same concept'} at week ${s.week}`);
   if (verifyDue(s)) console.log('VERIFY-DUE  next session must include a verify exercise.');
 }
@@ -364,12 +408,15 @@ function page(args) {
   const s = pick(root, args);
   const concept = positionals(args)[0] || s.concept;
   if (!concept) die(2, 'usage: learn page <concept>');
-  const file = join(root, s.content, `week-${s.week}-${slugify(concept)}.md`);
+  // Relative first: that is the form git needs, and join() gives the absolute one for free.
+  const rel = `${s.content}/week-${s.week}-${slugify(concept)}.md`;
+  const file = join(root, rel);
   if (existsSync(file)) die(1, `${file} already exists, refusing to overwrite it.`);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, renderPage({ subject: s.subject, week: s.week, concept }));
   s.concept = concept;
   writeSprint(root, s);
+  commit(root, [sprintRel(s.slug), rel], `learn page: ${s.slug} week ${s.week} ${concept}`);
   console.log(`PAGE ${file}`);
 }
 
@@ -378,7 +425,8 @@ function brief(args) {
   const s = pick(root, args);
   const shape = flag(args, '--shape') ?? 'synthesis+notes';
   const researchRoot = flag(args, '--research-root') ?? 'docs/research';
-  const file = join(root, s.content, 'corpus-brief.md');
+  const rel = `${s.content}/corpus-brief.md`;
+  const file = join(root, rel);
   // Mirrors page(): a hand-edited angle is the whole value of this file, so a re-run must not
   // destroy it. Checked before stdin is touched, so the refusal does not eat the input.
   if (existsSync(file)) die(1, `${file} already exists, refusing to overwrite it.`);
@@ -391,8 +439,9 @@ function brief(args) {
   writeFileSync(file, renderBrief({ slug: `${s.slug}-curriculum`, root: researchRoot, shape, body }));
   // The brief is the sprint's research home, so record where it went: nothing else ever wrote
   // this field, and a null there is indistinguishable from "no cross-check was ever run".
-  s.research = `${s.content}/corpus-brief.md`;
+  s.research = rel;
   writeSprint(root, s);
+  commit(root, [sprintRel(s.slug), rel], `learn brief: ${s.slug}`);
   console.log(`BRIEF-WRITTEN ${file}`);
   console.log('  Hand it to logical-research. It returns the pack path — LINK to it, never copy it out.');
 }

@@ -7,7 +7,7 @@ description: 'Use when the user says "I want to learn X", "start a learning spri
 
 A sprint is one subject, one real project, and one new concept per session, each session closing on a pass/fail mastery gate that decides whether the next one advances to a new concept or repeats the same one with a different worked example. The CLI owns the bookkeeping — which week, which concept, what the last gate said, when a verify exercise is due. The teaching is yours.
 
-`learn` below is `node "${CLAUDE_PLUGIN_ROOT}/skills/learn/learn.mjs"`. It stores state under `.learn/` in the current git repo, or under `$LEARN_HUB` when that is set, and writes week pages under `docs/learning/<slug>/`.
+`learn` below is `node "${CLAUDE_PLUGIN_ROOT}/skills/learn/learn.mjs"`. It stores state under `.learn/` in the current git repo, or under `$LEARN_HUB` when that is set, and writes week pages under `docs/learning/<slug>/`. Each state-changing verb commits its own writes, so you never need to commit after one; it stays silent when the store root is not a git toplevel.
 
 | Trigger | Do this |
 |---|---|
