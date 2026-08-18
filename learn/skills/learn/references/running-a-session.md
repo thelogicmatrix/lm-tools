@@ -1,6 +1,6 @@
 # Running a session
 
-How to run each study session once a sprint exists. Lifted from the `learning-code` runbook this skill replaces, generalized to whatever track the sprint picked.
+How to run each study session once a sprint exists, generalized to whatever track the sprint picked.
 
 ## 1. Start with `learn week`
 

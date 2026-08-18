@@ -1,6 +1,6 @@
 # Starting a sprint
 
-How to take a learner from "I want to learn X" to a running sprint. Lifted from the `learning-code` runbook this skill replaces, with the personal file paths and named subjects stripped out — nothing here assumes who is asking or what they've studied before.
+How to take a learner from "I want to learn X" to a running sprint — nothing here assumes who is asking or what they've studied before.
 
 ## 1. Read the profile first
 
