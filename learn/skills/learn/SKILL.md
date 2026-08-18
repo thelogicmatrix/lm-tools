@@ -17,6 +17,7 @@ A sprint is one subject, one real project, and one new concept per session, each
 | "what week am I on" / "where did we get to" | Run `learn week`, relay its output. **Stop.** |
 | a study session is starting, or is under way | Read [references/running-a-session.md](references/running-a-session.md) and follow it. It covers the whole session: `learn week`, sourcing the week's one concept, `learn page`, the track's own session shape, the gate, and the verify exercise. |
 | "grade my consolidate" / a gate result to record | Section 4 of [references/running-a-session.md](references/running-a-session.md). The gate is never self-certified, and *how* to grade it is the track's own `Mastery gate` section rather than something to invent per session. |
+| "cross-check my curriculum" / "is my reading list missing anything" | Section 5 of [references/starting-a-sprint.md](references/starting-a-sprint.md). It is reachable mid-sprint, not only at the start: `learn brief` writes the brief, `logical-research` returns a pack path, and you link to that pack rather than copying it out. |
 | "what have I covered" / "what's in my profile" | Run `learn profile`, relay its output. **Stop.** |
 | "why is it shaped this way" / "is any of this evidence-based" | Read [references/pedagogy.md](references/pedagogy.md). It separates the cited research from this plugin's own unvalidated defaults, so answer from the part the question actually lands in. |
 
