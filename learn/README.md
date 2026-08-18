@@ -32,6 +32,8 @@ learn help                             print the verb list
 
 Sprint state lives in `.learn/` inside the current git repo — `sprints/<slug>.json`, your own tracks in `tracks/`, the profile at `profile.md`. Set `LEARN_HUB` to keep one learning hub across many repos. Everything you write lives under `docs/learning/<slug>/`: `sprint.md`, scaffolded by `learn start` for the sprint goal and the weekly milestones, and then one week page per week. `page` and `brief` both refuse to overwrite a file that already exists, so a hand-edited one is never clobbered by a re-run. Nothing writes `profile.md` — `learn profile` reads it, and you write it.
 
+`start`, `gate`, `page` and `brief` commit what they wrote, naming only their own paths, so a store that lives in a checkout shared with other work is never left dirty. The commit is skipped when the store root is not itself a git toplevel — an untracked `LEARN_HUB`, or one that merely sits inside somebody else’s repo — because there is nothing there that asked for the sprint.
+
 Exit `2` is a usage or environment error, exit `1` is a real operation that failed with nothing advanced, exit `0` is success.
 
 ## Tracks — and writing your own
