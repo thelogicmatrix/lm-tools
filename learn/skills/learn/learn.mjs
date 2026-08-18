@@ -12,9 +12,9 @@ const SAFE = /^[A-Za-z0-9_-]+$/;
 // impersonate a usage error.
 export class UsageError extends Error {}
 
-// Throws rather than exiting, matching sprintPath, trackFile, applyGate and renderBrief: a
-// guard that exits cannot be tested in-process. main() maps a UsageError, and only a
-// UsageError, to die(2, message), so all five guards still report identically at the CLI edge.
+// Throws rather than exiting, matching sprintPath, trackFile, applyGate, renderBrief and flag:
+// a guard that exits cannot be tested in-process. main() maps a UsageError, and only a
+// UsageError, to die(2, message), so all six guards still report identically at the CLI edge.
 export function slugify(s) {
   const out = String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   if (!out) throw new UsageError(`cannot slugify ${JSON.stringify(s)} into a usable name`);
@@ -225,6 +225,11 @@ function start(args) {
   if (readSprint(root, sprint.slug)) die(1, `sprint '${sprint.slug}' already exists. Run 'learn week'.`);
   mkdirSync(join(root, sprint.content), { recursive: true });
   const scope = join(root, sprint.content, 'sprint.md');
+  // ponytail: no existsSync guard here, unlike page()/brief(). The check above already exits 1
+  // whenever sprint.json exists, so this is reachable only when the content dir outlives its
+  // JSON (a failed writeSprint, or a hand-deleted sprint file) - narrow enough to accept, but
+  // a hand-filled sprint.md does lose silently to a fresh template in that case. Add an
+  // existsSync guard here, mirroring page(), if that turns out to bite.
   writeFileSync(scope, renderSprintDoc(sprint));
   writeSprint(root, sprint);
 
