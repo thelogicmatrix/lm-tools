@@ -26,6 +26,11 @@
       "name": "learn",
       "source": "./learn",
       "description": "learn — self-directed learning sprints on any subject: pick a track, build something real, and let a graded mastery gate decide whether you advance or repeat. Bring your own track for anything the built-in two do not cover."
+    },
+    {
+      "name": "postman",
+      "source": "./postman",
+      "description": "postman - real outbound email from your own mailboxes: address verification before anything sends, byte-exact signatures it never regenerates, and replies resolved live against the mailbox so they thread onto the existing conversation. Bring your own identities and your own secret store."
     }
   ]
 }

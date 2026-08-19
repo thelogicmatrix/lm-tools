@@ -17,3 +17,14 @@ jobs:
       # `runner` user honours that; root in a container would write anyway and the test would
       # pass while proving nothing.
       - run: node learn/test/learn.test.mjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install markdown dnspython
+      # Network-tolerant by construction: the batch tests stub has_mx, and the one real
+      # lookup asserts a nonexistent host resolves False, which is also what any resolver
+      # failure returns. So this passes on a runner with no DNS egress.
+      # cwd-independent: fixture_home() points POSTMAN_HOME at a tempdir for the whole run,
+      # the example config resolves from __file__, and Python puts the script's own
+      # directory on sys.path[0]. Verified from the repo root and from the skill directory.
+      - run: python postman/skills/postman/postman.py --selftest

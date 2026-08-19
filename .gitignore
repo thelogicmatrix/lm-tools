@@ -1,3 +1,5 @@
 node_modules/
 .superpowers/
 docs/
+__pycache__/
+*.pyc

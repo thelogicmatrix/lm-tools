@@ -1,0 +1,21 @@
+{
+  "branded": {
+    "sender": "you@example.com",
+    "assets": "~/mail/branded/identity",
+    "store": "~/mail/branded/store",
+    "html_sig": true,
+    "logo": "logo.png",
+    "test_to": "you.personal@example.com",
+    "pw_cmd": "pass show email/branded",
+    "default": true
+  },
+  "plain": {
+    "sender": "you.personal@example.com",
+    "assets": "~/mail/plain/identity",
+    "store": "~/mail/plain/store",
+    "html_sig": false,
+    "test_to": "you.personal@example.com",
+    "pw_env": "POSTMAN_PW_PLAIN",
+    "pw_cmd": "bw get password personal-gmail-app-password"
+  }
+}

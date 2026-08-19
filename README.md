@@ -18,6 +18,7 @@ Then install whichever tools you want — they're independent:
 /plugin install logical-research@lm-tools
 /plugin install projects@lm-tools
 /plugin install learn@lm-tools
+/plugin install postman@lm-tools
 ```
 
 Prefer a frozen, non-updating copy? Each tool is also a plain skill you can copy into
@@ -62,6 +63,17 @@ speculative. Ask if you want one. → [projects/README.md](projects/README.md)
 Self-directed learning sprints. One subject, one project you actually want, one new concept per session, and a **pass/fail mastery gate** at the end of every session that decides whether the next one advances or takes another run at the same concept. A CLI holds the week, the concept, the gate history and the verify-exercise floor, so none of it rests on a model remembering last Tuesday — and the gate is graded against the track's own criterion, never self-certified.
 **Extend it:** drop your own track in `.learn/tracks/<name>.md` in your repo — six headings describing how *that* kind of subject is studied, and a file there overrides a bundled track of the same name. → [learn/README.md](learn/README.md)
 
+### [postman](postman/README.md)
+Real outbound email from a batch file you can read. One block per recipient, in markdown,
+and the tool is built around the four ways a real batch goes wrong: an address nobody
+sourced, a reply that starts a new conversation instead of threading onto the old one, a
+signature that looks nearly right, and a body that reads like a machine wrote it. **If any
+reply in the batch cannot resolve its thread, nothing sends at all.**
+**Extend it:** your identities live in `.postman/identities.json` in your repo or home, and
+each one declares a `pw_cmd` — any command that prints one secret on stdout, so `pass`, a
+password manager CLI or a full vault client all work and postman never learns which.
+→ [postman/README.md](postman/README.md)
+
 ## The shared contract
 
 Every lm-tools framework follows the same three-tier shape:
@@ -70,7 +82,7 @@ Every lm-tools framework follows the same three-tier shape:
 |---|---|---|
 | **Core** | the plugin | ships + updates with the tool |
 | **Bundled** | the plugin's defaults | on by default, updates with the tool |
-| **Yours** | a dot-dir in *your* repo (`.gtg/`, `.dd/`, `.lr/`, `.learn/`, …) | never touched by updates — you own it |
+| **Yours** | a dot-dir in *your* repo (`.gtg/`, `.dd/`, `.lr/`, `.learn/`, `.postman/`, …) | never touched by updates — you own it |
 
 The plugin only ever *reads* your tier, so a plugin update can't clobber your extensions.
 That's the point: a framework you add to and modify, not a black box.
