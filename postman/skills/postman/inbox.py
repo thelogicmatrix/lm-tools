@@ -146,8 +146,8 @@ def fetch_window(M, mailbox, days, with_snippets=False, from_addr=None):
     from_addr narrows the SEARCH server-side instead of fetching the window and
     filtering it here. That is not a nicety. The loop below is one round trip per
     UID, so a 12,501 message window was headed for over two hours on 2026-08-15
-    when the actual question was "what has MOE sent me" and the answer was a
-    handful of messages. SEARCH FROM cuts the UID list before any FETCH is issued.
+    when the actual question was "what has this one counterparty sent me" and the
+    answer was a handful of messages. SEARCH FROM cuts the UID list before FETCH.
     """
     typ, _ = M.select(mailbox, readonly=True)
     if typ != "OK":
