@@ -902,3 +902,41 @@ test('a store root that is not the repo toplevel is written but never committed'
   assert.notEqual(log.status, 0, 'a nested store was committed into the enclosing repo');
   rmSync(dir, { recursive: true, force: true });
 });
+
+// `git add` is NOT atomic: given [tracked, ignored] it stages the tracked one and still exits
+// 1. The first version of commit() bailed out of its try at that point, so the sprint JSON was
+// left STAGED - an ownerless index entry that blocks every other session's merges, which is the
+// 2026-07-27 failure this function exists to prevent. A repo that gitignores its docs tree is
+// ordinary (lm-tools does), so the failure path has to leave the tree no worse than no commit.
+test('a content dir the repo ignores leaves nothing staged, and says why', () => {
+  const dir = repoRoot('learn-ignored-');
+  writeFileSync(join(dir, '.gitignore'), 'docs/\n');
+  execFileSync('git', ['-C', dir, 'add', '.gitignore'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', dir, 'commit', '-qm', 'init'], { stdio: 'ignore' });
+
+  const r = run(dir, 'start', 'Growth Marketing', '--track', 'code');
+  assert.equal(r.status, 1, 'a write that could not be committed must not report success');
+  assert.ok(existsSync(join(dir, '.learn', 'sprints', 'learning-growth-marketing.json')),
+    'the sprint was not written');
+  assert.equal(porcelain(dir).replace(/^\?\? .*$/gm, '').trim(), '',
+    `the failed commit left the index dirty:\n${porcelain(dir)}`);
+  // The reason must be the git error, never the `LF will be replaced by CRLF` warning that
+  // precedes it on a default Windows checkout.
+  assert.doesNotMatch(r.stderr, /LF will be replaced/);
+  assert.match(r.stderr, /ignored/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// resolve() normalises separators but not the drive letter, and Windows paths are
+// case-insensitive - so a lowercase LEARN_HUB at the true repo root compared unequal to git's
+// own capitalisation and silently never committed anything.
+test('the repo-root gate ignores path case where the filesystem does', () => {
+  const dir = repoRoot('learn-case-');
+  const flipped = process.platform === 'win32'
+    ? dir[0].toLowerCase() + dir.slice(1)
+    : dir;
+  assert.equal(run(flipped, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  const log = execFileSync('git', ['-C', dir, 'log', '--format=%s'], { encoding: 'utf8' });
+  assert.match(log, /learn start: learning-growth-marketing/);
+  rmSync(dir, { recursive: true, force: true });
+});

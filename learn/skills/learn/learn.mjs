@@ -75,7 +75,13 @@ export function isRepoRoot(root) {
   try {
     const top = execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return Boolean(top) && resolve(top) === resolve(root);
+    // resolve() normalises separators but not the drive letter, and a Windows path is
+    // case-insensitive - so a lowercase LEARN_HUB at the true toplevel compared unequal to
+    // git's own capitalisation and silently never committed anything.
+    const same = process.platform === 'win32'
+      ? (a, b) => a.toLowerCase() === b.toLowerCase()
+      : (a, b) => a === b;
+    return Boolean(top) && same(resolve(top), resolve(root));
   } catch {
     return false;
   }
@@ -91,14 +97,25 @@ export function commit(root, rels, message) {
   if (!isRepoRoot(root)) return;
   const opts = { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] };
   try {
-    execFileSync('git', ['add', ...rels], opts);
+    execFileSync('git', ['add', '--', ...rels], opts);
     execFileSync('git', ['commit', '-q', '-m', message, '--', ...rels], opts);
   } catch (e) {
     const out = `${e.stdout || ''}${e.stderr || ''}`;
     if (/nothing to commit|no changes added/i.test(out)) return; // same content already committed
+    // `git add` is NOT atomic: given [tracked, ignored] it stages the tracked path and STILL
+    // exits 1, so without this the sprint file was left STAGED - an ownerless index entry that
+    // blocks every other session's merges, the same 2026-07-27 failure named above. A repo that
+    // gitignores its docs tree is ordinary, so the failure path has to leave the tree no worse
+    // than never having tried: written, uncommitted, unstaged.
+    try { execFileSync('git', ['reset', '-q', '--', ...rels], opts); } catch { /* nothing staged */ }
     // A write that landed but did not commit is a partial success, so say so on stderr AND in
     // the exit code: a batch caller reads $?, not our warnings.
-    console.error(`learn: git commit failed, changes are on disk but uncommitted - ${(e.stderr || e.message || '').toString().trim().split('\n')[0]}`);
+    // Skip git's warning and hint lines: `LF will be replaced by CRLF` precedes the real error
+    // on a default Windows checkout, and naming it sends the reader after a line-ending problem
+    // they do not have.
+    const why = `${e.stderr || e.message || ''}`.split('\n').map((l) => l.trim())
+      .find((l) => l && !/^(warning|hint):/i.test(l)) || 'no reason on stderr';
+    console.error(`learn: git commit failed, changes are on disk but uncommitted - ${why}`);
     process.exitCode = 1;
   }
 }
