@@ -1,0 +1,22 @@
+{
+    "name":  "projects",
+    "version":  "1.0.1",
+    "description":  "Maintain a generated portfolio index and one durable narrative page per project.",
+    "author":  {
+                   "name":  "Nathan Wong"
+               },
+    "skills":  "./skills/",
+    "interface":  {
+                      "displayName":  "Projects",
+                      "shortDescription":  "Keep the project portfolio grounded in reality",
+                      "longDescription":  "Manage project transitions through a generated index, narrative pages, reality checks, and a guard against hand-editing generated state.",
+                      "developerName":  "Nathan Wong",
+                      "category":  "Productivity",
+                      "capabilities":  [
+                                           "Interactive",
+                                           "Read",
+                                           "Write"
+                                       ],
+                      "defaultPrompt":  "Show me the current project portfolio status."
+                  }
+}

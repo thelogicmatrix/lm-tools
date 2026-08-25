@@ -1,0 +1,16 @@
+{
+  "name": "learn",
+  "version": "0.2.1",
+  "description": "Run self-directed learning sprints with one concept per session and a graded mastery gate.",
+  "author": { "name": "Nathan Wong" },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Learn",
+    "shortDescription": "Run practical learning sprints",
+    "longDescription": "Study one concept at a time through a real project, then use an evidence-based mastery gate to advance or repeat.",
+    "developerName": "Nathan Wong",
+    "category": "Education",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": "Start a learning sprint for this subject."
+  }
+}

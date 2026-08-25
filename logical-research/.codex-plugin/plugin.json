@@ -1,0 +1,16 @@
+{
+  "name": "logical-research",
+  "version": "1.0.0",
+  "description": "Turn a bounded corpus into reusable synthesis with evidence-graded claims and a traceable bibliography.",
+  "author": { "name": "Nathan Wong" },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Logical Research",
+    "shortDescription": "Build traceable context from a bounded corpus",
+    "longDescription": "Read a defined corpus end to end and produce evidence-graded synthesis, per-item notes, and a traceable bibliography.",
+    "developerName": "Nathan Wong",
+    "category": "Research",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": "Research this bounded corpus and build reusable context from it."
+  }
+}

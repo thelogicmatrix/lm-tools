@@ -1,0 +1,44 @@
+{
+  "name": "lm-tools",
+  "interface": {
+    "displayName": "lm-tools"
+  },
+  "plugins": [
+    {
+      "name": "gtg",
+      "source": { "source": "local", "path": "../../gtg" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    },
+    {
+      "name": "due-diligence",
+      "source": { "source": "local", "path": "../../due-diligence" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "logical-research",
+      "source": { "source": "local", "path": "../../logical-research" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Research"
+    },
+    {
+      "name": "projects",
+      "source": { "source": "local", "path": "../../projects" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    },
+    {
+      "name": "learn",
+      "source": { "source": "local", "path": "../../learn" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Education"
+    },
+    {
+      "name": "postman",
+      "source": { "source": "local", "path": "../../postman" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}

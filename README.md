@@ -1,6 +1,6 @@
 # lm-tools
 
-A marketplace of **modular frameworks for Claude Code** — tools built to be *extended*, not just installed. Each one ships a solid core and a documented extension point where you add your own pieces (commands, hooks, lenses) that live in *your* repo and survive updates. Take the defaults, or bend them to fit how you actually work.
+A marketplace of **modular frameworks for Claude Code and Codex** — tools built to be *extended*, not just installed. Each one ships a solid core and a documented extension point where you add your own pieces (commands, hooks, lenses) that live in *your* repo and survive updates. Take the defaults, or bend them to fit how you actually work.
 
 By [Nathan Wong](https://github.com/thelogicmatrix).
 
@@ -20,6 +20,22 @@ Then install whichever tools you want — they're independent:
 /plugin install learn@lm-tools
 /plugin install postman@lm-tools
 ```
+
+## Install in Codex
+
+Use Codex's native plugin marketplace support:
+
+```powershell
+codex plugin marketplace add thelogicmatrix/lm-tools
+codex plugin add gtg@lm-tools
+codex plugin add due-diligence@lm-tools
+codex plugin add logical-research@lm-tools
+codex plugin add projects@lm-tools
+codex plugin add learn@lm-tools
+codex plugin add postman@lm-tools
+```
+
+Each tool ships a `.codex-plugin/plugin.json` manifest. The skills and hooks remain shared with Claude Code, so the two harnesses run the same source rather than copied ports.
 
 Prefer a frozen, non-updating copy? Each tool is also a plain skill you can copy into
 `.claude/skills/` — see the per-tool README.

@@ -1,0 +1,16 @@
+{
+  "name": "due-diligence",
+  "version": "1.3.0",
+  "description": "Adversarial pre-ship review and build-to-standard construction using a modular lens system.",
+  "author": { "name": "Nathan Wong" },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Due Diligence",
+    "shortDescription": "Find material defects before delivery",
+    "longDescription": "Review deliverables adversarially with selected quality lenses, or use those lenses to define the build standard up front.",
+    "developerName": "Nathan Wong",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": "Run due diligence on this deliverable before I send it."
+  }
+}
