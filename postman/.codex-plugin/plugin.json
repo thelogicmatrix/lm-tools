@@ -1,0 +1,16 @@
+{
+  "name": "postman",
+  "version": "1.0.0",
+  "description": "Prepare verified outbound email batches with exact signatures and correctly threaded replies.",
+  "author": { "name": "Nathan Wong" },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Postman",
+    "shortDescription": "Prepare safe, correctly threaded email batches",
+    "longDescription": "Verify recipients, preserve exact signatures, resolve reply threads live, and require explicit approval before any email is sent.",
+    "developerName": "Nathan Wong",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": "Prepare this email batch for review without sending it."
+  }
+}

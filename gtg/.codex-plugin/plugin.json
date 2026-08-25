@@ -1,0 +1,16 @@
+{
+  "name": "gtg",
+  "version": "1.10.6",
+  "description": "Pause and resume Codex work with durable handoffs, project state, and exactly one next action.",
+  "author": { "name": "Nathan Wong" },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "gtg",
+    "shortDescription": "Pause and resume work without losing context",
+    "longDescription": "Checkpoint active work, write a durable handoff, and resume it cold from a later Codex session.",
+    "developerName": "Nathan Wong",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": "gtg"
+  }
+}
