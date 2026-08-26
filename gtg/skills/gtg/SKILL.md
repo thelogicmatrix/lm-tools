@@ -1,6 +1,6 @@
 ---
 name: gtg
-description: 'Activate on "gtg" anywhere in a message: wrap the current work for a cold resume, after doing whatever else the message asks. Also on "let''s continue <project>" or a session-start "gtg" to pick a parked project back up.'
+description: 'Activate on "gtg", alone or as "gtg <project>", anywhere in a message. Mid-session it wraps the current work for a cold resume (after doing whatever else the message asks); at session start it resumes the named or only parked project.'
 ---
 
 # GTG — Pause and Resume
@@ -14,7 +14,7 @@ repo, or `$GTG_HUB` if set.
 | Input | Do |
 |---|---|
 | `gtg` mid-session | Exit Procedure below. Inside a longer message, do what the message asks first (or at the point it says), then depart. No question either way. |
-| Session-start `gtg`, "let's continue <x>" | Read `references/resume.md`, follow it |
+| Session-start `gtg` or `gtg <project>` | Read `references/resume.md`, follow it |
 | `gtg <verb>` (list, prune, remove, backlog, …) | Read `references/commands.md`, follow it |
 
 ## Exit Procedure
