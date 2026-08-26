@@ -42,17 +42,18 @@ A message that is *only* `gtg…` at session start is a resume, not a departure.
    removes the entry from whichever store holds it and commits. `resume`, never `remove`:
    `remove`/`prune` means the project **shipped**, and mixing the two makes throughput history
    meaningless. The CLI owns this mechanic; don't hand-edit the JSON.
-6. **Restore working state** from the handoff's `## Active skills / Task list` section (skip
-   if absent; for older handoffs infer the discipline from "Active skills" plus the Next Action):
-   - **Methodology (binding, never ask):** whatever is listed is a decision the project already
-     made. Re-enter those skills and keep working under them, reading the plan or ledger the
-     line points at first. Only the handoff saying it was abandoned, or the user saying so
-     now, revokes it.
-   - **Task list (concrete):** for each `[status] subject` line, re-create the task with your
-     harness task tool (Claude Code: `ToolSearch("select:TaskCreate")` first), preserving the
-     subject. Status `pending` unless the line says `in_progress` (keep at most one).
-   - **Active skills (advisory):** context for what drove the last session, not instructions.
-     Re-enter one only if the Next Action genuinely calls for it.
+6. **Restore working state** (skip whatever section is absent; handoffs before 2.0.0 carry
+   both under one `## Active skills / Task list` heading, read the same way):
+   - **`## Methodology` (binding, never ask):** a decision the project already made. Re-enter
+     those skills and keep working under them, reading the plan or ledger it points at first.
+     Only the handoff saying it was abandoned, or the user saying so now, revokes it. An
+     older handoff's "Active skills" line is context only, never an instruction.
+   - **`## Task list` (concrete):** for each `- [status] subject` line, re-create the task with
+     your harness task tool (Claude Code: `ToolSearch("select:TaskCreate")` first), preserving
+     the subject. Status `pending` unless the line says `in_progress` (keep at most one);
+     skip lines marked `completed`.
+   - **`## Commits this session` / `## Files touched`** are the previous session's git
+     footprint, for orientation. Read them; do not re-do them.
    Then, if `<storage-root>/.gtg/skill/on-resume.md` exists, read and follow it too.
 7. Continue from the Next Action without further preamble.
 

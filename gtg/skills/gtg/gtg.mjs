@@ -229,14 +229,72 @@ function sessionDurationMin() {
   return min;
 }
 
+// ISO start of THIS session, from the same per-cwd stamp sessionDurationMin() reads.
+function sessionStartIso() {
+  const s = readStore('docs/handoffs/_session.json');
+  const iso = s?.sessions?.[process.cwd()];
+  return Number.isFinite(Date.parse(iso ?? '')) ? iso : undefined;
+}
+// Case-insensitive on Windows, where the hub env var and git's own path spelling differ.
+function samePath(x, y) {
+  const n = (s) => (process.platform === 'win32' ? resolve(s).toLowerCase() : resolve(s));
+  return n(x) === n(y);
+}
+// The repo the caller stands in, unless that repo is the hub itself.
+function inferWorktree() {
+  try {
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'],
+      { stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).toString().trim();
+    return top && !samePath(top, ROOT) ? top : 'repo root';
+  } catch { return 'repo root'; }
+}
+// Body of one `## <heading>` section, '' when absent.
+function sectionOf(body, heading) {
+  const m = body.match(new RegExp(`^## ${heading}[^\\n]*\\n([\\s\\S]*?)(?=\\n## |$)`, 'm'));
+  return m ? m[1].trim() : '';
+}
+// The harness's task list, read from disk so the skill neither loads a task tool nor types
+// the list into the body. Claude Code keeps <config dir>/tasks/<session id>/<n>.json; other
+// harnesses get [] and the section is simply absent.
+function readHarnessTasks() {
+  const sid = process.env.CLAUDE_CODE_SESSION_ID;
+  const cfg = process.env.CLAUDE_CONFIG_DIR || join(process.env.USERPROFILE || process.env.HOME || '', '.claude');
+  if (!sid || !cfg) return [];
+  const dir = join(cfg, 'tasks', sid);
+  if (!existsSync(dir)) return [];
+  const rows = [];
+  for (const f of readdirSync(dir)) {
+    if (!/^\d+\.json$/.test(f)) continue;
+    try {
+      const t = JSON.parse(readFileSync(join(dir, f), 'utf8'));
+      if (t?.subject) rows.push({ id: Number(t.id ?? f), line: `- [${t.status || 'pending'}] ${t.subject}` });
+    } catch { /* a half-written task file is not a reason to fail the handoff */ }
+  }
+  return rows.sort((x, y) => x.id - y.id).map((r) => r.line);
+}
+// Commits and files in a worktree since an ISO time. Empty on any git failure.
+function gitSince(dir, sinceIso) {
+  const opt = { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'], timeout: 4000 };
+  try {
+    const commits = execFileSync('git', ['log', `--since=${sinceIso}`, '--format=%h %s'], opt)
+      .toString().trim().split('\n').filter(Boolean);
+    const files = [...new Set(execFileSync('git', ['log', `--since=${sinceIso}`, '--name-only', '--format='], opt)
+      .toString().split('\n').map((s) => s.trim()).filter(Boolean))].sort();
+    return { commits, files };
+  } catch { return { commits: [], files: [] }; }
+}
+
 // --- handoff / backlog park ---------------------------------------------------
 async function writeHandoff(argv, { storeRel, key, verb }) {
   const a = parseFlags(argv);
+  const body = readFileSync(0, 'utf8').trim(); // stdin
+  // --next used to be typed twice, once as a flag and once as the body's Next Action section.
+  // The section is the truth; the flag is now an override for a body without one (2.0.0).
+  if (typeof a.next !== 'string') a.next = sectionOf(body, 'Next Action').split('\n').find((l) => l.trim()) || undefined;
   const missing = ['project', 'slug', 'next'].filter((k) => !a[k]);
-  if (missing.length) { console.error(`gtg ${verb}: missing --${missing.join(', --')}`); process.exit(2); }
+  if (missing.length) { console.error(`gtg ${verb}: missing --${missing.join(', --')}${missing.includes('next') ? ' (or a ## Next Action section in the body)' : ''}`); process.exit(2); }
   // slug becomes a filename and a git-add arg - constrain it so it can't traverse paths or inject shell.
   if (!/^[A-Za-z0-9_-]+$/.test(a.slug)) { console.error(`gtg ${verb}: --slug must match [A-Za-z0-9_-]`); process.exit(2); }
-  const body = readFileSync(0, 'utf8').trim(); // stdin
   if (!body) { console.error(`gtg ${verb}: empty body on stdin`); process.exit(2); }
   // Slug reuse lives HERE, not in a `list <name>` probe the skill runs first (one tool turn per
   // departure, 2026-08-26). A fresh slug for a project that already has an entry mints a
@@ -255,7 +313,9 @@ async function writeHandoff(argv, { storeRel, key, verb }) {
   }
   // ROOT is the storage hub, NOT the project. A project in its own worktree has
   // its own branch - detect there, or the hub's branch gets recorded for everyone.
-  const worktree = a.worktree || 'repo root';
+  // Inferred from where the call is made when the flag is omitted: a session runs in its
+  // worktree, so cwd's repo is the project unless that repo IS the hub.
+  const worktree = a.worktree || inferWorktree();
   let branch = a.branch;
   if (!branch) {
     const gitDir = worktree === 'repo root' ? ROOT : worktree;
@@ -267,17 +327,52 @@ async function writeHandoff(argv, { storeRel, key, verb }) {
   const d = new Date(); const p = (n) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
   const relFile = `docs/handoffs/${stamp}-${a.slug}.md`;
+  const prior = everything.find((e) => e.slug === a.slug);
+  const ownWorktree = worktree !== 'repo root' && !samePath(worktree, ROOT);
+  // --wip: checkpoint the worktree's uncommitted work inside this same call, so the skill
+  // spends no turn on status/add/commit. Worktree only: 'repo root' may be a checkout shared
+  // with concurrent sessions, where a tree-wide add sweeps their work (see commit() above), so
+  // there the caller names its own files. A clean tree is not an error. Runs BEFORE the
+  // git-derived sections below so the checkpoint shows up in them.
+  if (a.wip && ownWorktree && !a['dry-run']) {
+    const wt = { cwd: worktree, stdio: ['ignore', 'pipe', 'pipe'] };
+    try {
+      execFileSync('git', ['add', '-A'], wt);
+      execFileSync('git', ['commit', '-q', '-m', `wip: gtg checkpoint - ${a.project}`], wt);
+      console.log('wip: committed');
+    } catch (e) {
+      const out = `${e.stdout || ''}${e.stderr || ''}`;
+      if (!/nothing to commit|no changes added/i.test(out)) {
+        console.error(`gtg: wip commit failed - ${out.trim().split('\n')[0]}`);
+        process.exitCode = 1;
+      }
+    }
+  }
+  // Sections the model used to type that the machine already knows (2.0.0): the harness's
+  // task list from disk, and this session's commits and files from the worktree's git log.
+  // Only for a worktree of its own: the hub may be a checkout shared by concurrent sessions,
+  // where "commits since I started" would be everyone's. Each is added only when the body
+  // has not already got a section of that name, so a caller can still write its own.
+  const auto = [];
+  const tasks = readHarnessTasks();
+  if (tasks.length && !sectionOf(body, 'Task list')) auto.push(`## Task list\n${tasks.join('\n')}`);
+  if (ownWorktree && verb === 'handoff') {
+    const since = sessionStartIso() || prior?.updated || new Date(Date.now() - 12 * 3600e3).toISOString();
+    const { commits, files } = gitSince(worktree, since);
+    if (commits.length && !sectionOf(body, 'Commits this session')) auto.push(`## Commits this session\n${commits.map((l) => `- ${l}`).join('\n')}`);
+    if (files.length && !sectionOf(body, 'Files touched')) auto.push(`## Files touched\n${files.map((f) => `- ${f}`).join('\n')}`);
+  }
+  const fullBody = [body, ...auto].join('\n\n');
   const doc = `# Handoff: ${a.project}
 Date: ${stamp.slice(0, 10)} ${p(d.getHours())}:${p(d.getMinutes())}
 Worktree: ${worktree}
 Branch: ${branch}
 
-${body}
+${fullBody}
 
 ## Resume Prompt
 Say: "let's continue ${a.project}"
 `;
-  const prior = everything.find((e) => e.slug === a.slug);
   // Math.max guards the counter against going backwards: deleting old handoff
   // .md files (plain docs, fine to prune per the README) or two handoffs
   // landing in the same clock minute (one filename, one file on disk) would
@@ -301,24 +396,6 @@ Say: "let's continue ${a.project}"
     console.log(`--- DRY RUN: would write ${relFile} ---\n${doc}`);
     console.log(`--- ${storeRel} entry ---\n${JSON.stringify(entry, null, 2)}`);
     return;
-  }
-  // --wip: checkpoint the worktree's uncommitted work inside this same call, so the skill
-  // spends no turn on status/add/commit. Worktree only: 'repo root' may be a checkout shared
-  // with concurrent sessions, where a tree-wide add sweeps their work (see commit() above), so
-  // there the caller names its own files. A clean tree is not an error.
-  if (a.wip && worktree !== 'repo root' && resolve(worktree) !== resolve(ROOT)) {
-    const wt = { cwd: worktree, stdio: ['ignore', 'pipe', 'pipe'] };
-    try {
-      execFileSync('git', ['add', '-A'], wt);
-      execFileSync('git', ['commit', '-q', '-m', `wip: gtg checkpoint - ${a.project}`], wt);
-      console.log('wip: committed');
-    } catch (e) {
-      const out = `${e.stdout || ''}${e.stderr || ''}`;
-      if (!/nothing to commit|no changes added/i.test(out)) {
-        console.error(`gtg: wip commit failed - ${out.trim().split('\n')[0]}`);
-        process.exitCode = 1;
-      }
-    }
   }
   mkdirSync(join(ROOT, 'docs/handoffs'), { recursive: true });
   writeFileSync(join(ROOT, relFile), doc);
@@ -357,7 +434,7 @@ Say: "let's continue ${a.project}"
     try {
       const mod = await import(pathToFileURL(hook).href);
       if (typeof mod.default !== 'function') throw new Error('no default export function');
-      await mod.default({ root: ROOT, entry, file: relFile, body, worktree, readStore, writeStore, commit });
+      await mod.default({ root: ROOT, entry, file: relFile, body: fullBody, worktree, readStore, writeStore, commit });
     } catch (e) {
       console.error(`gtg: after-handoff hook failed - ${(e.stderr || e.message || String(e)).toString().trim().split('\n')[0]}`);
       process.exitCode = 1;
@@ -568,10 +645,13 @@ function backlogList() {
 
 function help() {
   console.log(`gtg - pause/resume + backlog bookkeeping
-  gtg handoff --project --slug --next [--eta] [--parent] [--worktree] [--branch] [--dry-run]   (body on stdin)
+  gtg handoff --project --slug [--next] [--eta] [--parent] [--worktree] [--branch] [--dry-run]   (body on stdin)
+      --next defaults to the body's "## Next Action" first line; --worktree to the repo you run it from
       [--wip]      commit the worktree's uncommitted work first (worktree only, never the shared root)
       [--exact]    keep --slug literally; by default one name-matching entry lends its slug
       [--harness]  who wrote it (claude|codex|...); auto-detected from the environment
+      appends "## Task list" (harness task store) and, in a worktree, "## Commits this session"
+      and "## Files touched" (git log since the session started) unless the body has them;
       runs <root>/.gtg/after-handoff.mjs afterwards if present (default export fn(ctx))
   gtg backlog [same flags]     park on the backlog shelf (body on stdin); bare = list the shelf
   gtg list [project]           active handoffs (+ 7-day auto-shelf sweep); optional filter

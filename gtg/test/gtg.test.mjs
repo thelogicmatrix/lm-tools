@@ -38,7 +38,7 @@ function tempRepoNoIdentity() {
 function gtg(cwd, args, opts = {}) {
   const env = { ...process.env, ...(opts.env || {}) };
   delete env.GTG_HUB;
-  delete env.CLAUDE_CODE_SESSION_ID;
+  if (!(opts.env && 'CLAUDE_CODE_SESSION_ID' in opts.env)) delete env.CLAUDE_CODE_SESSION_ID;
   env.GIT_CEILING_DIRECTORIES = tmpdir();
   if (opts.session === null) delete env.GTG_SESSION_ID;
   else env.GTG_SESSION_ID = opts.session || 'test-session';
@@ -2205,6 +2205,65 @@ export default async (ctx) => {
   assert.equal('harness' in u && u.harness !== undefined, false);
   assert.doesNotMatch(gtg(dir, ['list']).stdout, /Unknown s1 \[~2h\] \([^)]*\) ·/);
   console.log('ok 62 - harness recorded from env or --harness and shown on the row');
+}
+
+// --- 2.0.0: --next from the body, worktree from cwd, git + task sections the CLI appends ---
+{
+  const dir = tempRepo();
+  const body = '## Where We Stopped\npara\n\n## Next Action\nShip the thing.\nsecond line ignored\n';
+  let r = gtg(dir, ['handoff', '--project', 'Derived', '--slug', 'derived'], { input: body });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(active(dir).handoffs[0].next, 'Ship the thing.');
+  r = gtg(dir, ['handoff', '--project', 'NoNext', '--slug', 'nonext'], { input: '## Where We Stopped\nx\n' });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /missing --next \(or a ## Next Action section in the body\)/);
+  console.log('ok 63 - --next is read from the body; a body with neither is refused');
+}
+
+{
+  // Run from a worktree: worktree + branch inferred, commits and files since the session
+  // start appended. Run from the hub: 'repo root', no git sections (a shared checkout).
+  const hub = tempRepo();
+  const wt = tempRepo();
+  writeFileSync(join(wt, 'a.txt'), 'a\n');
+  execSync('git add a.txt && git commit -q -m "feat: first"', { cwd: wt });
+  writeFileSync(join(wt, 'b.txt'), 'b\n');
+  let r = gtg(wt, [...HANDOFF_ARGS('inf', 'Inferred'), '--wip'], { input: BODY, hub });
+  assert.equal(r.status, 0, r.stderr);
+  const e = active(hub).handoffs[0];
+  const norm = (s) => s.toLowerCase().split(String.fromCharCode(92)).join("/");
+  assert.equal(norm(e.worktree), norm(wt));
+  assert.equal(e.branch, 'main');
+  const doc = readFileSync(join(hub, e.file), 'utf8');
+  assert.match(doc, /## Commits this session\n- [0-9a-f]+ wip: gtg checkpoint - Inferred\n- [0-9a-f]+ feat: first/);
+  assert.match(doc, /## Files touched\n- a\.txt\n- b\.txt/);
+  r = gtg(hub, HANDOFF_ARGS('root', 'Root Project'), { input: BODY, hub });
+  const e2 = active(hub).handoffs.find((x) => x.slug === 'root');
+  assert.equal(e2.worktree, 'repo root');
+  assert.doesNotMatch(readFileSync(join(hub, e2.file), 'utf8'), /## Commits this session/);
+  console.log('ok 64 - worktree inferred from cwd; commits + files appended for a worktree only');
+}
+
+{
+  // Task list read from the harness store; a body that carries its own is left alone.
+  const dir = tempRepo();
+  const cfg = mkdtempSync(join(tmpdir(), 'gtg-cfg-'));
+  mkdirSync(join(cfg, 'tasks', 'sess-1'), { recursive: true });
+  writeFileSync(join(cfg, 'tasks', 'sess-1', '2.json'), JSON.stringify({ id: '2', subject: 'Second', status: 'in_progress' }));
+  writeFileSync(join(cfg, 'tasks', 'sess-1', '1.json'), JSON.stringify({ id: '1', subject: 'First', status: 'completed' }));
+  writeFileSync(join(cfg, 'tasks', 'sess-1', '.lock'), '');
+  const env = { CLAUDE_CONFIG_DIR: cfg, CLAUDE_CODE_SESSION_ID: 'sess-1' };
+  let r = gtg(dir, HANDOFF_ARGS('t', 'Tasked'), { input: BODY, env });
+  assert.equal(r.status, 0, r.stderr);
+  let doc = readFileSync(join(dir, active(dir).handoffs[0].file), 'utf8');
+  assert.match(doc, /## Task list\n- \[completed\] First\n- \[in_progress\] Second\n/);
+  r = gtg(dir, HANDOFF_ARGS('t2', 'Own List'), { input: BODY + '\n## Task list\n- [pending] mine\n', env });
+  doc = readFileSync(join(dir, active(dir).handoffs.find((x) => x.slug === 't2').file), 'utf8');
+  assert.equal((doc.match(/## Task list/g) || []).length, 1);
+  assert.match(doc, /- \[pending\] mine/);
+  r = gtg(dir, HANDOFF_ARGS('t3', 'No Session'), { input: BODY, env: { CLAUDE_CONFIG_DIR: cfg, CLAUDE_CODE_SESSION_ID: 'nope' } });
+  assert.doesNotMatch(readFileSync(join(dir, active(dir).handoffs.find((x) => x.slug === 't3').file), 'utf8'), /## Task list/);
+  console.log('ok 65 - task list appended from the harness store, never duplicated, absent when unknown');
 }
 
 console.log('ALL PASS');
