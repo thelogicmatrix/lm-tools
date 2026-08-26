@@ -14,8 +14,21 @@ repo, or `$GTG_HUB` if set.
 | Input | Do |
 |---|---|
 | `gtg` mid-session | Exit Procedure below. Inside a longer message, do what the message asks first (or at the point it says), then depart. No question either way. |
-| Session-start `gtg` or `gtg <project>` | Read `references/resume.md`, follow it |
+| Session-start `gtg` or `gtg <project>` | Resume Procedure below |
 | `gtg <verb>` (list, prune, remove, backlog, …) | Read `references/commands.md`, follow it |
+
+## Resume Procedure
+
+**One call:** `gtg.mjs resume <project>` (bare `gtg` → no argument). It prints the handoff,
+consumes the entry, and runs the after-resume hook. Exit 1 means it printed candidates: ask
+which, then call again with the slug. Exit 2 with "is a command" means run that command
+instead. Then, from the printed handoff: relay its first line. `## Methodology` is a decision
+already made, re-enter it without asking. `## Task list`: re-create each non-completed line
+with your task tool, `pending` unless it says `in_progress`. `## Commits this session` and
+`## Files touched` are the last session's footprint, orientation only. Continue from the
+Next Action with no preamble. If the Next Action already looks done, say so and ask how to
+proceed; the entry stays consumed either way. A `GTG-DIRECTIVE:` line in any CLI output is
+followed, not relayed (an issues package resumes with `--keep`, never consumed).
 
 ## Exit Procedure
 

@@ -24,7 +24,7 @@ export default ({ args, ownEntries, countHandoffFiles }) => {
       (e) => `${e.slug} ${e.project}`.toLowerCase().includes(topic),
     );
     if (hit.length === 1) {
-      console.log(`GTG-DIRECTIVE: resume ${hit[0].slug} - read references/resume.md and follow it.`);
+      console.log(`GTG-DIRECTIVE: run gtg.mjs resume ${hit[0].slug} and follow SKILL.md's Resume Procedure.`);
       return;
     }
     console.log(

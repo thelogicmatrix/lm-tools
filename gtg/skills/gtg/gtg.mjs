@@ -658,7 +658,11 @@ function help() {
   gtg back <n|slug>            shelf an active entry to the backlog
   gtg active <n|slug>          reactivate a backlog entry
   gtg remove <n|slug>          drop an entry (active first, then backlog)
-  gtg resume <n|slug>          consume an entry on pick-up (NOT a ship)
+  gtg resume [n|slug|name] [--keep]
+                               the whole pick-up: prints the handoff, consumes the entry (NOT a
+                               ship), runs <root>/.gtg/after-resume.mjs if present. Bare = the
+                               only active project, else the list. --keep reads without consuming
+                               (issue packages). Exit 1 = choose from the candidates printed
   gtg supersede <n|slug> [--into <n|slug>]
                                rolled up or created in error (neither ship nor abandon)
   gtg rename <n|slug> <new>    change a slug, re-pointing any sub-projects. With a slug nothing
@@ -899,27 +903,95 @@ function supersede(argv) {
 
 // resume-consume: same removal as prune, DIFFERENT commit subject. Keeping these
 // distinct is what lets history tell "shipped" apart from "picked back up".
-function resumeConsume(argv) {
-  const t = argv[0];
-  if (!t) { console.error("Usage: gtg resume <number|slug>  (see 'gtg list')"); process.exit(2); }
+// The whole resume in one call (3.0.0): resolve the name, print the handoff, consume the
+// entry, run the after-resume hook. Before this the skill read both store files (25KB on a
+// busy hub), then the handoff, then called consume, then probed for a markdown hook: five
+// turns and the entire store in context to pick one entry out of it.
+//
+// Exit codes: 0 resumed, 1 a choice is needed (candidates printed on stdout), 2 nothing to
+// resume. Output order is deliberate: the handoff text lands before the store write, so a
+// consume failure still leaves the content on screen.
+function commandFileFor(t) {
+  if (!/^[A-Za-z0-9_-]+$/.test(t)) return false;
+  return existsSync(join(ROOT, '.gtg', 'commands', `${t}.mjs`))
+    || existsSync(join(CLI_DIR, 'extensions', 'commands', `${t}.mjs`));
+}
+async function resumeConsume(argv) {
+  const a = parseFlags(argv);
+  const t = argv.find((x) => !x.startsWith('--'));
   const act = entries(REL_ACTIVE, 'handoffs');
-  const match = resolveEntry(act, t, displayOrder);
-  if (match) {
+  const bl = entries(REL_BACKLOG, 'backlog');
+  let match = null;
+  let fromBacklog = false;
+  if (!t) {
+    // Bare `gtg` at session start: one open project is not a choice, several are.
+    const vis = userVisible(act);
+    if (vis.length === 1) match = vis[0];
+    else {
+      renderList([]);
+      console.log(vis.length ? '\nWhich? gtg <project>' : '\nNothing to resume.');
+      process.exit(vis.length ? 1 : 2);
+    }
+  } else {
+    match = resolveEntry(act, t, displayOrder);
+    // A name fragment that fits several projects is a question, not a guess. A number or an
+    // exact slug is never ambiguous.
+    const nameHits = act.filter((e) => e.project.toLowerCase().includes(t.toLowerCase()));
+    if (match && !/^\d+$/.test(t) && match.slug !== t && nameHits.length > 1) {
+      console.log(`'${t}' matches ${nameHits.length} active projects:`);
+      nameHits.forEach((e, i) => console.log(`  ${i + 1}. ${e.project} (${e.slug}) - ${e.next}`));
+      console.log('Which? gtg <slug>');
+      process.exit(1);
+    }
+    if (!match) {
+      match = resolveEntry(bl, t.replace(/^[bB](?=\d+$)/, ''));
+      fromBacklog = !!match;
+    }
+    if (!match) {
+      console.error(commandFileFor(t)
+        ? `No project matching '${t}'; '${t}' is a command - run gtg ${t}.`
+        : `No project matching '${t}'. Try 'gtg list' or 'gtg backlog'.`);
+      process.exit(2);
+    }
+    // Session-start collision: a project AND a command share the token (a project called
+    // `issues`, say). Both are real; picking silently made one of them unreachable.
+    if (!/^\d+$/.test(t) && commandFileFor(t)) {
+      console.log(`'${t}' is both a project and a command:`);
+      console.log(`  1. ${match.project} (${match.slug}) - ${match.next}`);
+      console.log(`  2. run the \`${t}\` command`);
+      console.log('Which?');
+      process.exit(1);
+    }
+  }
+  const file = match.file ? join(ROOT, match.file) : null;
+  const body = file && existsSync(file) ? readFileSync(file, 'utf8').trim() : null;
+  const when = typeof match.updated === 'string' ? match.updated.slice(0, 16).replace('T', ' ') : '?';
+  console.log(`RESUME: "${match.project}" - handoff of ${when}${match.file ? ` (${match.file})` : ''}`);
+  console.log(body ?? `(no handoff file at ${match.file ?? 'none'}; the entry's next action is all there is: ${match.next})`);
+  if (a.keep) {
+    console.log(`Kept: ${match.project} (not consumed)`);
+  } else if (fromBacklog) {
+    saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== match));
+    commit([REL_BACKLOG], `gtg resume: ${match.project} - backlog handoff consumed`);
+    console.log(`Consumed from backlog: ${match.project}`);
+  } else {
     saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
     commit([REL_ACTIVE], `gtg resume: ${match.project} - handoff consumed`);
     console.log(`Consumed: ${match.project}`);
-    return;
   }
-  const bl = entries(REL_BACKLOG, 'backlog');
-  const blMatch = resolveEntry(bl, t.replace(/^[bB](?=\d+$)/, ''));
-  if (blMatch) {
-    saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== blMatch));
-    commit([REL_BACKLOG], `gtg resume: ${blMatch.project} - backlog handoff consumed`);
-    console.log(`Consumed from backlog: ${blMatch.project}`);
-    return;
+  // After-resume hook: <root>/.gtg/after-resume.mjs, the resume-side twin of after-handoff.
+  // Replaces the markdown on-resume.md the model used to probe for and read.
+  const hook = join(ROOT, '.gtg', 'after-resume.mjs');
+  if (existsSync(hook)) {
+    try {
+      const mod = await import(pathToFileURL(hook).href);
+      if (typeof mod.default !== 'function') throw new Error('no default export function');
+      await mod.default({ root: ROOT, entry: match, file: match.file ?? null, body: body ?? '', kept: !!a.keep, readStore, writeStore, commit });
+    } catch (e) {
+      console.error(`gtg: after-resume hook failed - ${(e.stderr || e.message || String(e)).toString().trim().split('\n')[0]}`);
+      process.exitCode = 1;
+    }
   }
-  console.error(`No project matching '${t}'. Try 'gtg list' or 'gtg backlog'.`);
-  process.exit(2);
 }
 
 // undo = restore BOTH stores from before THIS SESSION'S last commit that touched

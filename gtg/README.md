@@ -40,8 +40,8 @@ Requires Node.js ≥ 18 and git on PATH.
 | You say | What happens |
 |---|---|
 | "gtg" (or any departure phrase) | Handoff written to `docs/handoffs/`, entry pinned, both committed. One CLI call, run from the worktree: `--wip` checkpoints it first, an existing entry's slug is reused when the project name matches it (`--exact` to opt out), the next action is read from the body's `## Next Action`, the worktree from where you ran it, the task list and this session's commits from disk, and the writing harness is recorded (`--harness` to override) |
-| "let's continue <project>" | Handoff found, read, resumed from its Next Action; entry consumed |
-| "gtg resume <n\|slug>" | Consume a handoff on pick-up — **not** a ship |
+| "gtg <project>" at session start | One CLI call (`gtg resume <project>`) prints the handoff, consumes the entry and runs `.gtg/after-resume.mjs`; the session continues from the Next Action. Bare "gtg" with one active project does the same without naming it. A name that fits several projects, or a project sharing its name with a command, prints the candidates instead (exit 1) |
+| "gtg resume <n\|slug>" | The same, by hand. Consuming is a pick-up, **not** a ship. `--keep` reads without consuming |
 | "gtg <project>" as the first thing you say | Resumes that project. At session start a project name outranks an *extension* verb; if both exist (a project called `issues` **and** your own `gtg issues` command) you get a numbered pick list instead of a guess. Mid-session the verb wins, and core verbs (`list`, `report`, `stats`, …) are always commands |
 | "gtg stats" | A terminal snapshot: streak, shipped count, deepest project, effort, velocity |
 | "gtg report" | Writes `docs/handoffs/_report.json`, then `/reporter` builds an HTML habit-grid report from it |
@@ -94,7 +94,7 @@ hardcoded-`1` bug.
 A command whose output's **first line** starts with `GTG-DIRECTIVE:` is not relayed to you —
 the skill follows the instruction on that line instead. That lets a custom command hand control
 back to a skill procedure rather than just printing, e.g.
-`console.log('GTG-DIRECTIVE: resume my-project — read references/resume.md and follow it.')`
+`console.log('GTG-DIRECTIVE: run gtg.mjs resume my-project and follow SKILL.md\'s Resume Procedure.')`
 makes `gtg <yourverb> <arg>` resolve an argument to a slug and then run the real Resume Procedure,
 consume step and hooks included, instead of reimplementing it. Both bundled extensions use it:
 `gtg issues <name>` and `gtg learn <topic>` resolve their argument and then hand off to the
@@ -140,17 +140,18 @@ deliberately narrower than the general rule that `gtg list` never shows backlog 
 *normal* project is still invisible to a query, because widening that is a behaviour change rather
 than a fix.
 
-**2. Procedure hooks** — one markdown hook on the resume side, one script hook on the exit
-side:
+**2. Procedure hooks** — two script hooks, one per direction:
 
 ```
-.gtg/skill/on-resume.md   # instructions the model reads while a handoff is being consumed
 .gtg/after-handoff.mjs    # default export fn(ctx), runs after `gtg handoff` has committed
+.gtg/after-resume.mjs     # default export fn(ctx), runs after `gtg resume` has printed + consumed
 ```
 
-There is no markdown exit hook any more (2.0.0 removed `.gtg/skill/on-exit.md`): checking
-for one cost a tool turn on every departure, and anything an exit hook did is either
-mechanical (belongs in the script) or already in the handoff body. On exit the CLI itself
+There are no markdown hooks any more (2.0.0 removed `.gtg/skill/on-exit.md`, 3.0.0 removed
+`on-resume.md`): checking for one cost a tool turn every time, and anything they did is
+either mechanical (belongs in the script) or already in the handoff body. The resume hook's
+`ctx` is `{ root, entry, file, body, kept, readStore, writeStore, commit }`; `kept` is true
+under `--keep`. On exit the CLI itself
 appends what the machine knows and the model used to type: a `## Task list` read from the
 harness's task store (Claude Code: `<config dir>/tasks/<session id>/`), and, for a project in
 its own worktree, `## Commits this session` and `## Files touched` from its git log since the
