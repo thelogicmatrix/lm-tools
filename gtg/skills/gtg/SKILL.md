@@ -25,8 +25,10 @@ uncommitted work; in the repo root commit the work's own files first
 (`git add <paths> && git commit <paths> -m "wip: gtg checkpoint - <brief>"`, paths on both
 ends). `--parent` = the `docs/projects/` family slug for a sub-project, from context.
 `--eta` = rough time left on the Next Action. The CLI appends the task list, this session's
-commits and the files touched from disk, so write only what git cannot know. Next Action:
-one action, copied from the plan doc when one exists. Skip any section that would say "none".
+commits and the files touched from disk, so write only what git cannot know. Exception: in
+the repo root (a shared checkout) it cannot attribute commits, so add `## Commits this
+session` yourself, `hash subject` per line. Next Action: one action, copied from the plan
+doc when one exists. Skip any section that would say "none".
 
 ```bash
 gtg.mjs handoff --project "<Name>" --slug <slug> --eta "~2h" [--parent <family>] [--wip] <<'BODY'
