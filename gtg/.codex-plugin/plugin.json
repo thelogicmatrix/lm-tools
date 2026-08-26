@@ -1,6 +1,6 @@
 {
   "name": "gtg",
-  "version": "1.10.6",
+  "version": "1.11.0",
   "description": "Pause and resume Codex work with durable handoffs, project state, and exactly one next action.",
   "author": { "name": "Nathan Wong" },
   "skills": "./skills/",

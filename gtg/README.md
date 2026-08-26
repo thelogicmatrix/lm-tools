@@ -39,7 +39,7 @@ Requires Node.js ≥ 18 and git on PATH.
 
 | You say | What happens |
 |---|---|
-| "gtg" (or any departure phrase) | Handoff written to `docs/handoffs/`, entry pinned, both committed |
+| "gtg" (or any departure phrase) | Handoff written to `docs/handoffs/`, entry pinned, both committed. One CLI call: `--wip` checkpoints the worktree first, an existing entry's slug is reused when the project name matches it (`--exact` to opt out), and the writing harness is recorded (`--harness` to override) |
 | "let's continue <project>" | Handoff found, read, resumed from its Next Action; entry consumed |
 | "gtg resume <n\|slug>" | Consume a handoff on pick-up — **not** a ship |
 | "gtg <project>" as the first thing you say | Resumes that project. At session start a project name outranks an *extension* verb; if both exist (a project called `issues` **and** your own `gtg issues` command) you get a numbered pick list instead of a guess. Mid-session the verb wins, and core verbs (`list`, `report`, `stats`, …) are always commands |
@@ -68,7 +68,7 @@ gtg has three tiers. You only ever touch the third.
 | Tier | Lives in | Active |
 |---|---|---|
 | **Core** | the plugin's `gtg.mjs` + `SKILL.md` | always |
-| **Bundled** | the plugin's `extensions/` | on by default (`gtg issues`, `gtg learn`, `gtg stats`, `gtg report`, reattachment hooks) |
+| **Bundled** | the plugin's `extensions/` | on by default (`gtg issues`, `gtg learn`, `gtg stats`, `gtg report`) |
 | **Yours** | `<storage-root>/.gtg/` | when you add a file |
 
 Two extension points:
@@ -148,12 +148,21 @@ can add project-specific steps without forking the skill:
 .gtg/skill/on-resume.md   # runs while a handoff is being consumed
 ```
 
-A hook is just instructions the model reads and follows. See the bundled examples in the
-plugin's `extensions/skill/`.
+A markdown hook is instructions the model reads and follows, so it costs model tokens on
+every departure. Prefer the script hook for anything mechanical:
+
+```
+.gtg/after-handoff.mjs    # default export fn(ctx), runs after `gtg handoff` has committed
+```
+
+`ctx` = `{ root, entry, file, body, worktree, readStore, writeStore, commit }` — the entry
+just written, the handoff's path and body, and the same store helpers commands get. This
+is where a derived `docs/sessions/` entry or a portfolio-row flip belongs: zero model
+tokens, and it cannot be skipped in a hurry. A throwing hook is reported on stderr and
+sets the exit code; the handoff itself is already committed and stays so.
 
 **Resolution & precedence:** built-in commands always win. Otherwise **your** `.gtg/`
-command overrides a bundled one of the same name (so you can replace `stats`). Hooks are
-**additive** — the bundled hook runs, then yours.
+command overrides a bundled one of the same name (so you can replace `stats`).
 
 **Update-safe by design:** your `.gtg/` lives in your own repo/hub, never inside the
 plugin, and the CLI only ever *reads* it — a plugin update can't touch your files. The
@@ -203,6 +212,7 @@ Each entry in `docs/handoffs/_active.json` / `_backlog.json`:
 | `branch` | `--branch`, else detected **in the worktree** | the project's branch, not the hub's |
 | `parent` | `--parent`, else inferred from `docs/projects/INDEX.md` | family page slug; absent means standalone |
 | `duration_min` | auto | session length from `_session.json`; absent when unknown or stale |
+| `harness` | `--harness`, else detected from the environment | who wrote the last handoff (`claude`, `codex`, …); shown on the `list` row; absent on pre-1.11 entries |
 | `eta` | `--eta` | rough time remaining on the next action |
 | `next` | `--next` | the one concrete next action |
 | `file` | auto | path to the handoff document |
