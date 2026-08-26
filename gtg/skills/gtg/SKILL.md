@@ -1,6 +1,6 @@
 ---
 name: gtg
-description: 'Activate when the user says "gtg", "gotta go", "got to go", "need to sleep", "heading out", or any clear session-ending departure phrase — wraps current work and packages it for cold resume. Also activate on "gtg list", "gtg prune" / "gtg remove <project>", "gtg peek <project>", "gtg resume <project>" / "let''s continue <project>", "gtg backlog" / "gtg back <n|slug>" / "gtg active <n|slug>", or "gtg backlog <idea>" (park a long-horizon idea).'
+description: 'Activate on "gtg" anywhere in a message: wrap the current work for a cold resume, after doing whatever else the message asks. Also on "let''s continue <project>" or a session-start "gtg" to pick a parked project back up.'
 ---
 
 # GTG — Pause and Resume
@@ -13,26 +13,20 @@ repo, or `$GTG_HUB` if set.
 
 | Input | Do |
 |---|---|
-| Mid-session `gtg` / any departure phrase, optionally `gtg [project]` | Exit Procedure below |
-| Session-start `gtg` or `gtg <project>`, `gtg resume <x>`, "let's continue <x>" | Read `references/resume.md`, follow it |
-| Any other `gtg <verb>` (list, prune, remove, peek, backlog, back, active, supersede, rename, unparent, log, report, stats, issues, learn, …) | Read `references/commands.md`, follow it |
-
-Read a reference only when its row fires.
+| `gtg` mid-session | Exit Procedure below. Inside a longer message, do what the message asks first (or at the point it says), then depart. No question either way. |
+| Session-start `gtg`, "let's continue <x>" | Read `references/resume.md`, follow it |
+| `gtg <verb>` (list, prune, remove, backlog, …) | Read `references/commands.md`, follow it |
 
 ## Exit Procedure
 
-1. **Confirm only if embedded.** Bare departure phrase → step 2. Embedded in a longer message →
-   one line, `"Wrapping <project> at <stoppable point> — confirm and go?"`, wait for a yes.
-2. **One call, run from the worktree.** Name the project from context, never ask. Slugify
-   the name; the CLI swaps in an existing entry's slug when the name matches exactly one.
-   `gtg [project]` means that slug literally: add `--exact`. `--wip` commits the worktree's
-   uncommitted work; in the repo root commit the work's own files first
-   (`git add <paths> && git commit <paths> -m "wip: gtg checkpoint - <brief>"`, paths on both
-   ends). `--parent` = the `docs/projects/` family slug for a sub-project (from context; a
-   wrong guess mis-groups a row, a question breaks the wrap). `--eta` = rough time left on the
-   Next Action. The CLI appends the task list, this session's commits and the files touched
-   from disk, so write only what git cannot know. Next Action: one action, copied from the
-   plan doc when one exists. Skip any section that would say "none".
+**One call, run from the worktree.** Name the project from context. Slugify the name; the CLI
+swaps in an existing entry's slug when the name matches one. `--wip` commits the worktree's
+uncommitted work; in the repo root commit the work's own files first
+(`git add <paths> && git commit <paths> -m "wip: gtg checkpoint - <brief>"`, paths on both
+ends). `--parent` = the `docs/projects/` family slug for a sub-project, from context.
+`--eta` = rough time left on the Next Action. The CLI appends the task list, this session's
+commits and the files touched from disk, so write only what git cannot know. Next Action:
+one action, copied from the plan doc when one exists. Skip any section that would say "none".
 
 ```bash
 gtg.mjs handoff --project "<Name>" --slug <slug> --eta "~2h" [--parent <family>] [--wip] <<'BODY'
@@ -56,8 +50,8 @@ gtg.mjs handoff --project "<Name>" --slug <slug> --eta "~2h" [--parent <family>]
 BODY
 ```
 
-3. **Relay the CLI's last line, then stop.** No summary, no offer, no follow-up.
+**Relay the CLI's last line, then stop.** No summary, no offer, no follow-up.
 
 ## Anti-Patterns
-- The step-1 confirmation is the only question a departure ever asks.
-- Stop at the nearest stoppable point. Finish nothing.
+- A departure never asks a question.
+- Stop at the nearest stoppable point. Nothing new beyond what the message itself asked for.
