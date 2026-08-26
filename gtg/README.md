@@ -39,7 +39,7 @@ Requires Node.js ≥ 18 and git on PATH.
 
 | You say | What happens |
 |---|---|
-| "gtg" (or any departure phrase) | Handoff written to `docs/handoffs/`, entry pinned, both committed. One CLI call: `--wip` checkpoints the worktree first, an existing entry's slug is reused when the project name matches it (`--exact` to opt out), and the writing harness is recorded (`--harness` to override) |
+| "gtg" (or any departure phrase) | Handoff written to `docs/handoffs/`, entry pinned, both committed. One CLI call, run from the worktree: `--wip` checkpoints it first, an existing entry's slug is reused when the project name matches it (`--exact` to opt out), the next action is read from the body's `## Next Action`, the worktree from where you ran it, the task list and this session's commits from disk, and the writing harness is recorded (`--harness` to override) |
 | "let's continue <project>" | Handoff found, read, resumed from its Next Action; entry consumed |
 | "gtg resume <n\|slug>" | Consume a handoff on pick-up — **not** a ship |
 | "gtg <project>" as the first thing you say | Resumes that project. At session start a project name outranks an *extension* verb; if both exist (a project called `issues` **and** your own `gtg issues` command) you get a numbered pick list instead of a guess. Mid-session the verb wins, and core verbs (`list`, `report`, `stats`, …) are always commands |
@@ -140,20 +140,21 @@ deliberately narrower than the general rule that `gtg list` never shows backlog 
 *normal* project is still invisible to a query, because widening that is a behaviour change rather
 than a fix.
 
-**2. Procedure hooks** — the exit and resume flows load markdown hooks if present, so you
-can add project-specific steps without forking the skill:
+**2. Procedure hooks** — one markdown hook on the resume side, one script hook on the exit
+side:
 
 ```
-.gtg/skill/on-exit.md     # runs while the handoff is being written (may append to it / stage files)
-.gtg/skill/on-resume.md   # runs while a handoff is being consumed
-```
-
-A markdown hook is instructions the model reads and follows, so it costs model tokens on
-every departure. Prefer the script hook for anything mechanical:
-
-```
+.gtg/skill/on-resume.md   # instructions the model reads while a handoff is being consumed
 .gtg/after-handoff.mjs    # default export fn(ctx), runs after `gtg handoff` has committed
 ```
+
+There is no markdown exit hook any more (2.0.0 removed `.gtg/skill/on-exit.md`): checking
+for one cost a tool turn on every departure, and anything an exit hook did is either
+mechanical (belongs in the script) or already in the handoff body. On exit the CLI itself
+appends what the machine knows and the model used to type: a `## Task list` read from the
+harness's task store (Claude Code: `<config dir>/tasks/<session id>/`), and, for a project in
+its own worktree, `## Commits this session` and `## Files touched` from its git log since the
+session started. A body that already carries a section of the same name keeps its own.
 
 `ctx` = `{ root, entry, file, body, worktree, readStore, writeStore, commit }` — the entry
 just written, the handoff's path and body, and the same store helpers commands get. This

@@ -23,48 +23,40 @@ Read a reference only when its row fires.
 
 1. **Confirm only if embedded.** Bare departure phrase → step 2. Embedded in a longer message →
    one line, `"Wrapping <project> at <stoppable point> — confirm and go?"`, wait for a yes.
-2. **Look before writing.** Load the task list: `ToolSearch("select:TaskList")`, then
-   `TaskList`. An unloaded tool is not an empty list. If `<storage-root>/.gtg/skill/on-exit.md`
-   exists, read and follow it (it may add to the body or stage files).
-3. **One call.** Name the project from context, never ask. Slug: slugify the name; the CLI
-   swaps in an existing entry's slug when the name matches exactly one, so no lookup first.
-   `gtg [project]` means that slug literally: pass it with `--exact`. `--wip` commits the
-   worktree's uncommitted work; in the repo root commit the work's own files first
+2. **One call, run from the worktree.** Name the project from context, never ask. Slugify
+   the name; the CLI swaps in an existing entry's slug when the name matches exactly one.
+   `gtg [project]` means that slug literally: add `--exact`. `--wip` commits the worktree's
+   uncommitted work; in the repo root commit the work's own files first
    (`git add <paths> && git commit <paths> -m "wip: gtg checkpoint - <brief>"`, paths on both
-   ends). `--parent` = the `docs/projects/` family slug when this is a sub-project (you know
-   it from context; a wrong guess mis-groups a row, a question breaks the wrap). `--eta` =
-   rough time left on the Next Action. Next Action: one action, copied from the plan doc when
-   one exists. Drop a section that would say "none".
+   ends). `--parent` = the `docs/projects/` family slug for a sub-project (from context; a
+   wrong guess mis-groups a row, a question breaks the wrap). `--eta` = rough time left on the
+   Next Action. The CLI appends the task list, this session's commits and the files touched
+   from disk, so write only what git cannot know. Next Action: one action, copied from the
+   plan doc when one exists. Skip any section that would say "none".
 
 ```bash
-gtg.mjs handoff --project "<Name>" --slug <slug> --eta "~2h" \
-  --next "<one line, <150 chars>" [--parent <family>] [--worktree "<path>"] [--wip] <<'BODY'
-## What Was Done This Session
-- <significant actions and decisions>
-
+gtg.mjs handoff --project "<Name>" --slug <slug> --eta "~2h" [--parent <family>] [--wip] <<'BODY'
 ## Where We Stopped
 <one paragraph: last completed thing, why here>
 
 ## Next Action
 <single concrete first action on resume>
 
-## Open Questions
-- <unresolved decisions>
-
 ## Key Decisions Made
 - <so a fresh session doesn't re-litigate>
 
-## Relevant Files
-- <path> — <purpose>
+## Open Questions
+- <unresolved decisions>
 
-## Active skills / Task list
-- **Methodology (standing):** <the build discipline this project committed to and where its state lives, e.g. `superpowers:subagent-driven-development` executing `docs/plans/foo.md`; "none"; or "abandoned: <why>">
-- **Active skills (transient):** <skills that drove this session; not binding on the next>
-- **Task list:** one `[status] subject` per line, as it stands right now
+## Methodology
+<the build discipline this project committed to and where its state lives, e.g. `superpowers:subagent-driven-development` executing `docs/plans/foo.md`; or "abandoned: <why>">
+
+## What Was Done This Session
+- <only work git does not show: reviews, findings, conversations>
 BODY
 ```
 
-4. **Relay the CLI's last line, then stop.** No summary, no offer, no follow-up.
+3. **Relay the CLI's last line, then stop.** No summary, no offer, no follow-up.
 
 ## Anti-Patterns
 - The step-1 confirmation is the only question a departure ever asks.
