@@ -3,7 +3,7 @@
 Everything `gtg <verb>` does other than depart or resume. Loaded only when SKILL.md's third row
 fires. `gtg.mjs` = `node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs"`.
 
-Contents: Trigger semantics · Router table · Extension entries · Backlog Park.
+Contents: Trigger semantics · Router table · Extension entries · Working a package · Backlog Park.
 
 ## Trigger semantics
 
@@ -12,8 +12,8 @@ otherwise read as a verb.
 
 | Context | Input | Meaning |
 |---|---|---|
-| Session start (message is *only* `gtg…`) | `gtg` | Resume mode, see `resume.md` |
-| Session start | `gtg <project>` | Resume that project (brackets optional; see the session-start collision rules in `resume.md`) |
+| Session start (message is *only* `gtg…`) | `gtg` | Resume mode (SKILL.md Resume Procedure): `gtg.mjs resume` with no argument |
+| Session start | `gtg <project>` | Resume that project (`gtg.mjs resume <project>`; brackets optional) |
 | Mid-session | `gtg` | Depart (SKILL.md Exit Procedure), slug inferred from context |
 | Mid-session | `gtg [project]` | Depart, **force the handoff slug** to `project` (`--exact`) |
 | Anytime | `gtg <core verb>` | Route per the table below. A **core verb** (`list`, `backlog`, `back`, `active`, `prune`, `remove`, `supersede`, `peek`, `resume`, `rename`, `unparent`, `log`, `report`, `stats`, `undo`, `help`) always routes to its command, never to a project |
@@ -24,7 +24,7 @@ Disambiguation, in this order:
 2. A core verb is always that command; a project sharing the name never shadows it, so
    `gtg report` reports even with a "Report & Stats" project.
 3. At session start, any other bare token is a project before it is an extension verb
-   (`resume.md` owns that check).
+   (`gtg.mjs resume <token>` performs that check and prints the candidates when both exist).
 4. Any other token (mid-session, or carrying further args like `gtg issues p1`) goes straight
    to the CLI as an extension verb.
 
@@ -43,7 +43,7 @@ silently targets the wrong project. The bare-integer form exists for a human rea
 | "gtg prune" / "gtg remove &lt;n\|slug&gt;" | The project **shipped**. Run `gtg.mjs remove <n\|slug>`. `gtg.mjs undo` reverts your own last change. Stop. |
 | "gtg supersede &lt;n\|slug&gt;" / "this rolled up into X" / "I filed that one in error" | The entry was **neither shipped nor abandoned**. Run `gtg.mjs supersede <n\|slug> [--into <n\|slug>]`. Use it when consolidating several entries into one parent, or clearing an entry that should never have existed: `remove` would write a phantom ship and `back` reads as shelved-for-later, and both corrupt throughput. Pass `--into` whenever another entry absorbed it. Stop. |
 | "gtg peek &lt;project&gt;" | Find the entry in `docs/handoffs/_active.json` (or `_backlog.json`), read its `file` verbatim, relay the content. **Do not consume**, no store mutation. |
-| "gtg resume &lt;project&gt;" / "let's continue &lt;project&gt;" | The project was **picked back up**, not shipped. Read `resume.md`, follow it. `remove` means shipped, `resume` means picked back up; conflating them makes throughput history meaningless. |
+| "gtg resume &lt;project&gt;" / "let's continue &lt;project&gt;" | The project was **picked back up**, not shipped. SKILL.md Resume Procedure. `remove` means shipped, `resume` means picked back up; conflating them makes throughput history meaningless. |
 | "gtg rename &lt;n\|slug&gt; &lt;new&gt;" | Run `gtg.mjs rename <n\|slug> <new-slug>`. It re-points any sub-project whose `parent` named the old slug, and leaves past handoff filenames alone because those record what the project was called then. The **portfolio** slug is separate: relay the `projects rename` line it prints rather than assuming both moved. Stop. |
 | a `projects rename` printed a `NOTE:` about dangling parents | Run the `gtg rename <old> <new>` it names. Given a slug no entry here carries, `rename` repairs the stale `parent` reference instead of renaming an entry. Stop. |
 | an entry's `parent` names a family that does not exist, or names itself | Run `gtg.mjs unparent <n\|slug>`. `rename` re-**points** a parent (every child carrying it, at once), `unparent` **removes** one (a single entry). Re-pointing a dangling parent at the entry's own slug only makes a self-parent, so reach for `unparent` whenever the right answer is "no family". Stop. |
@@ -60,6 +60,15 @@ surface an issue package or a learning sprint, including a shelved one. A querie
 entry prints with its slug in place of a row number, because row numbers index the bare
 listing and that is the order `back <n>` and `remove <n>` resolve against. Pass the slug for
 these, never a number.
+
+## Working a package
+
+`gtg issues <pN>` hands back a `GTG-DIRECTIVE` that resumes with `--keep`: the package entry is
+never consumed. It is the only live mapping from its `pN` to a name, and every `docs/issues/`
+file in the batch carries `**Package:** pN` pointing at it, so consuming it orphans them all
+for exactly as long as you are working it. A package retires by being **finished**: fix its
+members and delete their files as you go; when the last one goes, its row renders
+`no members - unstamped, or done` and names the `gtg remove` that closes it.
 
 ## Backlog Park (`gtg backlog <idea>`)
 

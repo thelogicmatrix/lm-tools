@@ -2266,4 +2266,77 @@ export default async (ctx) => {
   console.log('ok 65 - task list appended from the harness store, never duplicated, absent when unknown');
 }
 
+// --- 3.0.0: resume is the whole pick-up in one call ---
+{
+  // Prints the handoff, consumes, keeps the commit subject; --keep reads without consuming.
+  const dir = tempRepo();
+  gtg(dir, HANDOFF_ARGS('one', 'Only One'), { input: BODY });
+  let r = gtg(dir, ['resume', 'one', '--keep']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^RESUME: "Only One" - handoff of \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(docs\/handoffs\/.*-one\.md\)\n# Handoff: Only One\n/);
+  assert.match(r.stdout, /## Next Action\ndo the next thing/);
+  assert.match(r.stdout, /Kept: Only One \(not consumed\)/);
+  assert.equal(active(dir).handoffs.length, 1, '--keep must not consume');
+  // Bare resume with exactly one active project picks it without a name.
+  r = gtg(dir, ['resume']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /RESUME: "Only One"/);
+  assert.match(r.stdout, /Consumed: Only One$/m);
+  assert.equal(active(dir).handoffs.length, 0);
+  assert.match(execSync('git log -1 --format=%s', { cwd: dir }).toString(), /^gtg resume: Only One - handoff consumed/);
+  r = gtg(dir, ['resume']);
+  assert.equal(r.status, 2, 'nothing to resume exits 2');
+  assert.match(r.stdout, /Nothing to resume/);
+  console.log('ok 66 - resume prints the handoff and consumes in one call; --keep reads only');
+}
+
+{
+  // Several candidates are a question (exit 1 + list), never a guess: bare with 2+, a name
+  // fragment fitting 2+, or a project sharing its token with a command.
+  const dir = tempRepo();
+  gtg(dir, HANDOFF_ARGS('alpha-one', 'Alpha One'), { input: BODY });
+  gtg(dir, HANDOFF_ARGS('alpha-two', 'Alpha Two'), { input: BODY });
+  let r = gtg(dir, ['resume']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /Alpha One[\s\S]*Alpha Two[\s\S]*Which\? gtg <project>/);
+  r = gtg(dir, ['resume', 'alpha']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /'alpha' matches 2 active projects:\n  1\. Alpha One \(alpha-one\)/);
+  assert.equal(active(dir).handoffs.length, 2, 'ambiguity must not consume');
+  r = gtg(dir, ['resume', 'alpha-two']);
+  assert.equal(r.status, 0, 'an exact slug is never ambiguous');
+  gtg(dir, HANDOFF_ARGS('issues', 'Issues Triage'), { input: BODY });
+  r = gtg(dir, ['resume', 'issues']);
+  assert.equal(r.status, 1, 'project + bundled command of the same name must ask');
+  assert.match(r.stdout, /'issues' is both a project and a command:\n  1\. Issues Triage \(issues\)[\s\S]*2\. run the `issues` command/);
+  r = gtg(dir, ['resume', 'stats']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /'stats' is a command - run gtg stats/);
+  console.log('ok 67 - resume asks on ambiguity and on a project/command collision');
+}
+
+{
+  // after-resume.mjs runs after the consume with the entry and body; a throwing hook is
+  // reported without undoing the consume.
+  const dir = tempRepo();
+  mkdirSync(join(dir, '.gtg'), { recursive: true });
+  writeFileSync(join(dir, '.gtg', 'after-resume.mjs'),
+    `import { writeFileSync } from 'node:fs';
+export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.stringify({ keys: Object.keys(ctx).sort(), slug: ctx.entry.slug, kept: ctx.kept, hasBody: ctx.body.includes('## Next Action') })); console.log('resume hook ran'); };\n`);
+  gtg(dir, HANDOFF_ARGS('hk', 'Hooked'), { input: BODY });
+  let r = gtg(dir, ['resume', 'hk']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Consumed: Hooked\nresume hook ran/);
+  const ran = JSON.parse(readFileSync(join(dir, 'resumed.json'), 'utf8'));
+  assert.deepEqual(ran.keys, ['body', 'commit', 'entry', 'file', 'kept', 'readStore', 'root', 'writeStore']);
+  assert.deepEqual([ran.slug, ran.kept, ran.hasBody], ['hk', false, true]);
+  writeFileSync(join(dir, '.gtg', 'after-resume.mjs'), `export default () => { throw new Error('kaboom'); };\n`);
+  gtg(dir, HANDOFF_ARGS('hk2', 'Hooked Two'), { input: BODY });
+  r = gtg(dir, ['resume', 'hk2']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /after-resume hook failed - kaboom/);
+  assert.equal(active(dir).handoffs.length, 0, 'consume survives a failing hook');
+  console.log('ok 68 - after-resume hook: ctx, runs after consume, failure reported not hidden');
+}
+
 console.log('ALL PASS');
