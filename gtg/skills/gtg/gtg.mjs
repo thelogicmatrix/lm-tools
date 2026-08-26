@@ -4,7 +4,7 @@
 // Unknown subcommands dispatch to <root>/.gtg/commands/<name>.mjs (see README).
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
 import { execSync, execFileSync } from 'node:child_process';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 // --- storage root -----------------------------------------------------------
@@ -52,6 +52,16 @@ const userVisible = (arr) => arr.filter((e) => !isExtensionEntry(e));
 // GTG_SESSION_ID is the portable override for other harnesses and for tests.
 const SESSION_ID = process.env.GTG_SESSION_ID || process.env.CLAUDE_CODE_SESSION_ID || '';
 const SESSION_TRAILER = 'gtg-session';
+// Which harness is writing. Two agents share one store now (Claude Code and Codex, 2026-08-26),
+// and a resume from the other side wants to know whose task-list conventions the handoff
+// carries. Detected from the env the harness exports to its tools: Claude Code sets CLAUDECODE
+// and a session id; Codex exports CODEX_* (CODEX_HOME, CODEX_MANAGED_BY_*, sandbox flags).
+// --harness on the handoff overrides, undefined when nothing identifies the caller.
+function detectHarness() {
+  if (process.env.CLAUDECODE || process.env.CLAUDE_CODE_SESSION_ID) return 'claude';
+  if (Object.keys(process.env).some((k) => k.startsWith('CODEX_'))) return 'codex';
+  return undefined;
+}
 
 // --- color (TTY-gated, NO_COLOR-aware; raw ANSI, no dependency) ---------------
 const COLOR = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -220,7 +230,7 @@ function sessionDurationMin() {
 }
 
 // --- handoff / backlog park ---------------------------------------------------
-function writeHandoff(argv, { storeRel, key, verb }) {
+async function writeHandoff(argv, { storeRel, key, verb }) {
   const a = parseFlags(argv);
   const missing = ['project', 'slug', 'next'].filter((k) => !a[k]);
   if (missing.length) { console.error(`gtg ${verb}: missing --${missing.join(', --')}`); process.exit(2); }
@@ -228,6 +238,21 @@ function writeHandoff(argv, { storeRel, key, verb }) {
   if (!/^[A-Za-z0-9_-]+$/.test(a.slug)) { console.error(`gtg ${verb}: --slug must match [A-Za-z0-9_-]`); process.exit(2); }
   const body = readFileSync(0, 'utf8').trim(); // stdin
   if (!body) { console.error(`gtg ${verb}: empty body on stdin`); process.exit(2); }
+  // Slug reuse lives HERE, not in a `list <name>` probe the skill runs first (one tool turn per
+  // departure, 2026-08-26). A fresh slug for a project that already has an entry mints a
+  // duplicate beside it. An exact slug is taken as given; otherwise exactly one entry whose
+  // project name contains --project (case-insensitive, the same predicate `list <filter>`
+  // uses) lends its slug. Two or more matches: ambiguous, keep the given slug. --exact opts
+  // out, for the `gtg [project]` override where the caller means the slug literally.
+  const everything = [...entries(REL_ACTIVE, 'handoffs'), ...entries(REL_BACKLOG, 'backlog')];
+  if (!a.exact && !everything.some((e) => e.slug === a.slug)) {
+    const name = String(a.project).toLowerCase();
+    const near = everything.filter((e) => String(e.project).toLowerCase().includes(name));
+    if (near.length === 1) {
+      console.log(`slug: reusing ${near[0].slug} (matches "${near[0].project}")`);
+      a.slug = near[0].slug;
+    }
+  }
   // ROOT is the storage hub, NOT the project. A project in its own worktree has
   // its own branch - detect there, or the hub's branch gets recorded for everyone.
   const worktree = a.worktree || 'repo root';
@@ -252,8 +277,7 @@ ${body}
 ## Resume Prompt
 Say: "let's continue ${a.project}"
 `;
-  const prior = [...entries(REL_ACTIVE, 'handoffs'), ...entries(REL_BACKLOG, 'backlog')]
-    .find((e) => e.slug === a.slug);
+  const prior = everything.find((e) => e.slug === a.slug);
   // Math.max guards the counter against going backwards: deleting old handoff
   // .md files (plain docs, fine to prune per the README) or two handoffs
   // landing in the same clock minute (one filename, one file on disk) would
@@ -269,6 +293,7 @@ Say: "let's continue ${a.project}"
     // omitted instead of silently dropping the project out of its family.
     parent: inferParent(a.slug, a.parent) ?? prior?.parent,
     duration_min: sessionDurationMin(),
+    harness: (typeof a.harness === 'string' ? a.harness : undefined) ?? detectHarness(),
     eta: a.eta || prior?.eta,
     next: String(a.next).slice(0, 150), file: relFile, updated: nowIso(),
   };
@@ -276,6 +301,24 @@ Say: "let's continue ${a.project}"
     console.log(`--- DRY RUN: would write ${relFile} ---\n${doc}`);
     console.log(`--- ${storeRel} entry ---\n${JSON.stringify(entry, null, 2)}`);
     return;
+  }
+  // --wip: checkpoint the worktree's uncommitted work inside this same call, so the skill
+  // spends no turn on status/add/commit. Worktree only: 'repo root' may be a checkout shared
+  // with concurrent sessions, where a tree-wide add sweeps their work (see commit() above), so
+  // there the caller names its own files. A clean tree is not an error.
+  if (a.wip && worktree !== 'repo root' && resolve(worktree) !== resolve(ROOT)) {
+    const wt = { cwd: worktree, stdio: ['ignore', 'pipe', 'pipe'] };
+    try {
+      execFileSync('git', ['add', '-A'], wt);
+      execFileSync('git', ['commit', '-q', '-m', `wip: gtg checkpoint - ${a.project}`], wt);
+      console.log('wip: committed');
+    } catch (e) {
+      const out = `${e.stdout || ''}${e.stderr || ''}`;
+      if (!/nothing to commit|no changes added/i.test(out)) {
+        console.error(`gtg: wip commit failed - ${out.trim().split('\n')[0]}`);
+        process.exitCode = 1;
+      }
+    }
   }
   mkdirSync(join(ROOT, 'docs/handoffs'), { recursive: true });
   writeFileSync(join(ROOT, relFile), doc);
@@ -304,6 +347,22 @@ Say: "let's continue ${a.project}"
     : `${verb}: ${a.project} - session ${sessions}`;
   commit(unparked ? [relFile, storeRel, otherRel] : [relFile, storeRel], subject);
   console.log(relFile);
+  // After-handoff hook: <root>/.gtg/after-handoff.mjs, default export fn(ctx), runs once the
+  // handoff is committed. This is where the ceremony that used to be prose steps for the model
+  // to perform (a docs/sessions entry, a portfolio-row flip) goes, so it costs no model tokens
+  // and cannot be skipped in a hurry. ctx is additive-only, like the command ctx. A failing
+  // hook is reported and sets the exit code; it never rolls the handoff back.
+  const hook = join(ROOT, '.gtg', 'after-handoff.mjs');
+  if (verb === 'handoff' && existsSync(hook)) {
+    try {
+      const mod = await import(pathToFileURL(hook).href);
+      if (typeof mod.default !== 'function') throw new Error('no default export function');
+      await mod.default({ root: ROOT, entry, file: relFile, body, worktree, readStore, writeStore, commit });
+    } catch (e) {
+      console.error(`gtg: after-handoff hook failed - ${(e.stderr || e.message || String(e)).toString().trim().split('\n')[0]}`);
+      process.exitCode = 1;
+    }
+  }
   console.log(verb === 'backlog'
     ? `PARKED on backlog: "${a.project}" - reactivate with 'gtg active <n>' or "let's continue ${a.project}"`
     : `RESUME: "let's continue ${a.project}"`);
@@ -445,7 +504,8 @@ function renderList(argv) {
     const idle = (Date.now() - Date.parse(e.updated)) / 86400000;
     const shelf = idle > 6 ? c('31', ` ⚠ shelves in ${Math.max(0, Math.round((7 - idle) * 24))}h`) : '';
     const sessions = e.sessions ?? countHandoffFiles(e.slug); // legacy entries predate the field
-    console.log(`  ${label} ${c('1;36', e.project)} ${c('2', 's' + sessions)} [${c('32', e.eta || '?')}] ${c('2', '(' + ago(e.updated) + ')')}${loc}${dirtyTag}${shelf}`);
+    const by = e.harness ? c('2', ` ·${e.harness}`) : ''; // who wrote the last handoff; absent on pre-1.11 entries
+    console.log(`  ${label} ${c('1;36', e.project)} ${c('2', 's' + sessions)} [${c('32', e.eta || '?')}] ${c('2', '(' + ago(e.updated) + ')')}${by}${loc}${dirtyTag}${shelf}`);
     console.log(`     → ${e.next}`);
   };
 
@@ -500,7 +560,7 @@ function backlogList() {
   }
   console.log(`${bl.length} backlogged project${bl.length === 1 ? '' : 's'}:`);
   sortByProject(bl).forEach((e, i) => {
-    console.log(`${c('33', 'b' + (i + 1) + '.')} ${c('1;36', e.project)} ${c('2', 's' + (e.sessions ?? countHandoffFiles(e.slug)))} [${c('32', e.eta || '?')}] ${c('2', '(parked ' + ago(e.updated) + ')')}`);
+    console.log(`${c('33', 'b' + (i + 1) + '.')} ${c('1;36', e.project)} ${c('2', 's' + (e.sessions ?? countHandoffFiles(e.slug)))} [${c('32', e.eta || '?')}] ${c('2', '(parked ' + ago(e.updated) + ')')}${e.harness ? c('2', ' ·' + e.harness) : ''}`);
     console.log(`    next: ${e.next}`);
   });
   console.log('Activate: gtg active <n>');
@@ -509,6 +569,10 @@ function backlogList() {
 function help() {
   console.log(`gtg - pause/resume + backlog bookkeeping
   gtg handoff --project --slug --next [--eta] [--parent] [--worktree] [--branch] [--dry-run]   (body on stdin)
+      [--wip]      commit the worktree's uncommitted work first (worktree only, never the shared root)
+      [--exact]    keep --slug literally; by default one name-matching entry lends its slug
+      [--harness]  who wrote it (claude|codex|...); auto-detected from the environment
+      runs <root>/.gtg/after-handoff.mjs afterwards if present (default export fn(ctx))
   gtg backlog [same flags]     park on the backlog shelf (body on stdin); bare = list the shelf
   gtg list [project]           active handoffs (+ 7-day auto-shelf sweep); optional filter
   gtg back <n|slug>            shelf an active entry to the backlog

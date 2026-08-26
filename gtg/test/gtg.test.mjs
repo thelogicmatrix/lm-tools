@@ -2098,4 +2098,113 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 57 - unparent reaches a backlog entry too');
 }
 
+// --- 1.11.0: slug reuse in the CLI, --wip, after-handoff hook, harness ---
+{
+  // One name-matching entry lends its slug, so the skill needs no `list <name>` probe first.
+  const dir = tempRepo();
+  gtg(dir, HANDOFF_ARGS('alpha-project', 'Alpha Project'), { input: BODY });
+  const r = gtg(dir, HANDOFF_ARGS('alpha', 'Alpha'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /slug: reusing alpha-project/);
+  const hs = active(dir).handoffs;
+  assert.equal(hs.length, 1, 'must update the existing entry, not mint a second');
+  assert.equal(hs[0].slug, 'alpha-project');
+  assert.equal(hs[0].sessions, 2);
+  console.log('ok 58 - a fresh slug whose project name matches one entry reuses that slug');
+}
+
+{
+  // --exact keeps the given slug (the `gtg [project]` override); two+ matches stay ambiguous.
+  const dir = tempRepo();
+  gtg(dir, HANDOFF_ARGS('alpha-one', 'Alpha One'), { input: BODY });
+  const exact = gtg(dir, [...HANDOFF_ARGS('alpha', 'Alpha'), '--exact'], { input: BODY });
+  assert.equal(exact.status, 0, exact.stderr);
+  assert.doesNotMatch(exact.stdout, /slug: reusing/);
+  assert.equal(active(dir).handoffs.length, 2);
+  gtg(dir, HANDOFF_ARGS('alpha-two', 'Alpha Two'), { input: BODY });
+  const amb = gtg(dir, HANDOFF_ARGS('alpha-x', 'Alpha'), { input: BODY });
+  assert.doesNotMatch(amb.stdout, /slug: reusing/);
+  assert.equal(active(dir).handoffs.length, 4, 'two name matches must not pick one');
+  console.log('ok 59 - --exact and ambiguous matches keep the given slug');
+}
+
+{
+  // --wip commits the worktree's uncommitted work in the same call; a clean tree is fine;
+  // 'repo root' is never swept (a shared checkout).
+  const hub = tempRepo();
+  const wt = tempRepo();
+  writeFileSync(join(wt, 'a.txt'), 'a\n');
+  execSync('git add a.txt && git commit -q -m init', { cwd: wt });
+  writeFileSync(join(wt, 'a.txt'), 'b\n');
+  writeFileSync(join(wt, 'new.txt'), 'n\n');
+  let r = gtg(hub, [...HANDOFF_ARGS('w', 'W'), '--worktree', wt, '--wip'], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /wip: committed/);
+  assert.equal(execSync('git status --porcelain', { cwd: wt }).toString().trim(), '');
+  assert.match(execSync('git log -1 --format=%s', { cwd: wt }).toString(), /wip: gtg checkpoint - W/);
+  r = gtg(hub, [...HANDOFF_ARGS('w', 'W'), '--worktree', wt, '--wip'], { input: BODY });
+  assert.equal(r.status, 0, 'a clean worktree is not an error');
+  assert.doesNotMatch(r.stdout, /wip: committed/);
+  writeFileSync(join(hub, 'stray.txt'), 'other session\n');
+  r = gtg(hub, [...HANDOFF_ARGS('h', 'H'), '--wip'], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(execSync('git status --porcelain', { cwd: hub }).toString(), /\?\? stray\.txt/,
+    'repo root must never be swept by --wip');
+  console.log('ok 60 - --wip checkpoints the worktree only');
+}
+
+{
+  // after-handoff.mjs runs once the handoff is committed, sees the entry/body, and is skipped
+  // for a backlog park. A throwing hook is reported (exit 1) without undoing the handoff.
+  const dir = tempRepo();
+  mkdirSync(join(dir, '.gtg'), { recursive: true });
+  writeFileSync(join(dir, '.gtg', 'after-handoff.mjs'),
+    `import { writeFileSync } from 'node:fs';
+export default async (ctx) => {
+  writeFileSync(ctx.root + '/hook-ran.json', JSON.stringify({ keys: Object.keys(ctx).sort(), slug: ctx.entry.slug, file: ctx.file, body: ctx.body }));
+  console.log('hook says hi');
+};\n`);
+  let r = gtg(dir, HANDOFF_ARGS('hk', 'Hooked'), { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /hook says hi/);
+  const ran = JSON.parse(readFileSync(join(dir, 'hook-ran.json'), 'utf8'));
+  assert.deepEqual(ran.keys, ['body', 'commit', 'entry', 'file', 'readStore', 'root', 'worktree', 'writeStore']);
+  assert.equal(ran.slug, 'hk');
+  assert.match(ran.file, /docs\/handoffs\/.*-hk\.md$/);
+  assert.equal(ran.body, BODY.trim());
+  assert.ok(r.stdout.trim().endsWith('RESUME: "let\'s continue Hooked"'), 'RESUME stays the last line');
+  execSync('git rm -q --cached hook-ran.json 2>/dev/null || true', { cwd: dir });
+  execSync('rm -f hook-ran.json', { cwd: dir });
+  gtg(dir, ['backlog', '--project', 'Idea', '--slug', 'idea', '--next', 'x'], { input: 'body\n' });
+  assert.equal(existsSync(join(dir, 'hook-ran.json')), false, 'hook must not fire on a backlog park');
+  writeFileSync(join(dir, '.gtg', 'after-handoff.mjs'), `export default () => { throw new Error('boom'); };\n`);
+  r = gtg(dir, HANDOFF_ARGS('hk2', 'Hooked Two'), { input: BODY });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /after-handoff hook failed - boom/);
+  assert.ok(active(dir).handoffs.some((e) => e.slug === 'hk2'), 'handoff survives a failing hook');
+  assert.match(execSync('git log -1 --format=%s', { cwd: dir }).toString(), /^handoff: Hooked Two/);
+  console.log('ok 61 - after-handoff hook: ctx, handoff-only, failure reported not hidden');
+}
+
+{
+  // Which harness wrote it: detected from the env, --harness overrides, shown on the list row.
+  const dir = tempRepo();
+  let r = gtg(dir, HANDOFF_ARGS('c', 'Claude Side'), { input: BODY, env: { CLAUDECODE: '1' } });
+  assert.equal(active(dir).handoffs[0].harness, 'claude');
+  r = gtg(dir, HANDOFF_ARGS('x', 'Codex Side'), { input: BODY, env: { CLAUDECODE: '', CODEX_HOME: 'C:/x' } });
+  assert.equal(active(dir).handoffs.find((e) => e.slug === 'x').harness, 'codex');
+  r = gtg(dir, [...HANDOFF_ARGS('o', 'Other'), '--harness', 'hermes'], { input: BODY, env: { CLAUDECODE: '1' } });
+  assert.equal(active(dir).handoffs.find((e) => e.slug === 'o').harness, 'hermes');
+  const list = gtg(dir, ['list']).stdout;
+  assert.match(list, /Claude Side s1 \[~2h\] \([^)]*\) ·claude/);
+  assert.match(list, /Codex Side s1 \[~2h\] \([^)]*\) ·codex/);
+  assert.match(list, /Other s1 \[~2h\] \([^)]*\) ·hermes/);
+  // An unidentified caller leaves the field off rather than guessing.
+  r = gtg(dir, HANDOFF_ARGS('u', 'Unknown'), { input: BODY, env: { CLAUDECODE: '' } });
+  const u = active(dir).handoffs.find((e) => e.slug === 'u');
+  assert.equal('harness' in u && u.harness !== undefined, false);
+  assert.doesNotMatch(gtg(dir, ['list']).stdout, /Unknown s1 \[~2h\] \([^)]*\) ·/);
+  console.log('ok 62 - harness recorded from env or --harness and shown on the row');
+}
+
 console.log('ALL PASS');
