@@ -60,4 +60,4 @@ a shipped one (e.g. `.dd/lenses/visual-ui-ux.md`). Yours overrides the built-in 
 
 **Update-safe by design:** `.dd/` lives in your repo and DD only ever *reads* it, so a plugin
 update can't clobber your lenses. Want a lens shipped for everyone instead? Add it under the
-plugin's `references/lenses/` + a selection-table row in `SKILL.md` and open a PR.
+plugin's `references/lenses/` + a row in `references/lens-selection.md` and open a PR.
