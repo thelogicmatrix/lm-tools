@@ -1605,15 +1605,16 @@ mtest('a store row that cannot render names its slug', () => {
     /unknown status .*on project "typo"/);
 });
 
-mtest('SKILL.md carries the page skeleton and the list row byte-exact', () => {
+mtest('references/page.md carries the page skeleton and SKILL.md the list row, byte-exact', () => {
   // Verified by RUNNING the two functions rather than by eye. Both fences are what the skill hands
   // a model that has never seen this CLI, so a drifting fence is a false comment with a wider
-  // blast radius than one in a source file.
+  // blast radius than one in a source file. The skeleton lives in references/page.md since
+  // 1.1.0, when the body was cut to the common path.
   const root = fixture();
   cmdRegister(root, ['demo', '--name', 'Demo Project', '--theme', 'tooling'], { commit: false, date: '2026-08-04' });
-  const skill = readFileSync(fileURLToPath(new URL('../skills/projects/SKILL.md', import.meta.url)), 'utf8')
-    .replaceAll('\r\n', '\n');
-  const skeleton = skill.match(/```markdown\n([\s\S]*?)```/)[1]
+  const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8').replaceAll('\r\n', '\n');
+  const skill = read('../skills/projects/SKILL.md');
+  const skeleton = read('../skills/projects/references/page.md').match(/```markdown\n([\s\S]*?)```/)[1]
     .replace('# <Name>', '# Demo Project').replaceAll('YYYY-MM-DD', '2026-08-04');
   assert.equal(skeleton, readFileSync(join(root, 'docs/projects/demo.md'), 'utf8'));
   // The fence carries the section heading as well as the row, because a bare row is not what

@@ -1,6 +1,6 @@
 {
     "name":  "projects",
-    "version":  "1.0.1",
+    "version": "1.1.0",
     "description":  "Maintain a generated portfolio index and one durable narrative page per project.",
     "author":  {
                    "name":  "Nathan Wong"
