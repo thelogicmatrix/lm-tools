@@ -30,9 +30,21 @@ PROGRESS_EVERY = 25             # also the threshold below which a fetch stays s
 # Attachment saving (--attachments). Documents are always kept. Images are kept
 # only above MIN_IMAGE_BYTES: every corporate signature carries a logo, and a
 # 142 KB banner that lands next to a real proposal is noise wearing its filename.
+#
+# SIZE, NOT Content-Disposition, is what separates the two. That looks backwards
+# and is not: measured on real venue mail 2026-08-27, an out-of-office marked its
+# 965 B signature gif `disposition: attachment`, while both a pasted AV screenshot
+# (79,677 B) and an emailed venue photo (496,029 B) arrived `disposition: inline`
+# with a Content-ID, exactly like a logo. Disposition splits none of it. Size splits
+# all of it, and the observed gap is 3,662 B of logo against 79,677 B of content.
+#
+# The floor was 500_000 until 2026-08-27 and sat ABOVE four of the five images worth
+# keeping, so two 210 KB room photos from a venue and a screenshot carrying the AV
+# inclusions were all binned as logos and the answers were lost twice. 20_000 clears
+# every logo seen by 5x and every real image by 4x.
 DOC_EXTS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
             ".csv", ".rtf", ".txt", ".zip"}
-MIN_IMAGE_BYTES = 500_000
+MIN_IMAGE_BYTES = 20_000
 
 FENCE_LIMIT = 150               # threads that get a quoted fence; rest are headings only
 UNACCOUNTED_LIMIT = 200         # lines in the unaccounted tail
@@ -204,12 +216,18 @@ TAG_RE = re.compile(r"<[^>]+>")
 
 
 def save_attachments(msg, att_dir, prefix):
-    """Write msg's real attachments under att_dir, return [(name, nbytes, path)].
+    """Select msg's real attachments, return [(name, nbytes, path_or_None)].
 
     Called from fetch_fence_text with the message it ALREADY fetched: the fence
     fetch is a full BODY.PEEK[], which is the whole MIME tree, so pulling the
     attachment out of it costs no extra IMAP round trip. A separate pass would
     double the per-message cost of the one path that is already the expensive one.
+
+    att_dir=None SELECTS WITHOUT WRITING, and each entry comes back with a path of
+    None. That is the whole point: when nobody passed --attachments, the answer to
+    "did this message carry an image" has to still reach inbox.md, or a screenshot
+    holding the AV inclusions reads as a message that said nothing (it did, twice,
+    before 2026-08-27). The reader is told what is there and how to fetch it.
     """
     out = []
     for part in msg.iter_attachments():
@@ -223,6 +241,9 @@ def save_attachments(msg, att_dir, prefix):
         if (os.path.splitext(name)[1].lower() not in DOC_EXTS
                 and len(payload) < MIN_IMAGE_BYTES):
             continue
+        if att_dir is None:
+            out.append((name, len(payload), None))
+            continue
         safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name)[:120]
         dest = Path(att_dir) / f"{prefix}__{safe}"
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -233,17 +254,27 @@ def save_attachments(msg, att_dir, prefix):
 
 def _att_lines(m):
     """An attachment named in inbox.md but not on disk is worse than silence - the
-    reader quotes a proposal they never opened. So this renders only what was
-    actually written, and names the path so it can be opened."""
-    return [f"- attachment: {name} ({n // 1024} KB) -> {path}"
+    reader quotes a proposal they never opened. So a written file names its path and
+    an unwritten one says so and names the flag that would fetch it. Silence is the
+    one option that is not offered: a message whose content is inside an image
+    otherwise renders as a message with nothing in it."""
+    return [f"- attachment: {name} ({n // 1024} KB) -> {path}" if path
+            else f"- attachment: {name} ({n // 1024} KB), NOT SAVED"
+                 f" - re-run with --attachments DIR to read it"
             for name, n, path in m.get("atts") or []]
 
 
 def _att_prefix(m):
-    """Sender domain, so a saved file names its counterparty. inbox.py has no batch
-    to read slugs from - the domain is the only stable identity in the read path."""
-    return re.sub(r"[^A-Za-z0-9._-]+", "_",
-                  (m.get("from_addr") or "unknown").rsplit("@", 1)[-1]) or "unknown"
+    """Sender domain plus uid, so a saved file names its counterparty and cannot
+    collide. inbox.py has no batch to read slugs from - the domain is the only
+    stable identity in the read path. The uid is there because inline images are
+    named by the mailer, not the sender: every Outlook message calls them
+    image001.png, image002.png, image003.png, so a domain-only prefix silently
+    overwrote one message's screenshot with the next message's signature logo."""
+    domain = re.sub(r"[^A-Za-z0-9._-]+", "_",
+                    (m.get("from_addr") or "unknown").rsplit("@", 1)[-1]) or "unknown"
+    uid = re.sub(r"[^A-Za-z0-9]+", "", str(m.get("uid") or "")) or "nouid"
+    return f"{domain}__{uid}"
 
 
 def fetch_fence_text(M, uid, cap_lines=12, cap_chars=800,
@@ -265,7 +296,9 @@ def fetch_fence_text(M, uid, cap_lines=12, cap_chars=800,
         # out-param rather than a second return value: every existing caller wants
         # the text alone, and a conditional tuple return would make them all branch
         # on a flag to read a string.
-        if att_dir is not None and atts_out is not None:
+        # atts_out alone, not att_dir: with no --attachments the parts are still
+        # listed (path None) so inbox.md can say an image is carrying the answer
+        if atts_out is not None:
             atts_out.extend(save_attachments(msg, att_dir, att_prefix))
         part = msg.get_body(preferencelist=("plain", "html"))
         if part is None:
@@ -550,8 +583,10 @@ def inbox_main(argv):
                     help="emit the per-message JSON stream for another tool to consume; read-only")
     ap.add_argument("--attachments", dest="att_dir", metavar="DIR",
                     help="save attachments from every fenced message into DIR, "
-                         "named '<sender-domain>__<filename>'. Documents always; "
-                         "images only above 500 KB, so signature logos stay out. "
+                         "named '<sender-domain>__<uid>__<filename>'. Documents "
+                         "always, images above 20 KB, which keeps a pasted "
+                         "screenshot and drops a signature logo. Without this flag "
+                         "the same parts are still LISTED in inbox.md, unsaved. "
                          "Pair with --from to sweep one counterparty's whole thread.")
     ap.add_argument("--from", dest="from_addr", metavar="ADDR",
                     help="narrow the IMAP SEARCH to one sender address or domain, "
@@ -667,7 +702,11 @@ def inbox_main(argv):
           + (f"slice printed to stdout, nothing written"
              if args.from_addr else f"{store_dir(ident) / 'inbox.md'} written"))
     if args.att_dir:
-        saved = [a for t in threads for m in t["msgs"] for a in (m.get("atts") or [])]
+        # path None means selected-but-not-written, which only happens without
+        # --attachments, so it can never reach this branch. Filtered anyway: a count
+        # that says "saved" must count files that exist.
+        saved = [a for t in threads for m in t["msgs"]
+                 for a in (m.get("atts") or []) if a[2]]
         # named individually, not just counted: the point of the flag is to open the
         # files afterwards, and a bare count sends the reader hunting for the paths
         print(f"attachments: {len(saved)} saved to {args.att_dir}")
@@ -794,13 +833,59 @@ small
 --X--
 """, policy=email.policy.default)
     with tempfile.TemporaryDirectory() as ad:
-        got_att = save_attachments(att, ad, "b.example")
+        got_att = save_attachments(att, ad, "b.example__41")
         assert [n for n, _, _ in got_att] == ["Quote 2026.pdf"], got_att
-        assert Path(got_att[0][2]).name == "b.example__Quote_2026.pdf", got_att
+        assert Path(got_att[0][2]).name == "b.example__41__Quote_2026.pdf", got_att
         assert Path(got_att[0][2]).read_bytes() == b"tiny"
     assert _att_lines({"atts": got_att})[0].startswith(
         "- attachment: Quote 2026.pdf")
-    assert _att_prefix({"from_addr": "a.person@agency.example"}) == "agency.example"
+    assert _att_prefix({"from_addr": "a.person@agency.example", "uid": "41"})         == "agency.example__41"
+
+    # The real 2026-08-27 regression, in the bytes that caused it. Two venue answers
+    # were lost because MIN_IMAGE_BYTES was 500_000: a pasted AV screenshot and a
+    # pair of emailed room photos all fell under it and were binned as signature
+    # logos. Content-Disposition cannot be the discriminator - the out-of-office row
+    # below is a 965 B logo declaring itself an attachment, and the two content
+    # images declare themselves inline. Only size splits them, so these five sizes
+    # are asserted rather than the rule that produced them.
+    sizes = {
+        "sig_logo_inline":     (965,     False),   # Outlook gif, inline + cid
+        "sig_logo_png":        (3_662,   False),   # Syfe logo, inline + cid
+        "ooo_logo_attachment": (965,     False),   # inline logo wearing 'attachment'
+        "av_screenshot":       (79_677,  True),    # Connie's AV inclusions, inline
+        "room_photo":          (214_733, True),    # ACM 'Theatre Seating at RR.jpg'
+        "venue_photo_inline":  (496_029, True),    # ACM floorplan, inline + cid
+    }
+    for label, (nbytes, keep) in sizes.items():
+        raw = "\n".join([
+            "From: a@b.example",
+            "Subject: s",
+            "MIME-Version: 1.0",
+            "Content-Type: multipart/mixed; boundary=X",
+            "",
+            "--X",
+            "Content-Type: text/plain",
+            "",
+            "body",
+            "--X",
+            "Content-Type: image/png",
+            'Content-Disposition: attachment; filename="%s.png"' % label,
+            "",
+            "x" * nbytes,
+            "--X--",
+            "",
+        ])
+        one = email.message_from_string(raw, policy=email.policy.default)
+        got = save_attachments(one, None, "b.example__41")
+        assert bool(got) is keep, f"{label} at {nbytes}B: kept={bool(got)}, want {keep}"
+
+    # att_dir=None selects without writing, and the line says so rather than going
+    # quiet. A silent drop here is exactly how the two answers above were lost.
+    unsaved = save_attachments(att, None, "b.example__41")
+    assert [n for n, _, _ in unsaved] == ["Quote 2026.pdf"], unsaved
+    assert unsaved[0][2] is None, unsaved
+    line = _att_lines({"atts": unsaved})[0]
+    assert "NOT SAVED" in line and "--attachments" in line, line
     assert fetch_fence_text(FakeIMAP(body=bad), "41") == ""
     assert fetch_fence_text(FakeIMAP(body=b"Content-Type: \x00garbage"), "41") == ""
     # never lie: messages found but none fetchable is an error, NOT an empty inbox
