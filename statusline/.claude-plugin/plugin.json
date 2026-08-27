@@ -1,0 +1,6 @@
+{
+  "name": "statusline",
+  "version": "1.0.0",
+  "description": "statusline - a two-row Claude Code status line built only from the payload the harness hands it: model, effort, project, context fill, which login is driving the session, usage windows, and session cost.",
+  "author": { "name": "Nathan Wong" }
+}
