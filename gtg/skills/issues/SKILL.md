@@ -1,6 +1,6 @@
 ---
 name: issues
-description: Use when a problem surfaces while attention is somewhere else and is about to be named in chat and left there, so it gets filed in docs/issues/ instead of lost. That covers a failure noticed while working on something unrelated, a problem declared out of scope or left for later, and a loose end mentioned with no intention of acting on it ("that's a separate bug", "we should fix that later", "out of scope for now", "not this session", "noting this", "unrelated, but", "someone should look at that", a failure found while working on something else). Also use when a session spots any loose end worth filing in docs/issues/, and when closing, re-checking, or re-testing an existing issue ("is this still an issue", "that's fixed, close it", "issue list", "fix session", "prune that issue").
+description: 'Use when a problem surfaces while attention is elsewhere and is about to be named in chat and left there ("that''s a separate bug", "out of scope for now", "noting this", "unrelated, but"), so it gets filed in docs/issues/ instead of lost. Also for closing, re-checking or listing existing issues ("is this still an issue", "that''s fixed, close it", "issue list", "fix session").'
 ---
 
 # issues: file it, or lose it
