@@ -1,0 +1,9 @@
+{
+  "name": "statusline",
+  "version": "1.0.0",
+  "description": "Two-row Claude Code status line.",
+  "private": true,
+  "scripts": {
+    "test": "node test/statusline.test.mjs"
+  }
+}

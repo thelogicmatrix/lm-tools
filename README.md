@@ -19,6 +19,7 @@ Then install whichever tools you want — they're independent:
 /plugin install projects@lm-tools
 /plugin install learn@lm-tools
 /plugin install postman@lm-tools
+/plugin install statusline@lm-tools
 ```
 
 ## Install in Codex
@@ -89,6 +90,17 @@ reply in the batch cannot resolve its thread, nothing sends at all.**
 each one declares a `pw_cmd` — any command that prints one secret on stdout, so `pass`, a
 password manager CLI or a full vault client all work and postman never learns which.
 → [postman/README.md](postman/README.md)
+
+### [statusline](statusline/README.md)
+A two-row status line built only from the payload Claude Code hands it on stdin: model,
+effort, project, context fill, **which login is driving the session**, the 5 hour and 7 day
+usage windows, and session cost. No cache file, no background writer, no state of its own,
+so there is nothing to go stale and a malformed payload prints nothing rather than breaking
+the line. Claude Code only, since a status line is a Claude Code surface and there is no
+Codex equivalent to port it onto.
+**Extend it:** the account label comes from your `CLAUDE_CONFIG_DIR` name, and
+`CLAUDE_STATUSLINE_ACCOUNT` overrides it, so two logins on one machine label themselves
+without any config file. → [statusline/README.md](statusline/README.md)
 
 ## The shared contract
 
