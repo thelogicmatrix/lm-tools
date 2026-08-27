@@ -5,7 +5,9 @@ line each:
 
 - `NARRATIVE-UNWRITTEN`, the page is still the skeleton.
 - `UNVERIFIED`, the header carries no usable `last verified` date, or the status has moved
-  on past it.
+  on past it. No verb clears this one: the stamp moves only when a human re-reads the
+  narrative and edits the date by hand. On a skeleton page it is downstream of
+  `NARRATIVE-UNWRITTEN`, so it stands until the narrative is written.
 - `NO-PAGE`, the row has no page, or points at one that is not on disk. `NO-ROW`, a page
   has no row.
 - `NO-CURRENT-STATE`, the page has no dated Current state heading.
