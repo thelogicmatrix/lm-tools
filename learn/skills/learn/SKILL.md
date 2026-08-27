@@ -12,7 +12,9 @@ verify due). The teaching is yours.
 
 `learn` below is `node "${CLAUDE_PLUGIN_ROOT}/skills/learn/learn.mjs"`. State lives under
 `.learn/` in the current git repo, or `$LEARN_HUB` when set; week pages under
-`docs/learning/<slug>/`. Each state-changing verb commits its own writes.
+`docs/learning/<slug>/`. Each state-changing verb commits its own writes. Track files, when a
+reference says to read a section of one: `${CLAUDE_PLUGIN_ROOT}/skills/learn/extensions/tracks/<name>.md`,
+or `.learn/tracks/<name>.md` for a learner override of the same name.
 
 | Trigger | Do this |
 |---|---|

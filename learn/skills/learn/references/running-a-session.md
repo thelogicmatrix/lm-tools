@@ -46,7 +46,7 @@ When the concept admits a genuine spot-the-bug (a common, instructive mistake, n
 contrived one), fold one in per the track's `Verify exercise` section: a short snippet,
 sometimes clean, sometimes subtly wrong, work out which and why. Never force a fake bug.
 Floor: once every 2 weeks from the last one that ran; a sprint that never ran one is due at
-week 2. Pass `--verified` to `learn gate` when one ran, or the floor reads as unmet. Two
+week 2. Pass `--verified` to `learn gate` when one ran; without the flag the floor still reads as unmet. Run the exercise before the gate call, since the flag rides on it. Two
 weeks with no natural fit: the third includes one even if it takes contriving, or the gap is
 recorded at the sprint review, never skipped silently.
 

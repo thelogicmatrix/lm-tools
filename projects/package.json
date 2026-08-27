@@ -1,6 +1,6 @@
 {
   "name": "projects",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Portfolio layer for Claude Code: generated project index plus per-project narrative pages.",
   "type": "module",
   "private": true,

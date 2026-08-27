@@ -1,6 +1,6 @@
 {
   "name": "learn",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Self-directed learning sprints: one concept a session, closed by a graded mastery gate.",
   "type": "module",
   "private": true,
