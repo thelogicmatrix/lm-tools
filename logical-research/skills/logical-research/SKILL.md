@@ -7,8 +7,9 @@ description: Use whenever research is asked for or a body of source material mus
 
 ## Overview
 
-Turn a bounded corpus into **actionable context**: a synthesis doc, per-item notes, and a
-bibliography, structured so it can be fed to a model as working context for a later task.
+At Scan tier the output is one graded file. At Pack tier it is a synthesis doc, per-item notes
+and a bibliography. Either way, a bounded body of source material becomes **actionable context**,
+structured so it can be fed to a model as working context for a later task.
 
 The output is **not a summary**. It's a reusable knowledge artifact: original analysis with
 claims graded by evidence strength, principles extracted as instructions, and every source
@@ -71,7 +72,7 @@ Three rules, and they are what make it composable:
   `angle`, Pack only, and the tier when absent. If the brief carries them, run autonomously from
   there.
 - **The output path is the return value.** Finish by printing the output path: `<root>/<slug>/` for
-  Pack, `<root>/<slug>.md` for Scan. The caller links to that folder, it does not copy the contents
+  Pack, `<root>/<slug>.md` for Scan. The caller links to that path, it does not copy the contents
   out — one fact, one home.
 - **Know nothing about the caller.** No branch in this skill reads "a learning sprint asked" or
   "a review asked". If a caller needs something shaped differently, that belongs in its `angle`.
