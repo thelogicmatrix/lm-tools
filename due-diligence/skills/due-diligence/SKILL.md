@@ -57,8 +57,8 @@ any one holds:
 Standard escalates to Heavy only when its critic finds a blocker the Light missed AND the
 artifact is irreversible or external. Never de-escalate automatically. Announce the move in one
 line with the numbers: *"Light: 1 blocker, 4 should-fix over 3 lenses. Escalating to Standard."*
-Dispatch the Standard critic on a cheaper model tier than the session where your setup allows
-it, naming the model explicitly.
+Dispatch the Standard critic on a cheaper model tier than the session, naming the model
+explicitly.
 
 ## Step 0: context, ask if unknown
 

@@ -1,9 +1,8 @@
 # res_technical-writing — The Communication Bar
 > Research-backed reference for the Due Diligence communication lenses: necessity, clarity, audience-fit, structure-navigability, voice (AI-tells), actionability, and depth-sufficiency.
-> Companion, not a duplicate: for sentence-level mechanics (cutting words, active-voice
-> rewrites), see the `elements-of-style:writing-clearly-and-concisely` skill. This file
-> is the standards/authority layer — what the defect *is*, why it's a defect, and the
-> check to run for it.
+> This file is the standards/authority layer: what the defect *is*, why it's a defect, and
+> the check to run for it. Sentence-level mechanics, cutting words and rewriting to active
+> voice, come after a defect is named, not instead of naming it.
 
 ## What good looks like (the bar)
 

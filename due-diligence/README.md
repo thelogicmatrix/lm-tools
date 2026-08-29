@@ -14,7 +14,7 @@ Two skills that make work hold up under a hostile reviewer — one for *before* 
 - **General lenses** (apply to most artifacts): data-provenance, necessity, clarity, operational-completeness, audience-fit, structure-navigability, voice (AI-tells), actionability, depth-sufficiency.
 - **Domain lenses** (selected by artifact type): security, dependencies, reproducibility, idempotency, performance, maintainability, error-handling, test-coverage, prompt-injection, output-grounding, cost/token-efficiency, visual-ui-ux, accessibility, brand-consistency, statistical-soundness, cross-artifact-consistency, rollback/blast-radius, compliance-policy, assumptions-risk, alternatives-considered, pedagogy, data-privacy, data-quality, observability, concurrency-safety, resilience, backup-recovery, api-contract, llm-eval, absent-user-handoff, agency-preservation, attention-cost, homelab-ops, inference-legibility, interface-state-coverage.
 
-**Tiered effort.** The review self-calibrates how hard to look — Light (one pass), Standard (one fresh sub-agent critic), Heavy (one critic per lens + re-attack to convergence) — and states the tier. Light escalates itself on its own scorecard (a blocker, three or more should-fix over two or more lenses, a lens it could not exercise, or a fix cycle that rewrote more than about a fifth of the artifact's lines, sections or screens), so the cheap pass is the default and the expensive ones are earned. Light reads lens files only. The larger knowledge files open for Standard and Heavy critics. You can steer it ("quick check" / "go deep" / "bulletproof").
+**Tiered effort.** The review self-calibrates how hard to look — Light (one pass), Standard (one fresh sub-agent critic), Heavy (one critic per lens + re-attack to convergence) — and states the tier. Light escalates itself on its own scorecard (a blocker, three or more should-fix over two or more lenses, a selected lens whose surface turned out missing or unreachable, or a fix cycle that rewrote more than about a fifth of the artifact's lines, sections or screens), so the cheap pass is the default and the expensive ones are earned. Light reads lens files only. The larger knowledge files open for Standard and Heavy critics. You can steer it ("quick check" / "go deep" / "bulletproof").
 
 ## Install
 
@@ -32,8 +32,8 @@ cp -r due-diligence/skills/due-diligence due-diligence/skills/cdd <your-repo>/.c
 ```
 Copy **both** as siblings — `cdd` reads `../due-diligence/references/`, so they must sit
 next to each other under `.claude/skills/`. This gives you a frozen copy you commit to your
-own repo that never updates from the marketplace. (`cdd` is optional; `due-diligence` works
-standalone. cdd without due-diligence loses the shared knowledge base.)
+own repo that never updates from the marketplace. (`due-diligence` works standalone. `cdd` does not: it holds no lenses of its
+own and reads all of them from `../due-diligence/references/`.)
 
 ## Use
 

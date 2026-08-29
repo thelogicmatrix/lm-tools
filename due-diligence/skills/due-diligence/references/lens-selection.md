@@ -44,8 +44,8 @@ and idempotency-rerun-safety).
 
 ## User lenses
 
-Also scan `.dd/lenses/*.md` in the working repo (and, if you keep one, your shared hub
-directory). Read each candidate's
+Also scan `.dd/lenses/*.md` in the working repo (and, if you keep a `.dd/` outside the repo
+for use across projects, that one too). Read each candidate's
 `## Fires on` to decide relevance, exactly like a shipped lens; back it with the user's
 `.dd/res/*.md` where cited. A user lens whose filename matches a shipped lens **overrides** it;
 a new name is a new lens. `.dd/` is only ever read, so plugin updates never touch it. No `.dd/`
