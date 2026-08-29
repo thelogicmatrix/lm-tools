@@ -13,6 +13,12 @@ Tags: rendered-ui. Any artifact that is a live page, local server, or static HTM
 - Illogical focus order that doesn't match visual/reading order (SC 2.4.3).
 - Touch/click targets under 24×24 CSS px with no spacing exception (SC 2.5.8, AA).
 
+## Measure
+WCAG failures found, by criterion, from the keyboard walkthrough and the landmark, heading and alt
+audit. Report the count and name each criterion. A failure that leaves the page unusable by
+keyboard or screen-reader (a trap, an unreachable control, a fake button with no role) = blocker.
+Any other confirmed AA violation = should-fix. An AAA-only gap = nit.
+
 ## Evidence of attack (clean-pass proof)
 A keyboard walkthrough (Tab/Shift+Tab/Enter through every interactive element, noting order and trap-freedom) plus a landmark/heading/alt audit naming what was checked — which elements, which roles, which alt values — not "seems accessible."
 

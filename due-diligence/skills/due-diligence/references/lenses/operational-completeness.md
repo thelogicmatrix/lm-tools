@@ -12,6 +12,11 @@ General lens (no tag) — select for anything that *runs* or *processes*: code, 
 - No "so what": produces output but doesn't answer the reader's "what do I do with this."
 - Clean-looking output from broken processing: the result *looks* fine but was built from incomplete or wrong steps — the highest-value catch.
 
+## Measure
+Edge-case classes handled ÷ 6 (empty, zero, max, missing, duplicate, failure), for each input the
+artifact processes. Report as "k/6" per input. A class that loses or corrupts data unhandled =
+blocker. Any other unhandled class = should-fix.
+
 ## Evidence of attack (clean-pass proof)
 Confirm internal totals reconcile; confirm the whole input is processed (row counts match end to end, nothing silently dropped/truncated); exercise the edge cases (empty/zero/max/missing/dup/failure) or name the unhandled one; confirm it answers the reader's "so what." A clean-looking output is not evidence — trace the processing.
 

@@ -11,6 +11,12 @@ General lens (no tag) — select for any reader-facing text. Local comprehensibi
 - "What / where-from / how" gaps: the reader is left asking what this means, where it came from, or how to act on it.
 - Ambiguity: a sentence that can be read two ways with no disambiguation.
 
+## Measure
+Undefined terms plus unlabeled numbers (no unit, currency, period or baseline), per 1k words of
+reader-facing text. Report the raw count and the rate. Any undefined jargon or unlabeled unit on
+non-critical content = should-fix. Any that leaves a load-bearing passage the reader genuinely
+cannot understand = blocker.
+
 ## Evidence of attack (clean-pass proof)
 Read as the stated reader (Step 0). Name each term/passage that would make them stop — undefined jargon, an unlabeled number, an unstated assumption — or confirm the text is self-contained with examples. Point at the words, not "reads clearly."
 
