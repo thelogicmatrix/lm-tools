@@ -13,8 +13,8 @@ General lens (no tag) — select for any prose or content artifact that could ca
 
 ## Measure
 Cuttable words ÷ total words, where cuttable means the reader's decision is unchanged without them.
-Report as a percentage. Above 20% = should-fix. Above 40%, or filler where a length limit exists =
-blocker.
+Report as a percentage. Above 20%, or filler where a length limit exists = should-fix. Above 40%,
+with the point buried under it = blocker.
 
 ## Evidence of attack (clean-pass proof)
 Apply the cutting test: for the candidate filler, confirm that removing it would lose information the reader needs to act — if not, it goes. Name what you cut (or flag) with the passage, or confirm each section earns its place. Not "concise enough."

@@ -15,8 +15,8 @@ Tags: llm-pipeline. Any artifact defining an LLM call or pipeline — model choi
 ## Measure
 Levers set with a stated reason ÷ 5 (model tier, max_tokens, caching on repeated context,
 batching, cheaper fallback). Report as "k/5" and name the missing ones. An order-of-magnitude
-waste from one missing lever = blocker. Any other missing lever with a quantifiable cost =
-should-fix.
+waste from one missing lever = blocker. Any other missing lever with a moderate, quantifiable cost
+= should-fix, a single-digit-percent saving = nit.
 
 ## Evidence of attack (clean-pass proof)
 Name each lever actually set — model tier and why it fits the task, max_tokens value and its basis, whether caching is enabled on the repeated-context portion, whether batching applies given the latency requirement, and whether a cheaper-tier/fallback path exists. A pass means the levers are named with a reason, not merely "cost looks reasonable."

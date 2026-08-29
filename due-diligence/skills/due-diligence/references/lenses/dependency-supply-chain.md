@@ -14,8 +14,8 @@ Tags: code. Any artifact with a dependency manifest, lockfile, or CI/build pipel
 
 ## Measure
 Unpinned dependencies ÷ total direct dependencies, from the manifest and lockfile. Report as
-"n/N". A runtime dependency unpinned in something that deploys = blocker. Any other unpinned =
-should-fix.
+"n/N". Any unpinned dependency with an open advisory, or no lockfile at all = should-fix. Blocker
+only where one of them carries a known-exploitable vulnerability on a path the code uses.
 
 ## Evidence of attack (clean-pass proof)
 Per category, name what was traced: the lockfile is present and versions are pinned/checksummed, the flagged dependency was checked against an advisory source and has no open CVE on the code path used, branch protection/required-review settings were confirmed on the release branch. "Dependencies look fine" without naming the manifest/lockfile/advisory check performed is not evidence.

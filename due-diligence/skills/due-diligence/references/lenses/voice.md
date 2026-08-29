@@ -15,7 +15,8 @@ General lens (no tag) — select for any prose deliverable, especially AI-genera
 ## Measure
 AI tells per 1k words, counted against the attack list above (reflexive hedging, formulaic triads,
 empty openers, empty summarising, inflated register, uniform rhythm). Report count and rate. Above
-2 per 1k = should-fix. Above 5 per 1k, or any in a first paragraph a stakeholder reads = blocker.
+2 per 1k, including in a first paragraph a stakeholder reads = should-fix. Above 5 per 1k, or dense
+enough that the piece would embarrass in front of the stated reader = blocker.
 
 ## Evidence of attack (clean-pass proof)
 Quote the specific tells found (with locations) and the plain-language replacement, or state the prose was checked against the AI-tell list and reads as human-written (name what you looked for — hedging, triads, inflated register, empty summary). "Sounds fine" is not evidence.
