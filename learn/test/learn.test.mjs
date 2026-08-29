@@ -602,10 +602,11 @@ test('brief writes the corpus brief in contract order and prints BRIEF-WRITTEN',
   assert.match(r.stdout, /^BRIEF-WRITTEN /m);
 
   const s = readSprint(dir, 'learning-growth-marketing');
-  const file = join(dir, s.content, 'corpus-brief.md');
+  const file = join(dir, s.content, 'corpus-brief-week-1.md');
   const md = readFileSync(file, 'utf8');
   assert.match(md, /^# Corpus brief$/m);
   assert.match(md, /^root:\s+docs\/research$/m);
+  assert.match(md, /^slug:\s+learning-growth-marketing-week-1$/m);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -624,6 +625,52 @@ test('brief exits 2 when --shape is outside the contract', () => {
   const r = runWithInput(dir, 'angle: x\ncorpus:\n  - a\n', 'brief', '--shape', 'bogus');
   assert.equal(r.status, 2);
   assert.match(r.stderr, /shape must be one of/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('brief --tier scan writes the tier line after shape', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-brieftier-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  const r = runWithInput(dir, 'angle: x\ncorpus:\n  - a\n', 'brief', '--shape', 'synthesis', '--tier', 'scan');
+  assert.equal(r.status, 0, r.stderr);
+  const s = readSprint(dir, 'learning-growth-marketing');
+  const md = readFileSync(join(dir, s.content, 'corpus-brief-week-1.md'), 'utf8');
+  const lines = md.split('\n');
+  assert.equal(lines[3], 'shape:  synthesis');
+  assert.equal(lines[4], 'tier:   scan');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('brief without --tier writes no tier line', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-briefnotier-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  const r = runWithInput(dir, 'angle: x\ncorpus:\n  - a\n', 'brief');
+  assert.equal(r.status, 0, r.stderr);
+  const s = readSprint(dir, 'learning-growth-marketing');
+  assert.doesNotMatch(readFileSync(join(dir, s.content, 'corpus-brief-week-1.md'), 'utf8'), /^tier:/m);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('brief exits 2 when --tier is outside scan|pack', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-brieftierbad-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  const r = runWithInput(dir, 'angle: x\ncorpus:\n  - a\n', 'brief', '--tier', 'deep');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /tier must be one of/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('a brief per week: week 2 writes a second file instead of refusing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-briefweek2-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  assert.equal(runWithInput(dir, 'angle: x\ncorpus:\n  - a\n', 'brief').status, 0);
+  assert.equal(run(dir, 'gate', 'pass').status, 0);
+  const r = runWithInput(dir, 'angle: y\ncorpus:\n  - b\n', 'brief');
+  assert.equal(r.status, 0, r.stderr);
+  const s = readSprint(dir, 'learning-growth-marketing');
+  assert.ok(existsSync(join(dir, s.content, 'corpus-brief-week-1.md')));
+  assert.ok(existsSync(join(dir, s.content, 'corpus-brief-week-2.md')));
+  assert.equal(s.research, `${s.content}/corpus-brief-week-2.md`);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -651,7 +698,7 @@ import { positionals, flag, VALUED_FLAGS } from '../skills/learn/learn.mjs';
 // The unit half of the argument fix. Every valued flag in the CLI must be in the set, or its
 // value gets read as a positional again: that is the exact shape of the corruption below.
 test('VALUED_FLAGS covers every flag the CLI reads a value from', () => {
-  assert.deepEqual([...VALUED_FLAGS].sort(), ['--research-root', '--shape', '--sprint', '--track']);
+  assert.deepEqual([...VALUED_FLAGS].sort(), ['--research-root', '--shape', '--sprint', '--tier', '--track']);
   assert.ok(!VALUED_FLAGS.has('--verified'), '--verified is a boolean and must not consume a token');
 });
 
@@ -797,7 +844,7 @@ test('brief records the brief path on the sprint', () => {
 
   assert.equal(runWithInput(dir, 'angle: x\ncorpus:\n  - a\n', 'brief').status, 0);
   const s = readSprint(dir, 'learning-growth-marketing');
-  assert.equal(s.research, `${s.content}/corpus-brief.md`);
+  assert.equal(s.research, `${s.content}/corpus-brief-week-1.md`);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -807,7 +854,7 @@ test('brief refuses to overwrite a corpus brief that already exists', () => {
   const dir = mkdtempSync(join(tmpdir(), 'learn-briefexists-'));
   assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
   assert.equal(runWithInput(dir, 'angle: first\ncorpus:\n  - a\n', 'brief').status, 0);
-  const file = join(dir, readSprint(dir, 'learning-growth-marketing').content, 'corpus-brief.md');
+  const file = join(dir, readSprint(dir, 'learning-growth-marketing').content, 'corpus-brief-week-1.md');
 
   const r = runWithInput(dir, 'angle: second\ncorpus:\n  - b\n', 'brief');
   assert.equal(r.status, 1);
@@ -881,7 +928,7 @@ test('page and brief commit the file they scaffold, not just the sprint', () => 
 
   const files = execFileSync('git', ['-C', dir, 'ls-files'], { encoding: 'utf8' });
   assert.match(files, /week-1-positioning\.md/);
-  assert.match(files, /corpus-brief\.md/);
+  assert.match(files, /corpus-brief-week-1\.md/);
   rmSync(dir, { recursive: true, force: true });
 });
 

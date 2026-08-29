@@ -5,7 +5,7 @@ structured in real courses and curricula: official docs' own learning paths, wel
 syllabi, textbook tables of contents. Optional, and reachable at any point in a sprint.
 
 1. Run `learn brief`. It reads the **angle** and the **corpus** from stdin and writes
-   `docs/learning/<slug>/corpus-brief.md`, then prints `BRIEF-WRITTEN <path>`. The angle
+   `docs/learning/<slug>/corpus-brief-week-<N>.md`, then prints `BRIEF-WRITTEN <path>`. The angle
    carries every sprint-specific instruction: what the sequence already covers, what to
    check it against, what shape the flags should take. `logical-research` knows nothing
    about the caller, so anything this sprint needs goes in the angle.
