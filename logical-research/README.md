@@ -40,6 +40,9 @@ instead of a doc you have to remember to re-read.
 
 ## Install
 
+**Prerequisites:** nothing extra for books, PDFs, docs sites and papers. For YouTube or podcast
+corpora, Python 3 with `yt-dlp` on PATH (`pip install yt-dlp`).
+
 **As a plugin (auto-updating):**
 ```
 /plugin marketplace add thelogicmatrix/lm-tools

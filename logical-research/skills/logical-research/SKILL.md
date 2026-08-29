@@ -103,6 +103,9 @@ Then compute item count, total duration, total words, median length.
 | 150k–400k | Split by theme across sessions; write notes as you go, synthesise last |
 | > 400k | Narrow the scope, or sample deliberately **and say so in the output** |
 
+These thresholds are a working estimate from the reference run, not a measured limit. Adjust them
+to your own session budget.
+
 **Rank the items by authority now, not later.** On an authored corpus that means flagging what
 is not the author's own work — reuploads, guest content — which gets a factual note rather than
 principle extraction. On an authoritative corpus it means writing down which source outranks
@@ -234,6 +237,8 @@ The point of the exercise. Three modes, cheapest first:
 1. **Principles only** — paste the "Applicable principles" section. ~2k tokens, covers most
    task-shaped uses ("review this against these principles").
 2. **Synthesis** — the whole README. ~8k tokens. For anything needing the reasoning behind a principle.
+
+Both token figures are estimates from the reference run, not measured counts.
 3. **Synthesis + relevant notes** — add 2–4 note files by theme. For deep work in one area.
 
 Design the principles section for this: **numbered, self-contained, imperative.** A principle that
