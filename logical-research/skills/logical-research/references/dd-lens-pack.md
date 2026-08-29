@@ -47,6 +47,7 @@ judgment here.
    - `> Cites: res_<name>.md`
    - `## Fires on` (tags + prose)
    - `## Attacks` (grouped A–F)
+   - `## Measure` (optional) — the number the lens can count and the thresholds that make it should-fix or blocker. Omit when nothing is countable.
    - `## Evidence of attack`
    - `## Severity guide` (blocker / should-fix / nit)
 

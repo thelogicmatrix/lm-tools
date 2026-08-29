@@ -65,6 +65,15 @@ nothing about who called it. `SKILL.md` holds the format.
 That is what makes it a component rather than a destination: the caller keeps its own docs and
 links into the research pack, instead of copying the contents out and owning a second stale copy.
 
+## Two tiers
+
+| Tier | When | Output |
+|---|---|---|
+| **Scan** (default) | a question, or under about eight sources | one graded file, `<root>/<slug>.md` |
+| **Pack** | a bounded corpus you will return to | the full synthesis, notes and bibliography |
+
+Both rank sources by authority before reading and keep the grounded / supported / speculative split. Scan escalates to Pack when the source count grows or you say you will come back to it.
+
 ## Extending — your own reading angles
 
 logical-research follows the lm-tools three-tier contract: a core you don't touch, and a tier you own.
