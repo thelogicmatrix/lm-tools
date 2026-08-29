@@ -125,7 +125,7 @@ export const colour = (s) =>
 
 // Every flag in this CLI that takes a following value. `--verified` is the only boolean, so
 // it is deliberately absent. A new valued flag must be added here as well as at its call site.
-export const VALUED_FLAGS = new Set(['--track', '--sprint', '--shape', '--research-root']);
+export const VALUED_FLAGS = new Set(['--track', '--sprint', '--shape', '--research-root', '--tier', '--for']);
 
 // A valued flag's value is NOT a positional. Filtering on startsWith('--') alone read
 // `learn start --track code "Systems Design"` as subject "code" and slugged the sprint
@@ -160,7 +160,7 @@ function help() {
   learn week                      what week, what concept, what is due
   learn gate <pass|fail> [--verified]
   learn page [concept]            stamp the week-N reference page
-  learn brief                     write a logical-research corpus brief (body on stdin)
+  learn brief [--for week|curriculum] [--tier scan|pack]
   learn profile                   read the learner profile`);
 }
 
@@ -408,14 +408,31 @@ export function renderPage({ subject, week, concept }) {
 
 export const BRIEF_SHAPES = ['synthesis', 'synthesis+notes', 'synthesis+notes+raw'];
 
-export function renderBrief({ slug, root, shape, body }) {
+// logical-research reads the depth it should work at off this line. Two values, no more: a
+// wider set here would name tiers the callee does not implement.
+export const BRIEF_TIERS = ['scan', 'pack'];
+
+// Two callers, two files. The weekly session research pass writes corpus-brief-week-<N>.md and
+// the curriculum cross-check writes corpus-brief-curriculum.md, so the cross-check no longer
+// hits the no-overwrite guard in a week the session pass already ran.
+export const BRIEF_TARGETS = ['week', 'curriculum'];
+
+export function renderBrief({ slug, root, shape, tier, body }) {
   if (!BRIEF_SHAPES.includes(shape)) throw new UsageError(`shape must be one of ${BRIEF_SHAPES.join(', ')}`);
-  return `# Corpus brief
-slug:   ${slug}
-root:   ${root}
-shape:  ${shape}
-${String(body).trim()}
-`;
+  if (tier !== undefined && !BRIEF_TIERS.includes(tier)) throw new UsageError(`tier must be one of ${BRIEF_TIERS.join(', ')}`);
+  // tier is optional in the logical-research brief contract: absent, the callee picks.
+  const tierLines = tier === undefined ? [] : [`tier:   ${tier}`];
+  // Joined on an explicit newline instead of written as one template literal: this file is
+  // checked out with CRLF on some machines, and the brief is another tool's line-by-line input.
+  return [
+    '# Corpus brief',
+    `slug:   ${slug}`,
+    `root:   ${root}`,
+    `shape:  ${shape}`,
+    ...tierLines,
+    String(body).trim(),
+    '',
+  ].join('\n');
 }
 
 export const profilePath = (root) => join(root, '.learn', 'profile.md');
@@ -441,8 +458,15 @@ function brief(args) {
   const root = resolveRoot();
   const s = pick(root, args);
   const shape = flag(args, '--shape') ?? 'synthesis+notes';
+  const tier = flag(args, '--tier');
+  const target = flag(args, '--for') ?? 'week';
+  if (!BRIEF_TARGETS.includes(target)) throw new UsageError(`--for must be one of ${BRIEF_TARGETS.join(', ')}`);
   const researchRoot = flag(args, '--research-root') ?? 'docs/research';
-  const rel = `${s.content}/corpus-brief.md`;
+  // The weekly pass writes one brief per week, not one per sprint. The curriculum cross-check
+  // writes its own file and runs at any point in the sprint. Separate names, so neither writer
+  // trips the other's no-overwrite rule, which still protects a hand-edited angle in place.
+  const suffix = target === 'curriculum' ? 'curriculum' : `week-${s.week}`;
+  const rel = `${s.content}/corpus-brief-${suffix}.md`;
   const file = join(root, rel);
   // Mirrors page(): a hand-edited angle is the whole value of this file, so a re-run must not
   // destroy it. Checked before stdin is touched, so the refusal does not eat the input.
@@ -453,7 +477,7 @@ function brief(args) {
   const body = readFileSync(0, 'utf8');
   if (!body.trim()) die(2, 'learn brief reads angle and corpus on stdin. Pipe them in.');
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, renderBrief({ slug: `${s.slug}-curriculum`, root: researchRoot, shape, body }));
+  writeFileSync(file, renderBrief({ slug: `${s.slug}-${suffix}`, root: researchRoot, shape, tier, body }));
   // The brief is the sprint's research home, so record where it went: nothing else ever wrote
   // this field, and a null there is indistinguishable from "no cross-check was ever run".
   s.research = rel;
