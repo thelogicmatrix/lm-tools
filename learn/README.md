@@ -23,7 +23,7 @@ learn start <subject> --track <name>   create the sprint, its content directory 
 learn week                             what week, what concept, what is due
 learn gate <pass|fail> [--verified]    record the mastery gate and advance the week
 learn page [concept]                   stamp this week's reference page from the template
-learn brief [--tier scan|pack]           write this week's corpus brief for logical-research (body on stdin)
+learn brief [--tier scan|pack]         write this week's corpus brief for logical-research (body on stdin)
 learn profile                          read the learner profile
 learn help                             print the verb list
 ```

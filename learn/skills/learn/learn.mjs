@@ -160,7 +160,7 @@ function help() {
   learn week                      what week, what concept, what is due
   learn gate <pass|fail> [--verified]
   learn page [concept]            stamp the week-N reference page
-  learn brief [--shape S] [--tier scan|pack]   write this week's corpus brief for logical-research (body on stdin)
+  learn brief [--tier scan|pack]  write this week's corpus brief for logical-research (body on stdin)
   learn profile                   read the learner profile`);
 }
 
