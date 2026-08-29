@@ -1,13 +1,13 @@
 {
   "name": "logical-research",
   "version": "1.1.0",
-  "description": "Turn a bounded corpus into reusable synthesis with evidence-graded claims and a traceable bibliography.",
+  "description": "Scan a question or Pack a bounded corpus into reusable, traceable context with evidence-graded claims.",
   "author": { "name": "Nathan Wong" },
   "skills": "./skills/",
   "interface": {
     "displayName": "Logical Research",
-    "shortDescription": "Build traceable context from a bounded corpus",
-    "longDescription": "Read a defined corpus end to end and produce evidence-graded synthesis, per-item notes, and a traceable bibliography.",
+    "shortDescription": "Scan a question or Pack a corpus into traceable context",
+    "longDescription": "Scan a question or a small source set into one graded file, or Pack a bounded corpus end to end into evidence-graded synthesis, per-item notes, and a traceable bibliography.",
     "developerName": "Nathan Wong",
     "category": "Research",
     "capabilities": ["Interactive", "Read", "Write"],

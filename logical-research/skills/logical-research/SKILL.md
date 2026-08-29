@@ -36,7 +36,9 @@ to the material. A corpus you cannot enumerate up front gets scoped down until y
 
 A single fact lookup with no synthesis is not research. Use a search.
 
-## Front-load exactly two questions
+## Front-load two questions (Pack only)
+
+Scan asks nothing. It writes one file.
 
 Ask these before phase 4, batched, then run autonomously:
 
@@ -65,10 +67,12 @@ corpus:                         # the enumerated items, or how to enumerate them
 
 Three rules, and they are what make it composable:
 
-- **A field the brief answers is never asked about.** The front-loaded questions are `shape`,
-  `angle` and, when absent, the tier. If the brief carries them, run autonomously from there.
-- **The output path is the return value.** Finish by printing `<root>/<slug>/`. The caller links
-  to that folder, it does not copy the contents out — one fact, one home.
+- **A field the brief answers is never asked about.** The front-loaded questions are `shape` and
+  `angle`, Pack only, and the tier when absent. If the brief carries them, run autonomously from
+  there.
+- **The output path is the return value.** Finish by printing the output path: `<root>/<slug>/` for
+  Pack, `<root>/<slug>.md` for Scan. The caller links to that folder, it does not copy the contents
+  out — one fact, one home.
 - **Know nothing about the caller.** No branch in this skill reads "a learning sprint asked" or
   "a review asked". If a caller needs something shaped differently, that belongs in its `angle`.
 
@@ -204,7 +208,9 @@ authoritative source and a pile of commentary is the second kind, not the first.
 
 ## Output shape
 
-`root` from the brief, defaulting to `research/`:
+`root` from the brief, defaulting to `research/`.
+
+Scan: `<root>/<slug>.md`, one file. Pack:
 
 ```
 <root>/<slug>/
@@ -218,6 +224,8 @@ Working files — raw transcripts, JSON, cleaner scripts — stay in a scratch d
 the repo**. They're bulky and regenerable. Only the synthesis, notes and bibliography are durable.
 
 ## Feeding it to a model
+
+A Scan file is pasted whole. The three modes below are for a Pack.
 
 The point of the exercise. Three modes, cheapest first:
 
