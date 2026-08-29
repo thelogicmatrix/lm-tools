@@ -16,7 +16,7 @@ One research pass on this week's single concept, through logical-research at Sca
 sources are ranked and every claim is graded. Pipe an angle and 3 to 6 checkable sources
 (official docs, a well-regarded course or textbook chapter, primary references) into
 `learn brief --shape synthesis --tier scan`. The angle is "teach <concept> for week N of
-<subject>: one worked example, the principle it generalises to, one caution". It prints
+<subject>: one worked example, the principle it generalizes to, one caution". It prints
 `BRIEF-WRITTEN <path>`. Hand that brief to logical-research. It returns a pack path. Put the path
 in the week page's Sources section. Link, never copy. If logical-research is unavailable, proceed
 with a disclosed "unsourced, verify later" flag rather than skipping the page.

@@ -674,6 +674,31 @@ test('a brief per week: week 2 writes a second file instead of refusing', () => 
   rmSync(dir, { recursive: true, force: true });
 });
 
+// The weekly research pass and the curriculum cross-check are two different writers. Sharing
+// one filename meant the cross-check hit the no-overwrite guard in any week the session pass
+// had already run, which is every week the skill's own session reference describes.
+test('brief --for curriculum writes its own file beside the week brief', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-briefcurric-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  assert.equal(runWithInput(dir, 'angle: x\ncorpus:\n  - a\n', 'brief').status, 0);
+  const r = runWithInput(dir, 'angle: y\ncorpus:\n  - b\n', 'brief', '--for', 'curriculum');
+  assert.equal(r.status, 0, r.stderr);
+  const s = readSprint(dir, 'learning-growth-marketing');
+  assert.ok(existsSync(join(dir, s.content, 'corpus-brief-week-1.md')), 'the week brief must survive');
+  const md = readFileSync(join(dir, s.content, 'corpus-brief-curriculum.md'), 'utf8');
+  assert.match(md, /^slug:\s+learning-growth-marketing-curriculum$/m);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('brief exits 2 when --for is outside week|curriculum', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-briefforbad-'));
+  assert.equal(run(dir, 'start', 'Growth Marketing', '--track', 'code').status, 0);
+  const r = runWithInput(dir, 'angle: x\ncorpus:\n  - a\n', 'brief', '--for', 'bogus');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--for must be one of/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('profile reports no profile yet when none has been written', () => {
   const dir = mkdtempSync(join(tmpdir(), 'learn-profileabsent-'));
   const r = run(dir, 'profile');
@@ -698,7 +723,7 @@ import { positionals, flag, VALUED_FLAGS } from '../skills/learn/learn.mjs';
 // The unit half of the argument fix. Every valued flag in the CLI must be in the set, or its
 // value gets read as a positional again: that is the exact shape of the corruption below.
 test('VALUED_FLAGS covers every flag the CLI reads a value from', () => {
-  assert.deepEqual([...VALUED_FLAGS].sort(), ['--research-root', '--shape', '--sprint', '--tier', '--track']);
+  assert.deepEqual([...VALUED_FLAGS].sort(), ['--for', '--research-root', '--shape', '--sprint', '--tier', '--track']);
   assert.ok(!VALUED_FLAGS.has('--verified'), '--verified is a boolean and must not consume a token');
 });
 

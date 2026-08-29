@@ -23,12 +23,12 @@ learn start <subject> --track <name>   create the sprint, its content directory 
 learn week                             what week, what concept, what is due
 learn gate <pass|fail> [--verified]    record the mastery gate and advance the week
 learn page [concept]                   stamp this week's reference page from the template
-learn brief [--tier scan|pack]         write this week's corpus brief for logical-research (body on stdin)
+learn brief [--for F] [--tier T]       write a corpus brief for logical-research (body on stdin)
 learn profile                          read the learner profile
 learn help                             print the verb list
 ```
 
-`week`, `gate`, `page` and `brief` act on the one sprint in the tree. With more than one they refuse rather than guess, and take `--sprint <slug>`. `brief` also takes `--shape <synthesis|synthesis+notes|synthesis+notes+raw>` (default `synthesis+notes`) and `--research-root <dir>` (default `docs/research`) and `--tier <scan|pack>` (optional, logical-research picks when absent). Briefs are per week, `docs/learning/<slug>/corpus-brief-week-<N>.md`.
+`week`, `gate`, `page` and `brief` act on the one sprint in the tree. With more than one they refuse rather than guess, and take `--sprint <slug>`. `brief` also takes `--for <week|curriculum>` (default `week`), `--shape <synthesis|synthesis+notes|synthesis+notes+raw>` (default `synthesis+notes`), `--research-root <dir>` (default `docs/research`), and `--tier <scan|pack>` (optional, logical-research picks when absent). The weekly research pass writes one brief per week at `docs/learning/<slug>/corpus-brief-week-<N>.md`, and `--for curriculum` writes the cross-check's own `docs/learning/<slug>/corpus-brief-curriculum.md`.
 
 Sprint state lives in `.learn/` inside the current git repo — `sprints/<slug>.json`, your own tracks in `tracks/`, the profile at `profile.md`. Set `LEARN_HUB` to keep one learning hub across many repos. Everything you write lives under `docs/learning/<slug>/`: `sprint.md`, scaffolded by `learn start` for the sprint goal and the weekly milestones, and then one week page per week. `page` and `brief` both refuse to overwrite a file that already exists, so a hand-edited one is never clobbered by a re-run. Nothing writes `profile.md` — `learn profile` reads it, and you write it.
 
@@ -57,7 +57,7 @@ A track is a markdown file with six `##` headings, and the skill reads it by hea
 
 [`gtg`](../gtg) — the session layer. The relationship is **soft and one-directional**: `learn start` prints a `GTG-NEW` line that asks the *skill* to create the gtg project, and `learn.mjs` itself never spawns gtg or reads its store. Each side owns a different half. `learn` holds the mechanics — week, concept, gate history, verify floor — and holds no narrative at all: no what-got-built, no where-we-stopped, no next action. That is the gtg handoff's job, and it is what makes a sprint resumable a week later. gtg ships a `gtg learn` view that lists your sprints. Without gtg installed the sprint still runs; you just lose the narrative between sessions.
 
-[`logical-research`](../logical-research) — the optional curriculum cross-check. `learn brief` writes `docs/learning/<slug>/corpus-brief-week-<N>.md` and prints `BRIEF-WRITTEN <path>`; hand that to `logical-research`, which returns a pack path. **Link to the pack, never copy its contents into the sprint's own files** — one fact, one home. Anything sprint-specific goes in the brief's angle, because `logical-research` deliberately knows nothing about its caller. Every session's research pass goes the same way at Scan tier, see the skill's running-a-session reference. It is a gap-check against a plan you already made, not a replacement syllabus, and if it is unavailable the sprint proceeds with a disclosed "cross-check skipped" note rather than blocking.
+[`logical-research`](../logical-research) — the optional curriculum cross-check. `learn brief --for curriculum` writes `docs/learning/<slug>/corpus-brief-curriculum.md` and prints `BRIEF-WRITTEN <path>`; hand that to `logical-research`, which returns a pack path. **Link to the pack, never copy its contents into the sprint's own files** — one fact, one home. Anything sprint-specific goes in the brief's angle, because `logical-research` deliberately knows nothing about its caller. Every session's research pass goes the same way at Scan tier, see the skill's running-a-session reference. It is a gap-check against a plan you already made, not a replacement syllabus, and if it is unavailable the sprint proceeds with a disclosed "cross-check skipped" note rather than blocking.
 
 ## Why it is shaped this way
 
