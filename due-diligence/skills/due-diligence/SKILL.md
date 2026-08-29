@@ -47,14 +47,18 @@ any one holds:
 - 1 or more blockers found by the Light pass, fixed or not. A blocker means the artifact was
   worse than it looked, so a fresh critic checks what else was missed.
 - 3 or more should-fix across 2 or more lenses.
-- A selected lens with evidence "none" (it could not be exercised on this artifact).
-- The fix cycle changed more than a fifth of the artifact's lines. Fixes create defects.
+- A lens selected because the artifact's surface needs it, that then could not be
+  exercised: the surface was expected and turned out missing or unreachable. A lens
+  correctly ruled out at selection is not that.
+- The fix cycle rewrote a large share of the artifact, more than about a fifth of its lines,
+  sections or screens, whichever the artifact is made of. Judge it, don't compute it. Fixes
+  create defects.
 
 Standard escalates to Heavy only when its critic finds a blocker the Light missed AND the
 artifact is irreversible or external. Never de-escalate automatically. Announce the move in one
 line with the numbers: *"Light: 1 blocker, 4 should-fix over 3 lenses. Escalating to Standard."*
-Dispatch the Standard critic with an explicit `model:`, on a cheaper tier than the session when
-your routing rules allow it.
+Dispatch the Standard critic on a cheaper model tier than the session where your setup allows
+it, naming the model explicitly.
 
 ## Step 0: context, ask if unknown
 
