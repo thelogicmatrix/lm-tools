@@ -9,7 +9,7 @@ description: Use BEFORE building any work product a stakeholder will scrutinise 
 
 DD's research corpus, run **forward**. DD attacks a finished draft; `cdd` briefs the build *before the first line*, so the artifact is built to the bar and the later critic finds little. Same tags, same lenses, same knowledge — consumed to construct rather than to review.
 
-`cdd` reuses the Due Diligence skill's `references/` library (sibling skill `due-diligence`). It does **not** duplicate that knowledge, and it does **not** load DD's `SKILL.md` — it reads only the specific lens/res files a tag selects, on demand, by path. Nothing enters context until a tag calls for it.
+`cdd` reuses the Due Diligence skill's `references/` library (sibling skill `due-diligence`). It does **not** duplicate that knowledge, and it does **not** load DD's `SKILL.md` — it reads only the lens files a tag selects, on demand, by path, plus the res files a Full brief cites. Nothing enters context until a tag calls for it.
 
 ## Hard guard — read first
 
@@ -26,10 +26,10 @@ DD's research corpus, run **forward**. DD attacks a finished draft; `cdd` briefs
 3. **Open only the selected knowledge, on demand, at the brief tier that fits.**
    - **Light brief (default).** For each selected lens read `../due-diligence/references/lenses/<name>.md` only. Flip its Attacks into targets. Where the lens has a `## Measure`, state the target as the number to hit ("0 untraced claims", "6/6 edge-case classes", "4/4 viewports").
    - **Full brief.** Also read the `../due-diligence/references/res_<domain>.md` the lens cites, for the "what good looks like" bar. Only when the user asks, or the artifact is external or irreversible.
-   Say which tier ran in the brief's first line. Read nothing else. (Paths are relative to the skills directory; `cdd` and `due-diligence` are siblings.)
+   Name the tier on the brief's lead line, next to the tag and lens selection. Read nothing else. (Paths are relative to the skills directory; `cdd` and `due-diligence` are siblings.)
 
-4. **Emit the build brief.** One checklist to build against — for each **selected** lens, that lens's attacks **flipped into build targets**, plus the res_ bar on a Full brief (each "attack X" → "satisfy / avoid X"). Examples:
-   - *Provenance* (if selected) — every figure/name/date/quote you put in must trace to a real source as you write it; never fabricate or hedge with "reportedly."
+4. **Emit the build brief.** One checklist to build against — for each **selected** lens, that lens's attacks **flipped into build targets** (each "attack X" → "satisfy / avoid X"), plus the res_ bar on a Full brief. Examples:
+   - *data-provenance* (if selected) — every figure/name/date/quote you put in must trace to a real source as you write it; never fabricate or hedge with "reportedly."
    - *Necessity* — cut anything not serving the reader's decision before it goes in.
    - *Clarity* — define jargon and label units inline, at first use.
    - *Operational completeness* — handle the whole input and the edge cases (empty/zero/max/missing/duplicate/failure) from the start.
