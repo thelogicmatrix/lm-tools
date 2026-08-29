@@ -41,7 +41,7 @@ instead of a doc you have to remember to re-read.
 ## Install
 
 **Prerequisites:** nothing extra for books, PDFs, docs sites and papers. For YouTube or podcast
-corpora, Python 3 with `yt-dlp` on PATH (`pip install yt-dlp`).
+corpora, Python 3 with the `yt-dlp` package installed (`python -m pip install yt-dlp`, the skill calls `python -m yt_dlp`).
 
 **As a plugin (auto-updating):**
 ```
