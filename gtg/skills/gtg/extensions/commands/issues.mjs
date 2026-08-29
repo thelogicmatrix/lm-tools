@@ -437,7 +437,7 @@ export default ({ root, args, ownEntries, commit, ownParent }) => {
     // this entry deletes the only live mapping from its pN to a name while every member file
     // still points at it - the package dissolves for exactly as long as you are working it.
     if (hits.length === 1) {
-      console.log(`GTG-DIRECTIVE: run gtg.mjs resume ${hits[0].slug} --keep and follow the SKILL.md Resume Procedure. A package is never consumed: it is the only live pN-to-name mapping its issue files point at, and it retires by being finished (see references/commands.md, "Working a package").`);
+      console.log(`GTG-DIRECTIVE: run gtg.mjs resume ${hits[0].slug} --keep and follow the SKILL.md Resume Procedure. A package is never consumed (references/commands.md, "Working a package").`);
       return;
     }
     if (hits.length > 1) {

@@ -4,7 +4,7 @@
 
 Say **"gtg"** when you have to leave mid-task: Claude writes a structured handoff
 (what was done, where you stopped, the exact next action, decisions already made)
-and pins it to a tracked list. Days later, say **"let's continue X"** in a fresh
+and pins it to a tracked list. Days later, say **"gtg X"** in a fresh
 session and it picks up cold — no re-explaining, no re-litigating.
 
 Why this one, when several handoff skills exist:

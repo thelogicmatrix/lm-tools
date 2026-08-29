@@ -235,14 +235,14 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
 {
   const root = setup({}, [P1]);
   const { out } = run(root, ['p1']);
-  assert.equal(out, 'GTG-DIRECTIVE: run gtg.mjs resume issues-p1-hooks --keep and follow the SKILL.md Resume Procedure. A package is never consumed: it is the only live pN-to-name mapping its issue files point at, and it retires by being finished (see references/commands.md, "Working a package").');
+  assert.equal(out, 'GTG-DIRECTIVE: run gtg.mjs resume issues-p1-hooks --keep and follow the SKILL.md Resume Procedure. A package is never consumed (references/commands.md, "Working a package").');
 }
 
 // 9. A full slug and a substring of the project name both resolve, and like case 8 the
 // directive is the SOLE output. gtg's router only acts on a directive it sees first.
 {
   const root = setup({}, [P1], [P3]);
-  const only = 'GTG-DIRECTIVE: run gtg.mjs resume issues-p3-obelisk-housekeeping --keep and follow the SKILL.md Resume Procedure. A package is never consumed: it is the only live pN-to-name mapping its issue files point at, and it retires by being finished (see references/commands.md, "Working a package").';
+  const only = 'GTG-DIRECTIVE: run gtg.mjs resume issues-p3-obelisk-housekeeping --keep and follow the SKILL.md Resume Procedure. A package is never consumed (references/commands.md, "Working a package").';
   assert.equal(run(root, ['issues-p3-obelisk-housekeeping']).out, only);
   assert.equal(run(root, ['housekeeping']).out, only);
 }
@@ -529,16 +529,16 @@ const LOOSE = {
   assert.match(wrong.out, /No issue package matches "p1"/);
   // An exact pN still reaches its own package.
   assert.equal(run(only10, ['p10']).out,
-    'GTG-DIRECTIVE: run gtg.mjs resume issues-p10-dns --keep and follow the SKILL.md Resume Procedure. A package is never consumed: it is the only live pN-to-name mapping its issue files point at, and it retires by being finished (see references/commands.md, "Working a package").',
+    'GTG-DIRECTIVE: run gtg.mjs resume issues-p10-dns --keep and follow the SKILL.md Resume Procedure. A package is never consumed (references/commands.md, "Working a package").',
     'an exact pN query stopped matching its own package');
   // Free text keeps substring matching.
   assert.equal(run(only10, ['dns']).out,
-    'GTG-DIRECTIVE: run gtg.mjs resume issues-p10-dns --keep and follow the SKILL.md Resume Procedure. A package is never consumed: it is the only live pN-to-name mapping its issue files point at, and it retires by being finished (see references/commands.md, "Working a package").',
+    'GTG-DIRECTIVE: run gtg.mjs resume issues-p10-dns --keep and follow the SKILL.md Resume Procedure. A package is never consumed (references/commands.md, "Working a package").',
     'substring matching on free text was wrongly removed');
   // p1 resolves to p1 when p1 exists, with p10 sitting alongside it.
   const both = setup({}, [P1, P10]);
   assert.equal(run(both, ['p1']).out,
-    'GTG-DIRECTIVE: run gtg.mjs resume issues-p1-hooks --keep and follow the SKILL.md Resume Procedure. A package is never consumed: it is the only live pN-to-name mapping its issue files point at, and it retires by being finished (see references/commands.md, "Working a package").');
+    'GTG-DIRECTIVE: run gtg.mjs resume issues-p1-hooks --keep and follow the SKILL.md Resume Procedure. A package is never consumed (references/commands.md, "Working a package").');
   // A whitespace-only query is empty, not match-everything.
   const blank = run(both, ['   ']);
   assert.doesNotMatch(blank.out, /GTG-DIRECTIVE/);

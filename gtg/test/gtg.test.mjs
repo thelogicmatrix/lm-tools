@@ -65,7 +65,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.ok(existsSync(join(repo, rel)), 'handoff doc missing');
   const doc = readFileSync(join(repo, rel), 'utf8');
   assert.match(doc, /^# Handoff: Project A/);
-  assert.match(doc, /## Resume Prompt\nSay: "let's continue Project A"/);
+  assert.match(doc, /## Resume Prompt\nSay: "gtg proj-a"/);
   const entries = active(repo).handoffs;
   assert.equal(entries.length, 1);
   assert.equal(entries[0].slug, 'proj-a');
@@ -205,7 +205,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   });
   assert.notEqual(r.status, 0, `a genuine git commit failure must exit non-zero so a batch caller can detect it: ${r.stderr}`);
   assert.match(r.stdout, /^docs\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-proj-c\.md$/m, 'handoff success output missing from stdout');
-  assert.match(r.stdout, /RESUME: "let's continue Project C"/);
+  assert.match(r.stdout, /RESUME: "gtg proj-c"/);
   assert.match(r.stderr, /uncommitted/i, 'genuine git commit failure must be surfaced as a warning, not swallowed');
   assert.ok(existsSync(join(repo, 'docs/handoffs/_active.json')), 'entry should still be written to disk despite commit failure');
   console.log('ok 3 - commit failure exits non-zero, write still reported');
@@ -2172,7 +2172,7 @@ export default async (ctx) => {
   assert.equal(ran.slug, 'hk');
   assert.match(ran.file, /docs\/handoffs\/.*-hk\.md$/);
   assert.equal(ran.body, BODY.trim());
-  assert.ok(r.stdout.trim().endsWith('RESUME: "let\'s continue Hooked"'), 'RESUME stays the last line');
+  assert.ok(r.stdout.trim().endsWith('RESUME: "gtg hk"'), 'RESUME stays the last line');
   execSync('git rm -q --cached hook-ran.json 2>/dev/null || true', { cwd: dir });
   execSync('rm -f hook-ran.json', { cwd: dir });
   gtg(dir, ['backlog', '--project', 'Idea', '--slug', 'idea', '--next', 'x'], { input: 'body\n' });

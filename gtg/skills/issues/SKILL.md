@@ -1,6 +1,6 @@
 ---
 name: issues
-description: 'Use when a problem surfaces while attention is elsewhere and is about to be named in chat and left there ("that''s a separate bug", "out of scope for now", "noting this", "unrelated, but"), so it gets filed in docs/issues/ instead of lost. Also for closing, re-checking or listing existing issues ("is this still an issue", "that''s fixed, close it", "issue list", "fix session").'
+description: 'Issue filing into docs/issues/. Use when a problem surfaces mid-task and would be left in chat ("separate bug", "out of scope", "noting this"). Also closes, re-checks or lists issues.'
 ---
 
 # issues: file it, or lose it

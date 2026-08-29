@@ -371,7 +371,7 @@ Branch: ${branch}
 ${fullBody}
 
 ## Resume Prompt
-Say: "let's continue ${a.project}"
+Say: "gtg ${a.slug}"
 `;
   // Math.max guards the counter against going backwards: deleting old handoff
   // .md files (plain docs, fine to prune per the README) or two handoffs
@@ -441,8 +441,8 @@ Say: "let's continue ${a.project}"
     }
   }
   console.log(verb === 'backlog'
-    ? `PARKED on backlog: "${a.project}" - reactivate with 'gtg active <n>' or "let's continue ${a.project}"`
-    : `RESUME: "let's continue ${a.project}"`);
+    ? `PARKED on backlog: "${a.project}" - reactivate with 'gtg active <n>' or "gtg ${a.slug}"`
+    : `RESUME: "gtg ${a.slug}"`);
 }
 const handoff = (argv) => writeHandoff(argv, { storeRel: REL_ACTIVE, key: 'handoffs', verb: 'handoff' });
 

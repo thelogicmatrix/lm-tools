@@ -1,6 +1,6 @@
 ---
 name: gtg
-description: 'Activate on "gtg", alone or as "gtg <project>", anywhere in a message. Mid-session it wraps the current work for a cold resume (after doing whatever else the message asks); at session start it resumes the named or only parked project.'
+description: 'Pause and resume over the command word "gtg". Bare "gtg" mid-session wraps the current work for a cold resume (after doing whatever else the message asks). "gtg <project>" at session start resumes it. "gtg <verb>" is bookkeeping. Mentioning gtg while discussing the skill itself is not a trigger.'
 ---
 
 # GTG — Pause and Resume
@@ -15,7 +15,8 @@ repo, or `$GTG_HUB` if set.
 |---|---|
 | `gtg` mid-session | Exit Procedure below. Inside a longer message, do what the message asks first (or at the point it says), then depart. No question either way. |
 | Session-start `gtg` or `gtg <project>` | Resume Procedure below |
-| `gtg <verb>` (list, prune, remove, backlog, …) | Read `references/commands.md`, follow it |
+| `gtg list` / bare `gtg backlog` / `gtg back`, `active`, `remove`, `prune`, `undo`, `log`, `stats` (+ args) | Zero-model: run `gtg.mjs <verb> [args]` verbatim, relay its output, stop. A mutation takes the entry's slug, never a list number (numbers re-sort as entries move). |
+| Any other `gtg <verb>` (peek, report, supersede, rename, unparent, `backlog <idea>`, issues, learn, …) | Read `references/commands.md`, follow it |
 
 ## Resume Procedure
 

@@ -1,7 +1,7 @@
 # gtg — Commands and routing
 
-Everything `gtg <verb>` does other than depart or resume. Loaded only when SKILL.md's third row
-fires. `gtg.mjs` = `node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs"`.
+Everything `gtg <verb>` does other than depart or resume. Loaded only when SKILL.md's last routing row
+fires (a verb the zero-model row does not cover). `gtg.mjs` = `node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs"`.
 
 Contents: Trigger semantics · Router table · Extension entries · Working a package · Backlog Park.
 
@@ -28,26 +28,20 @@ Disambiguation, in this order:
 4. Any other token (mid-session, or carrying further args like `gtg issues p1`) goes straight
    to the CLI as an extension verb.
 
-All bookkeeping (list/remove/back/active/undo) is zero-model: shell out to the CLI, relay its
-output, don't reason about the JSON. When *you* issue a mutation, always pass the entry's
-**`slug`**, never a bare list number: list numbers re-sort as entries move and a stale number
-silently targets the wrong project. The bare-integer form exists for a human reading `list`.
+Bookkeeping verbs (`list`, bare `backlog`, `back`, `active`, `remove`, `prune`, `undo`, `log`, `stats`)
+never reach this file: SKILL.md routes them straight to the CLI, slug not list number.
 
 ## Router table
 
 | Trigger | Do this |
 |---|---|
-| "gtg list" / "what's active" | Run `gtg.mjs list` and relay its output. Stop. |
-| "gtg backlog" / "gtg back &lt;n\|slug&gt;" / "gtg active &lt;n\|slug&gt;" | Run `gtg.mjs backlog` / `back <n|slug>` / `active <n|slug>` verbatim (each commits itself). Relay output. Stop. |
 | "gtg backlog &lt;idea&gt;" (an idea named, not bare) | Park a long-horizon idea, see Backlog Park below. |
-| "gtg prune" / "gtg remove &lt;n\|slug&gt;" | The project **shipped**. Run `gtg.mjs remove <n\|slug>`. `gtg.mjs undo` reverts your own last change. Stop. |
 | "gtg supersede &lt;n\|slug&gt;" / "this rolled up into X" / "I filed that one in error" | The entry was **neither shipped nor abandoned**. Run `gtg.mjs supersede <n\|slug> [--into <n\|slug>]`. Use it when consolidating several entries into one parent, or clearing an entry that should never have existed: `remove` would write a phantom ship and `back` reads as shelved-for-later, and both corrupt throughput. Pass `--into` whenever another entry absorbed it. Stop. |
 | "gtg peek &lt;project&gt;" | Find the entry in `docs/handoffs/_active.json` (or `_backlog.json`), read its `file` verbatim, relay the content. **Do not consume**, no store mutation. |
-| "gtg resume &lt;project&gt;" / "let's continue &lt;project&gt;" | The project was **picked back up**, not shipped. SKILL.md Resume Procedure. `remove` means shipped, `resume` means picked back up; conflating them makes throughput history meaningless. |
+| "gtg resume &lt;project&gt;" (mid-session; at session start "gtg &lt;project&gt;" is enough) | The project was **picked back up**, not shipped. SKILL.md Resume Procedure. `remove` means shipped, `resume` means picked back up; conflating them makes throughput history meaningless. |
 | "gtg rename &lt;n\|slug&gt; &lt;new&gt;" | Run `gtg.mjs rename <n\|slug> <new-slug>`. It re-points any sub-project whose `parent` named the old slug, and leaves past handoff filenames alone because those record what the project was called then. The **portfolio** slug is separate: relay the `projects rename` line it prints rather than assuming both moved. Stop. |
 | a `projects rename` printed a `NOTE:` about dangling parents | Run the `gtg rename <old> <new>` it names. Given a slug no entry here carries, `rename` repairs the stale `parent` reference instead of renaming an entry. Stop. |
 | an entry's `parent` names a family that does not exist, or names itself | Run `gtg.mjs unparent <n\|slug>`. `rename` re-**points** a parent (every child carrying it, at once), `unparent` **removes** one (a single entry). Re-pointing a dangling parent at the entry's own slug only makes a self-parent, so reach for `unparent` whenever the right answer is "no family". Stop. |
-| "gtg log" / "when did I last touch &lt;project&gt;" | Run `gtg.mjs log [n\|slug]` and relay it. Read from git, so there is no ledger to keep in step. Stop. |
 | "gtg report" | Run `gtg.mjs report` (writes `docs/handoffs/_report.json`, zero model tokens). Then invoke the **reporter** skill on that JSON to build a self-contained HTML report: a GitHub-style habit grid (from `habit.grid`), throughput and family rollups, per-project arcs, and the fun callouts. Playful tone. Write the HTML to the session scratchpad, not the repo. If `historyAvailable` is false or `effort.sessionsTimed` is 0, say so plainly rather than inventing figures. `duration_min` only accrues from sessions after gtg 1.4.0, so label effort "accruing", never present a near-zero total as if the work took no time. |
 | "gtg &lt;verb&gt;" not listed above (e.g. "gtg stats", "gtg issues", "gtg learn") | Run `gtg.mjs <verb>` and relay its output. Four bundled extras ship with the plugin, in two kinds. **Extensions** own entries in the handoff store and render their own separated list: `issues` (the issues-layer listing) and `learn` (learning sprints). **Mods** own no entries and only add a view over the whole store: `stats` (a handoff-store snapshot) and `report`. A `<storage-root>/.gtg/commands/<verb>.mjs` you've added resolves here too, and yours overrides a bundled one of the same name. Unknown → the CLI errors. Stop. **Exception:** if the first output line starts with `GTG-DIRECTIVE:`, don't relay it; follow the instruction on that line instead. Both bundled extensions use this to hand control back to the Resume Procedure. |
 
