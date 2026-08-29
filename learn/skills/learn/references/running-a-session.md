@@ -12,10 +12,22 @@ this week's one new concept). `VERIFY-DUE` means section 5 is mandatory this ses
 
 ## 2. Source the concept, then `learn page`
 
-One research pass on this week's single concept: official docs, well-regarded course or
-textbook material, primary references. Checkable sources, not memory. If research is
-unavailable, proceed with a disclosed "unsourced, verify later" flag rather than skipping
-the page.
+One research pass on this week's single concept, through logical-research at Scan tier so the
+sources are ranked and every claim is graded. Pipe an angle and 3 to 6 checkable sources
+(official docs, a well-regarded course or textbook chapter, primary references) into
+`learn brief --shape synthesis --tier scan`. The angle is "teach <concept> for week N of
+<subject>: one worked example, the principle it generalizes to, one caution". The body is
+keyed lines, not prose: one `angle:` line, then a `corpus:` line and one `- <source>` per
+line under it. Anything else is appended verbatim and logical-research has to ask for the
+two fields again.
+
+```
+printf 'angle: teach <concept> for week <N> of <subject>: one worked example, the principle it generalizes to, one caution\ncorpus:\n  - <url>\n  - <url>\n' | learn brief --shape synthesis --tier scan
+```
+
+It prints `BRIEF-WRITTEN <path>`. Hand that brief to logical-research. It returns a pack path. Put the path
+in the week page's Sources section. Link, never copy. If logical-research is unavailable, proceed
+with a disclosed "unsourced, verify later" flag rather than skipping the page.
 
 `learn page <concept>` stamps `docs/learning/<slug>/week-<N>-<concept>.md` (objective
 callout, worked example, the principle it generalizes to, a caution callout, worksheet,
@@ -46,7 +58,8 @@ When the concept admits a genuine spot-the-bug (a common, instructive mistake, n
 contrived one), fold one in per the track's `Verify exercise` section: a short snippet,
 sometimes clean, sometimes subtly wrong, work out which and why. Never force a fake bug.
 Floor: once every 2 weeks from the last one that ran; a sprint that never ran one is due at
-week 2. Pass `--verified` to `learn gate` when one ran; without the flag the floor still reads as unmet. Run the exercise before the gate call, since the flag rides on it. Two
+week 2. Pass `--verified` to `learn gate` when one ran; without the flag the floor still reads as
+unmet. Run the exercise before the gate call, since the flag rides on it. Two
 weeks with no natural fit: the third includes one even if it takes contriving, or the gap is
 recorded at the sprint review, never skipped silently.
 

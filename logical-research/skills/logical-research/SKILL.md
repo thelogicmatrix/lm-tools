@@ -1,31 +1,45 @@
 ---
 name: logical-research
-description: Use when turning a bounded body of source material — a YouTube channel, a book, a podcast back catalogue, a docs site, a set of papers — into reusable context rather than answering a one-off question. Triggers on "research this channel/author/book", "read the whole corpus", "build me a knowledge pack on X", "go through all of these and synthesise", or when a later task needs principles extracted from source material and every claim traceable. Not for a single question — that's a search.
+description: Use whenever research is asked for or a body of source material must become reusable, traceable context. Triggers on "research X", "look into X properly", "what do the docs or sources say about X", "research this channel/author/book", "build me a knowledge pack on X", "read all of these and synthesise", or when a later task needs principles extracted from sources with every claim traceable. Self-selects a tier, Scan (a question or a small source set, one graded file) or Pack (a bounded corpus, the full pipeline). A single fact lookup with no synthesis is a plain search, not this.
 ---
 
 # Logical Research
 
 ## Overview
 
-Turn a bounded corpus into **actionable context**: a synthesis doc, per-item notes, and a
-bibliography, structured so it can be fed to a model as working context for a later task.
+At Scan tier the output is one graded file. At Pack tier it is a synthesis doc, per-item notes
+and a bibliography. Either way, a bounded body of source material becomes **actionable context**,
+structured so it can be fed to a model as working context for a later task.
 
 The output is **not a summary**. It's a reusable knowledge artifact: original analysis with
 claims graded by evidence strength, principles extracted as instructions, and every source
 traceable back to the item it came from.
 
-## When to use
+## Pick the tier
 
-All three must hold:
+Say which tier in one line before starting. Both tiers keep the non-negotiables: rank sources by
+authority before reading, split every claim into grounded / supported / speculative, and trace
+every claim to the source it came from.
 
-- The corpus is **bounded and enumerable** — a channel, an author's works, a doc set. Not "everything about X".
-- You'll **return to it more than once**, or want to hand it to a model later.
-- The value is in **cross-item synthesis**, not any single item.
+**Scan** is the default when the ask is a question, or the source set is under about eight items.
+Enumerate the sources and rank them by authority (a first-party statement beats commentary on
+it). Read each in full. Write one file, `<root>/<slug>.md`, containing: the question, the answer
+graded well-grounded / reasonably supported / explicitly speculative, the sources ranked with one
+line each on why they rank where they do, and applicable principles as numbered imperatives when
+the material yields any. No notes folder, no bibliography file.
 
-Don't use it for a one-off question — that's a search. Don't use it for a corpus you can't
-enumerate up front; scope it down until you can.
+**Pack** is the six-phase pipeline below, for a corpus that is bounded and enumerable (a channel,
+an author's works, a doc set), that you will return to more than once or hand to a model later,
+and whose value is in cross-item synthesis rather than any single item.
 
-## Front-load exactly two questions
+Scan escalates to Pack when enumeration passes the threshold, or the caller says they will return
+to the material. A corpus you cannot enumerate up front gets scoped down until you can.
+
+A single fact lookup with no synthesis is not research. Use a search.
+
+## Front-load two questions (Pack only)
+
+Scan asks nothing. It writes one file.
 
 Ask these before phase 4, batched, then run autonomously:
 
@@ -45,6 +59,7 @@ brief** and handing it over, instead of holding a conversation:
 slug:   <kebab-slug>            # names the output folder
 root:   docs/research           # where the pack lands. Default: research/
 shape:  synthesis+notes         # synthesis | synthesis+notes | synthesis+notes+raw
+tier:   scan                    # scan | pack. Absent: the skill picks.
 angle:  <what this research is for, one line>
 corpus:                         # the enumerated items, or how to enumerate them
   - <item or source>
@@ -53,10 +68,12 @@ corpus:                         # the enumerated items, or how to enumerate them
 
 Three rules, and they are what make it composable:
 
-- **A field the brief answers is never asked about.** The two front-loaded questions are `shape`
-  and `angle`. If the brief carries them, run autonomously from there.
-- **The output path is the return value.** Finish by printing `<root>/<slug>/`. The caller links
-  to that folder, it does not copy the contents out — one fact, one home.
+- **A field the brief answers is never asked about.** The front-loaded questions are `shape` and
+  `angle`, Pack only, and the tier when absent. If the brief carries them, run autonomously from
+  there.
+- **The output path is the return value.** Finish by printing the output path: `<root>/<slug>/` for
+  Pack, `<root>/<slug>.md` for Scan. The caller links to that path, it does not copy the contents
+  out — one fact, one home.
 - **Know nothing about the caller.** No branch in this skill reads "a learning sprint asked" or
   "a review asked". If a caller needs something shaped differently, that belongs in its `angle`.
 
@@ -85,6 +102,9 @@ Then compute item count, total duration, total words, median length.
 | < 150k words | One session, read everything |
 | 150k–400k | Split by theme across sessions; write notes as you go, synthesise last |
 | > 400k | Narrow the scope, or sample deliberately **and say so in the output** |
+
+These thresholds are a working estimate from the reference run, not a measured limit. Adjust them
+to your own session budget.
 
 **Rank the items by authority now, not later.** On an authored corpus that means flagging what
 is not the author's own work — reuploads, guest content — which gets a factual note rather than
@@ -121,7 +141,8 @@ Extract two more things here, because they're free and they shape the reading:
 
 - **The bibliography** — regex `https?://[^\s)>\]]+` over descriptions/footnotes. Bucket by
   frequency: links appearing in more than a third of items are boilerplate (the author's own
-  properties); the rest are real citations. This list is often as valuable as the corpus.
+  properties); the rest are real citations. The one-third line is a heuristic from one reference
+  run, not a measured constant. This list is often as valuable as the corpus.
 - **Per-item metadata** — date, length, popularity, chapters.
 
 ### 4. Read and note — the part that can't be automated
@@ -192,7 +213,9 @@ authoritative source and a pile of commentary is the second kind, not the first.
 
 ## Output shape
 
-`root` from the brief, defaulting to `research/`:
+`root` from the brief, defaulting to `research/`.
+
+Scan: `<root>/<slug>.md`, one file. Pack:
 
 ```
 <root>/<slug>/
@@ -207,11 +230,15 @@ the repo**. They're bulky and regenerable. Only the synthesis, notes and bibliog
 
 ## Feeding it to a model
 
+A Scan file is pasted whole. The three modes below are for a Pack.
+
 The point of the exercise. Three modes, cheapest first:
 
 1. **Principles only** — paste the "Applicable principles" section. ~2k tokens, covers most
    task-shaped uses ("review this against these principles").
 2. **Synthesis** — the whole README. ~8k tokens. For anything needing the reasoning behind a principle.
+
+Both token figures are estimates from the reference run, not measured counts.
 3. **Synthesis + relevant notes** — add 2–4 note files by theme. For deep work in one area.
 
 Design the principles section for this: **numbered, self-contained, imperative.** A principle that
@@ -231,12 +258,13 @@ review capability instead of a doc you have to remember to re-read. If the corpu
 
 **YouTube caption tracks are not equivalent.** `--sub-langs "en.*"` pulls up to three tracks per
 video. Plain `en` and `en-en` are unpunctuated ASR dumps (~2 punctuation marks per 1k chars).
-**`en-orig` is the punctuated one** (~35 per 1k) — it carries word-level timing tags that need
-stripping, but sentence structure is intact and worth the extra parsing. Always compare a sample
+**`en-orig` is the punctuated one** (~35 per 1k). Both rates were measured on one reference run
+of a ~30-video channel, 2026-07. `en-orig` carries word-level timing tags that need stripping,
+but sentence structure is intact and worth the extra parsing. Always compare a sample
 across variants before cleaning the whole set; the wrong track costs you sentence boundaries.
 
-**Auto-captions garble every proper noun.** On the reference run one author's name rendered four
-different ways across videos, and tool names mangled variously. **Correct names against the
+**Auto-captions garble every proper noun.** On that same reference run one author's name rendered
+four different ways across videos, and tool names mangled variously. **Correct names against the
 description citations and links, never the transcript**, and put a warning in the synthesis so
 nobody later quotes a hallucinated name.
 

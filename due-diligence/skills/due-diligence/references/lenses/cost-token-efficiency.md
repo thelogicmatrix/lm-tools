@@ -1,5 +1,5 @@
 # cost-token-efficiency — Is this LLM call spending tokens/tier where it doesn't need to?
-> Cites: CLAUDE.md (token↔quality levers)
+> Cites: internal — provider cost-control practice: model tier, max_tokens, prompt caching, batching, cheaper fallback path.
 
 ## Fires on
 Tags: llm-pipeline. Any artifact defining an LLM call or pipeline — model choice, prompt construction, context assembly, or a loop/batch of calls.
@@ -11,6 +11,12 @@ Tags: llm-pipeline. Any artifact defining an LLM call or pipeline — model choi
 - No batching: independent, non-latency-sensitive calls are issued one at a time instead of via a batch API.
 - No cheaper fallback path: every request goes to the top-tier model with no cheap-first/escalate-on-failure route.
 - Re-sending large context each call: the same large document/history is retransmitted in full instead of trimmed, summarized, or cached.
+
+## Measure
+Levers set with a stated reason ÷ 5 (model tier, max_tokens, caching on repeated context,
+batching, cheaper fallback). Report as "k/5" and name the missing ones. An order-of-magnitude
+waste from one missing lever = blocker. Any other missing lever with a moderate, quantifiable cost
+= should-fix, a single-digit-percent saving = nit.
 
 ## Evidence of attack (clean-pass proof)
 Name each lever actually set — model tier and why it fits the task, max_tokens value and its basis, whether caching is enabled on the repeated-context portion, whether batching applies given the latency requirement, and whether a cheaper-tier/fallback path exists. A pass means the levers are named with a reason, not merely "cost looks reasonable."

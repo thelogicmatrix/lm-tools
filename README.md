@@ -54,7 +54,7 @@ new CLI subcommands and procedure steps, no fork. → [gtg/README.md](gtg/README
 Make work hold up under a hostile reviewer. **`due-diligence`** runs an adversarial
 Critic ↔ Corrector loop before you ship; **`cdd`** runs the same lens library *forward* to
 brief a build before you start. A per-case selection from 44 lenses (9 general + 35 domain),
-each grounded in a research-backed knowledge file.
+most grounded in a research-backed knowledge file.
 **Extend it:** drop your own lenses in `.dd/lenses/` in your repo — DD reads them alongside
 the shipped ones, and a same-named lens overrides a built-in. → [due-diligence/README.md](due-diligence/README.md)
 

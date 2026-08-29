@@ -12,6 +12,11 @@ Tags: code. Any artifact with a dependency manifest, lockfile, or CI/build pipel
 - Source-side tampering exposure: no branch protection, no required review, or force-push allowed on release branches (SLSA Source Track).
 - CI/CD integrity failure: pipeline lacks verification, letting an unsigned or tampered dependency/plugin/update flow through (OWASP 2025 A08 Software/Data Integrity Failures).
 
+## Measure
+Unpinned dependencies ÷ total direct dependencies, from the manifest and lockfile. Report as
+"n/N". Any unpinned dependency with an open advisory, or no lockfile at all = should-fix. Blocker
+only where one of them carries a known-exploitable vulnerability on a path the code uses.
+
 ## Evidence of attack (clean-pass proof)
 Per category, name what was traced: the lockfile is present and versions are pinned/checksummed, the flagged dependency was checked against an advisory source and has no open CVE on the code path used, branch protection/required-review settings were confirmed on the release branch. "Dependencies look fine" without naming the manifest/lockfile/advisory check performed is not evidence.
 

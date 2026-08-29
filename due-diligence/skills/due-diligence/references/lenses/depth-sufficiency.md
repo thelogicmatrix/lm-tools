@@ -12,6 +12,11 @@ General lens (no tag) — select for any substantive artifact making claims or r
 - Glossed edge/risk: a known complication, caveat, or failure mode named in passing but not developed enough for the reader to weigh it.
 - Section that promises more than it delivers: a heading or lead-in that sets up depth the body never provides.
 
+## Measure
+Load-bearing claims or recommendations without support ÷ load-bearing claims. Name what you
+counted as load-bearing. Report as "n/N unsupported". Any unsupported claim the reader must act on
+= blocker. Any other = should-fix.
+
 ## Evidence of attack (clean-pass proof)
 Name each load-bearing claim/step/recommendation and confirm it carries enough support to act on or verify — or point to the one-line assertion, missing "how", or skipped reasoning rung. Distinguish from filler: this is information the reader *needs* that's absent, not words that should be cut. State what you judged load-bearing and why.
 

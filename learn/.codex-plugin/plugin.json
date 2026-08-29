@@ -1,6 +1,6 @@
 {
   "name": "learn",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Run self-directed learning sprints with one concept per session and a graded mastery gate.",
   "author": { "name": "Nathan Wong" },
   "skills": "./skills/",
