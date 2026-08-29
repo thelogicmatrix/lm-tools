@@ -30,6 +30,11 @@ learn help                             print the verb list
 
 `week`, `gate`, `page` and `brief` act on the one sprint in the tree. With more than one they refuse rather than guess, and take `--sprint <slug>`. `brief` also takes `--for <week|curriculum>` (default `week`), `--shape <synthesis|synthesis+notes|synthesis+notes+raw>` (default `synthesis+notes`), `--research-root <dir>` (default `docs/research`), and `--tier <scan|pack>` (optional, logical-research picks when absent). The weekly research pass writes one brief per week at `docs/learning/<slug>/corpus-brief-week-<N>.md`, and `--for curriculum` writes the cross-check's own `docs/learning/<slug>/corpus-brief-curriculum.md`.
 
+**Upgrading from 0.3.x.** The corpus brief is now written per week and per target, not once per
+sprint: the weekly pass writes `corpus-brief-week-<N>.md` and the cross-check writes
+`corpus-brief-curriculum.md`. An existing `corpus-brief.md` is inert, nothing reads it. Rename it
+to `corpus-brief-week-1.md` if you want it back in play, or delete it.
+
 Sprint state lives in `.learn/` inside the current git repo — `sprints/<slug>.json`, your own tracks in `tracks/`, the profile at `profile.md`. Set `LEARN_HUB` to keep one learning hub across many repos. Everything you write lives under `docs/learning/<slug>/`: `sprint.md`, scaffolded by `learn start` for the sprint goal and the weekly milestones, and then one week page per week. `page` and `brief` both refuse to overwrite a file that already exists, so a hand-edited one is never clobbered by a re-run. Nothing writes `profile.md` — `learn profile` reads it, and you write it.
 
 `start`, `gate`, `page` and `brief` commit what they wrote, naming only their own paths, so a store that lives in a checkout shared with other work is never left dirty. The commit is skipped when the store root is not itself a git toplevel — an untracked `LEARN_HUB`, or one that merely sits inside somebody else’s repo — because there is nothing there that asked for the sprint. If the commit itself cannot go through — the commonest cause is a repo that gitignores `docs/`, so the week page can never be added — the write still stands on disk, nothing is left staged, and the verb exits 1 naming git's own reason.

@@ -4,8 +4,15 @@ A gap-check of the sprint's milestone sequence against how the subject is actual
 structured in real courses and curricula: official docs' own learning paths, well-regarded
 syllabi, textbook tables of contents. Optional, and reachable at any point in a sprint.
 
-1. Run `learn brief --for curriculum`. It reads the **angle** and the **corpus** from stdin
-   and writes `docs/learning/<slug>/corpus-brief-curriculum.md`, then prints
+1. Run `learn brief --for curriculum`. It reads the **angle** and the **corpus** from stdin,
+   as keyed lines rather than prose: one `angle:` line, then a `corpus:` line and one
+   `- <source>` per line under it.
+
+   ```
+   printf 'angle: check the milestone sequence against how <subject> is taught\ncorpus:\n  - <url>\n' | learn brief --for curriculum
+   ```
+
+   It writes `docs/learning/<slug>/corpus-brief-curriculum.md`, then prints
    `BRIEF-WRITTEN <path>`. That file is separate from the weekly research pass's
    `corpus-brief-week-<N>.md`, so the cross-check can run in a week that already has one.
    The angle carries every sprint-specific instruction: what the sequence already covers,
