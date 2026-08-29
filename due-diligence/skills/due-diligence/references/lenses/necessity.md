@@ -11,6 +11,11 @@ General lens (no tag) — select for any prose or content artifact that could ca
 - Present-because-easy: sections included because they were cheap to generate, not because the reader needs them.
 - Redundant restatement: the same point made two or three times in different words.
 
+## Measure
+Cuttable words ÷ total words, where cuttable means the reader's decision is unchanged without them.
+Report as a percentage. Above 20% = should-fix. Above 40%, or filler where a length limit exists =
+blocker.
+
 ## Evidence of attack (clean-pass proof)
 Apply the cutting test: for the candidate filler, confirm that removing it would lose information the reader needs to act — if not, it goes. Name what you cut (or flag) with the passage, or confirm each section earns its place. Not "concise enough."
 

@@ -21,6 +21,12 @@ Auth note: Playwright runs its own isolated browser — it does NOT reuse your r
 - Everything-on-screen (no progressive disclosure): advanced/rare/detail content shown at full weight in the default view instead of tucked behind an expander/tab/drill-in that stays accessible — the primary task is buried under options most users don't need right now.
 - Unchunked / single-page overload: a long page doing several distinct jobs, or a long form / multi-step task poured onto one endless scroll, where labelled sections or a split into multiple pages/steps (wizard) would be materially more consumable. Say how you'd chunk or paginate it.
 
+## Measure
+Viewports passing ÷ 4 (390, 768, 1024, 1280: no horizontal scroll, no clipped or overlapping
+text). Task-walk tasks completed ÷ attempted (Standard and above). Report both as "k/4" and "n/N".
+Any viewport failing on the primary flow, or a task the user cannot complete = blocker. Any other
+failure = should-fix.
+
 ## Evidence of attack (clean-pass proof)
 Both screenshots (desktop + mobile) plus the console read, with named specific issues and coordinates/text quoted from the page — not "looks fine." State measured contrast ratios where checked, not eyeballed. State what you checked for redundancy, progressive disclosure, and page/step structure — name repeats found (or "none"), what's shown that should be deferred, and whether the content/task should be chunked or split. At Standard+: list every task attempted, its outcome (completed / friction / couldn't-complete), step count, and where friction occurred.
 

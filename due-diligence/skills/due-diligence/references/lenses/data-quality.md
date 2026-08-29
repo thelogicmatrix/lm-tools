@@ -12,6 +12,11 @@ Tags: data-analysis, data-export. Any artifact whose output depends on a dataset
 - Accuracy: values never spot-checked against the source of truth.
 - Timeliness: a stale snapshot presented as current; data too old for the decision.
 
+## Measure
+Per column checked: null rate, duplicate rate, out-of-range rate. Report the worst column of each.
+A rate that changes the headline figure once corrected = blocker. Any rate above 5% left
+undisclosed = should-fix.
+
 ## Evidence of attack (clean-pass proof)
 State the dataset's shape (row count, key fields) and the checks run: null/missing rates on required fields, whether counts reconcile across stages, format/unit consistency, dedup status, and freshness. Spot-check a sample against source. Name issues found or confirm each dimension with the numbers, not "data looks clean."
 

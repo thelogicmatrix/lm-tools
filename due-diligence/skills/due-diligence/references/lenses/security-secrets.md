@@ -11,6 +11,11 @@ Tags: code, config, data-export. Any artifact containing source, configuration, 
 - Unsafe defaults: security misconfiguration, verbose error leakage, permissive CORS, debug enabled in prod (OWASP 2025 A02).
 - Supply-chain: unpinned / known-vulnerable / typosquatted dependency (OWASP 2025 Software Supply Chain Failures).
 
+## Measure
+Secrets found in the tree or output (keys, tokens, passwords, connection strings), by file.
+Tolerance is 0. Any live secret = blocker. A placeholder that looks live, or a secret in history
+already rotated = should-fix.
+
 ## Evidence of attack (clean-pass proof)
 Per category, name what was traced and why it's safe: the query is parameterized, the authz check is present at line X, the diff/output contains no secret or PII. "No injection found" without naming the traced sinks is not evidence.
 

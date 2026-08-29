@@ -13,6 +13,11 @@ Tags: rendered-ui. Any artifact that is a live page, local server, or static HTM
 - Illogical focus order that doesn't match visual/reading order (SC 2.4.3).
 - Touch/click targets under 24×24 CSS px with no spacing exception (SC 2.5.8, AA).
 
+## Measure
+WCAG failures found, by criterion, and the lowest text contrast ratio measured. Report both. Any
+Level A failure, or contrast below 3:1 on body text = blocker. Any Level AA failure, or contrast
+below 4.5:1 on body text = should-fix.
+
 ## Evidence of attack (clean-pass proof)
 A keyboard walkthrough (Tab/Shift+Tab/Enter through every interactive element, noting order and trap-freedom) plus a landmark/heading/alt audit naming what was checked — which elements, which roles, which alt values — not "seems accessible."
 

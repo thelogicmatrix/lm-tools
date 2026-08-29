@@ -33,6 +33,11 @@ Tags: `rendered-ui`, `code`, `llm-pipeline`, `pipeline`, `cron`. Any artifact th
 - Multiple simultaneous instances with no differentiation, labelling, ordering rule, or simultaneous-completion behaviour; a list that reorders while the user is tracking it.
 - The state machine designed only for the visual channel — no account of how transitions are paced or announced non-visually, or of parallel information forced into a linear channel.
 
+## Measure
+States designed ÷ states enumerated for each surface (empty, loading, partial, error, success,
+stale at minimum). Report as "k/N" per surface. An undesigned error or loss state = blocker. Any
+other undesigned state = should-fix.
+
 ## Evidence of attack (clean-pass proof)
 Enumerate the states, don't assert coverage: **list every state the artifact can enter** and mark each designed / undesigned / not-applicable-because. Name the first-run and empty states specifically. Quote each error message and say what condition it names and what exit it offers. State what happens on re-entry mid-process, and on interruption. Name at least one cross-boundary condition you tested (restart, revoked permission, backgrounding, lost connection) and its behaviour. For anything supporting multiple instances, state the ordering and simultaneous-completion rule. **"Handles errors gracefully" is not evidence** — quote the state and its exit. If you could run it, say which paths you deliberately broke and what happened.
 

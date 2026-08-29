@@ -11,6 +11,12 @@ Tags: code. Any artifact containing loops, queries, or data loading over collect
 - Missing pagination/indexing: an endpoint/query returning "all rows," or a WHERE/JOIN/ORDER BY on an unindexed column at scale.
 - Repeated uncached work: the same expensive call/computation re-run per iteration or per request with no memoization, on a path that's actually hot.
 
+## Measure
+Measured latency, throughput or cost against the stated budget, for the hot path named in the
+artifact. Report as "measured / budget". No budget stated = report the measurement and flag the
+missing budget as should-fix. Over budget on the primary path = blocker. Over budget elsewhere =
+should-fix.
+
 ## Evidence of attack (clean-pass proof)
 Name the hot path (function/endpoint) and its actual complexity: "loop at line X does one query per iteration → N+1" or "nested loop over list of size n → O(n²), replaced by dict lookup would be O(n)." State whether the path is hot (inner loop / per-request / unbounded input) or one-time (config parsing, startup) — flagging a cold path as a performance defect is itself a defect per the res file's premature-optimization warning.
 

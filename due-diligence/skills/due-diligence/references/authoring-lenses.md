@@ -7,8 +7,15 @@ lens declares when it applies in its own `## Fires on`, so no table edit is need
 updates never touch `.dd/`.
 
 **Template:** `# <name> — <what it reviews>` / `> Cites: res_<domain>.md` (or "internal" when
-no external standard exists) / `## Fires on` / `## Attacks` / `## Evidence of attack` /
-`## Severity guide`. Draw the Attacks from the cited `res_` file; never invent them.
+no external standard exists) / `## Fires on` / `## Attacks` / `## Measure` (optional) /
+`## Evidence of attack` / `## Severity guide`. Draw the Attacks from the cited `res_` file; never
+invent them.
+
+**Measure** is the number the lens can count on the artifact, how to count it, and the threshold
+that makes it should-fix or blocker. Give it only where a real number exists (untraced claims out
+of total claims, viewports passing out of four, secrets found). A lens with nothing countable omits
+the section and its scorecard row reads "judgement". The Critic reports the measure in the
+scorecard, and the escalation rule in SKILL.md reads the scorecard.
 
 **Contributing upstream (into the plugin):**
 

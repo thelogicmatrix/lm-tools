@@ -11,6 +11,10 @@ General lens (no tag) — select for any artifact carrying figures, names, dates
 - "Reportedly" hedge: vague attribution ("reportedly", "studies show", "it's said") standing in for a real trace.
 - Bulk data unverified: a large dataset presented whole with no sampling check and no verification of the load-bearing figures.
 
+## Measure
+Untraced claims ÷ total claims, where a claim is any figure, name, date or quote. Count both.
+Report as "n/N untraced". Any untraced load-bearing claim = blocker. Any untraced claim = should-fix.
+
 ## Evidence of attack (clean-pass proof)
 For each load-bearing fact, name the source it traces to (or flag it). For bulk/large data: verify a sample (≥10% or 20 items, whichever is larger) **plus every load-bearing figure**, flag untraceable items in place (don't bulk-delete real data), and report the verified fraction. "Numbers look right" without a trace is exactly the defect.
 

@@ -11,6 +11,10 @@ General lens (no tag) — select for any artifact meant to drive a decision or a
 - Findings not ranked: everything presented flat, so the reader can't tell what matters most or where to act first.
 - Buried ask: the one thing the reader must decide or do is not called out (ties to structure-navigability's buried bottom-line).
 
+## Measure
+Recommendations with no owner, next step or deadline ÷ recommendations. Report as "n/N". Above 0
+on the artifact's headline recommendation = blocker. Any other = should-fix.
+
 ## Evidence of attack (clean-pass proof)
 State the decision/action the artifact exists to drive (from Step 0), then confirm the artifact makes it explicit — the recommendation, the next step, the owner — or name where the reader is left with "so what do I do?" For a findings doc, confirm findings are prioritised. Not "actionable" without pointing at the action.
 
