@@ -43,8 +43,8 @@ cp -r logical-research/skills/logical-research <your-repo>/.claude/skills/
 ## Use
 
 *"research this channel for me"* · *"read all of these and synthesise"* · *"build me a knowledge
-pack on X"* — then answer the two scope questions it asks (doc shape, and what the research is
-*for*) and let it run.
+pack on X"*. On a Pack it asks two scope questions (doc shape, and what the research is *for*),
+then runs. A Scan asks nothing.
 
 A single fact lookup with no synthesis is a search, not research. Anything that ranks sources or
 grades claims is Scan. Don't use it on a corpus you can't enumerate up front — scope it down
