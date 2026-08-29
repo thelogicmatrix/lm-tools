@@ -38,6 +38,22 @@ one line. A user naming a tier or intensity ("quick check", "one critic", "go de
   the user asked, the change is irreversible or embarrassing if wrong, or the artifact will not
   fit one critic's context.
 
+## Escalate on the numbers
+
+Light is always the entry tier. After its pass and one fix cycle, read the scorecard and
+escalate to Standard when any one holds:
+
+- 1 or more blockers.
+- 3 or more should-fix across 2 or more lenses.
+- A selected lens with evidence "none" (it could not be exercised on this artifact).
+- The fix cycle changed more than a fifth of the artifact's lines. Fixes create defects.
+
+Standard escalates to Heavy only when its critic finds a blocker the Light missed AND the
+artifact is irreversible or external. Never de-escalate automatically. Announce the move in one
+line with the numbers: *"Light: 1 blocker, 4 should-fix over 3 lenses. Escalating to Standard."*
+Dispatch the Standard critic with an explicit `model:`, on a cheaper tier than the session when
+your routing rules allow it.
+
 ## Step 0: context, ask if unknown
 
 1. **What produced it?** AI-generated facts are unverified by default; require a trace before
@@ -54,8 +70,10 @@ one line. A user naming a tier or intensity ("quick check", "one critic", "go de
 **No lens is automatic.** Select what the artifact's failure surface actually needs from the
 rosters in [references/lens-selection.md](references/lens-selection.md): nine general lenses
 taken where the surface exists, domain lenses surfaced by the tags, and the user's own
-`.dd/lenses/*.md` (a same-named user lens overrides the shipped one). Open only the selected
-lens files and the `res_*.md` each cites.
+`.dd/lenses/*.md` (a same-named user lens overrides the shipped one). Open only the selected lens files. Light never opens a `res_*.md`: every lens's Attacks were
+derived from its res file already, and the res files are the largest thing in this library.
+Standard and Heavy critics get the lens files plus the `res_*.md` each cites, because they are
+fresh contexts that need the bar.
 
 **Selection guard, one line before attacking:** name the lenses selected AND every general
 lens deliberately skipped, each with a why. Skipping is allowed; omitting without saying is
@@ -77,7 +95,20 @@ Never let the Corrector grade its own homework. State which mode ran.
 passes disagreeing on severity, escalates to the user with the artifact and both positions.
 Severity ties resolve upward.
 
-## Critic output, per defect
+## Critic output
+
+Open with a scorecard, one row per selected lens:
+
+| lens | blockers | should-fix | nits | measure | evidence |
+|---|---|---|---|---|---|
+| data-provenance | 1 | 2 | 0 | 3/12 untraced | attacked |
+| assumptions-risk | 0 | 1 | 1 | judgement | attacked |
+
+`measure` is the lens's `## Measure` result, or "judgement" for a lens without one. `evidence` is
+"attacked" or "none" (the lens could not be exercised on this artifact, say why in the findings).
+The escalation rule reads this table.
+
+Then, per defect:
 
 1. **Plain-language lead**, one sentence, no jargon: what the problem means and what goes
    wrong if unfixed, in the output or in how the system behaves. e.g. *"The tool only reads
@@ -93,7 +124,8 @@ was checked and why it passed. That is the evidence of attack the ship gate requ
 
 ## Reporting back
 
-Lead with a 2 to 3 sentence plain-English bottom line: ready or not, and the biggest
+Lead with a 2 to 3 sentence plain-English bottom line, then the tier that ran and whether it
+escalated: ready or not, and the biggest
 real-world risks, functional and presentational. Then the findings, each opening with its
 plain-language lead, technical detail secondary on a "Detail:" line. The reader never has to
 ask what it means for them.
