@@ -3,7 +3,7 @@
 Two skills that make work hold up under a hostile reviewer — one for *before* you build, one for *before* you ship.
 
 - **`due-diligence`** — an adversarial **Critic ↔ Corrector loop** run to convergence over a per-case selection of review lenses. Work is ready only when a hostile reviewer can find no material defect — not when it "looks fine." Targets fabricated/unverifiable data, silent data loss, wrong results, unhandled inputs, filler, unexplained jargon, contradictions, and usability gaps.
-- **`cdd`** (Construction Due Diligence) — the same lens library run **forward**: before you build, it emits a *build brief* (the "what good looks like" bar + each lens's checks flipped into build targets) so you construct to the standard and the later review finds little. `cdd` does **not** replace the review — it reduces what it finds.
+- **`cdd`** (Construction Due Diligence) — the same lens library run **forward**: before you build, it emits a *build brief* (each lens's checks flipped into build targets, plus the "what good looks like" bar on a Full brief) so you construct to the standard and the later review finds little. `cdd` does **not** replace the review — it reduces what it finds.
 
 ## How it works
 
@@ -14,7 +14,7 @@ Two skills that make work hold up under a hostile reviewer — one for *before* 
 - **General lenses** (apply to most artifacts): data-provenance, necessity, clarity, operational-completeness, audience-fit, structure-navigability, voice (AI-tells), actionability, depth-sufficiency.
 - **Domain lenses** (selected by artifact type): security, dependencies, reproducibility, idempotency, performance, maintainability, error-handling, test-coverage, prompt-injection, output-grounding, cost/token-efficiency, visual-ui-ux, accessibility, brand-consistency, statistical-soundness, cross-artifact-consistency, rollback/blast-radius, compliance-policy, assumptions-risk, alternatives-considered, pedagogy, data-privacy, data-quality, observability, concurrency-safety, resilience, backup-recovery, api-contract, llm-eval.
 
-**Tiered effort.** The review self-calibrates how hard to look — Light (one pass), Standard (one fresh sub-agent critic), Heavy (one critic per lens + re-attack to convergence) — and states the tier. Light escalates itself on its own scorecard (a blocker, three or more should-fix over two or more lenses, or a lens it could not exercise), so the cheap pass is the default and the expensive ones are earned. Light reads lens files only. The larger knowledge files open for Standard and Heavy critics. You can steer it ("quick check" / "go deep" / "bulletproof").
+**Tiered effort.** The review self-calibrates how hard to look — Light (one pass), Standard (one fresh sub-agent critic), Heavy (one critic per lens + re-attack to convergence) — and states the tier. Light escalates itself on its own scorecard (a blocker, three or more should-fix over two or more lenses, a lens it could not exercise, or a fix cycle that rewrote over a fifth of the lines), so the cheap pass is the default and the expensive ones are earned. Light reads lens files only. The larger knowledge files open for Standard and Heavy critics. You can steer it ("quick check" / "go deep" / "bulletproof").
 
 ## Install
 
