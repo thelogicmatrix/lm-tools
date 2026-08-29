@@ -1,6 +1,6 @@
 ---
 name: logical-research
-description: Use whenever research is asked for or a body of source material must become reusable, traceable context. Triggers on "research X", "look into X properly", "what do the docs or sources say about X", "research this channel/author/book", "build me a knowledge pack on X", "read all of these and synthesise", or when a later task needs principles extracted from sources with every claim traceable. Self-selects a tier, Scan (a question or a small source set, one graded file) or Pack (a bounded corpus, the full pipeline). A single fact lookup with no synthesis is reliable-answers, not this.
+description: Use whenever research is asked for or a body of source material must become reusable, traceable context. Triggers on "research X", "look into X properly", "what do the docs or sources say about X", "research this channel/author/book", "build me a knowledge pack on X", "read all of these and synthesise", or when a later task needs principles extracted from sources with every claim traceable. Self-selects a tier, Scan (a question or a small source set, one graded file) or Pack (a bounded corpus, the full pipeline). A single fact lookup with no synthesis is a plain search, not this.
 ---
 
 # Logical Research
@@ -138,7 +138,8 @@ Extract two more things here, because they're free and they shape the reading:
 
 - **The bibliography** — regex `https?://[^\s)>\]]+` over descriptions/footnotes. Bucket by
   frequency: links appearing in more than a third of items are boilerplate (the author's own
-  properties); the rest are real citations. This list is often as valuable as the corpus.
+  properties); the rest are real citations. The one-third line is a heuristic from one reference
+  run, not a measured constant. This list is often as valuable as the corpus.
 - **Per-item metadata** — date, length, popularity, chapters.
 
 ### 4. Read and note — the part that can't be automated
@@ -252,12 +253,13 @@ review capability instead of a doc you have to remember to re-read. If the corpu
 
 **YouTube caption tracks are not equivalent.** `--sub-langs "en.*"` pulls up to three tracks per
 video. Plain `en` and `en-en` are unpunctuated ASR dumps (~2 punctuation marks per 1k chars).
-**`en-orig` is the punctuated one** (~35 per 1k) — it carries word-level timing tags that need
-stripping, but sentence structure is intact and worth the extra parsing. Always compare a sample
+**`en-orig` is the punctuated one** (~35 per 1k). Both rates were measured on one reference run
+of a ~30-video channel, 2026-07. `en-orig` carries word-level timing tags that need stripping,
+but sentence structure is intact and worth the extra parsing. Always compare a sample
 across variants before cleaning the whole set; the wrong track costs you sentence boundaries.
 
-**Auto-captions garble every proper noun.** On the reference run one author's name rendered four
-different ways across videos, and tool names mangled variously. **Correct names against the
+**Auto-captions garble every proper noun.** On that same reference run one author's name rendered
+four different ways across videos, and tool names mangled variously. **Correct names against the
 description citations and links, never the transcript**, and put a warning in the synthesis so
 nobody later quotes a hallucinated name.
 

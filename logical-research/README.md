@@ -3,11 +3,23 @@
 One skill that turns a **bounded corpus** — a YouTube channel, a book, a podcast back catalogue, a
 docs site, a set of papers — into **reusable context** rather than a summary you read once.
 
-Output: a synthesis doc with every significant claim graded by evidence strength, one note per item,
-and a traceable bibliography — shaped so you can paste the useful part into a model later as working
-context for a real task.
+Two tiers: **Scan** answers a question or a handful of sources in one graded file, **Pack** turns a
+bounded corpus into a durable pack.
 
-## How it works
+A Pack's output: a synthesis doc with every significant claim graded by evidence strength, one note
+per item, and a traceable bibliography — shaped so you can paste the useful part into a model later
+as working context for a real task.
+
+## Two tiers
+
+| Tier | When | Output |
+|---|---|---|
+| **Scan** (default) | a question, or under about eight sources | one graded file, `<root>/<slug>.md` |
+| **Pack** | a bounded corpus you will return to | the full synthesis, notes and bibliography |
+
+Both rank sources by authority before reading and keep the grounded / supported / speculative split. Scan escalates to Pack when the source count grows or you say you will come back to it.
+
+## How a Pack works
 
 Six phases. 1–3 are mechanical (enumerate the corpus, pull it, normalise to clean prose and extract
 the bibliography). **Phase 4 is the one that matters and cannot be delegated**: read every item in
@@ -66,18 +78,9 @@ nothing about who called it. `SKILL.md` holds the format.
 That is what makes it a component rather than a destination: the caller keeps its own docs and
 links into the research pack, instead of copying the contents out and owning a second stale copy.
 
-## Two tiers
-
-| Tier | When | Output |
-|---|---|---|
-| **Scan** (default) | a question, or under about eight sources | one graded file, `<root>/<slug>.md` |
-| **Pack** | a bounded corpus you will return to | the full synthesis, notes and bibliography |
-
-Both rank sources by authority before reading and keep the grounded / supported / speculative split. Scan escalates to Pack when the source count grows or you say you will come back to it.
-
 ## Extending — your own reading angles
 
-logical-research follows the lm-tools three-tier contract: a core you don't touch, and a tier you own.
+logical-research follows the lm-tools two-tier contract: a core you don't touch, and a tier you own.
 
 | Tier | Where | Updates? |
 |---|---|---|
