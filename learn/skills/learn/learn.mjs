@@ -161,6 +161,7 @@ function help() {
   learn gate <pass|fail> [--verified]
   learn page [concept]            stamp the week-N reference page
   learn brief [--for week|curriculum] [--tier scan|pack]
+                                  write this week's (or the curriculum) brief for logical-research
   learn profile                   read the learner profile`);
 }
 
@@ -478,8 +479,9 @@ function brief(args) {
   if (!body.trim()) die(2, 'learn brief reads angle and corpus on stdin. Pipe them in.');
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, renderBrief({ slug: `${s.slug}-${suffix}`, root: researchRoot, shape, tier, body }));
-  // The brief is the sprint's research home, so record where it went: nothing else ever wrote
-  // this field, and a null there is indistinguishable from "no cross-check was ever run".
+  // Record the most recent brief of either kind, week or curriculum, so the sprint file says a
+  // brief was written at all: a null there is indistinguishable from "no brief was ever run".
+  // Nothing reads this field yet, and it holds one path, not a history.
   s.research = rel;
   writeSprint(root, s);
   commit(root, [sprintRel(s.slug), rel], `learn brief: ${s.slug}`);
