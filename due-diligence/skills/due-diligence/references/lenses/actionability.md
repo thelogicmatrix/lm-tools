@@ -13,8 +13,8 @@ General lens (no tag) — select for any artifact meant to drive a decision or a
 
 ## Measure
 Recommendations with no owner, next step or deadline ÷ recommendations. Report as "n/N". Above 0,
-including on the artifact's headline recommendation = should-fix. Blocker only where n = N and the
-reader cannot tell what to do or decide at all.
+including on the artifact's headline recommendation = should-fix. Blocker where the reader cannot
+tell what to do or decide after reading.
 
 ## Evidence of attack (clean-pass proof)
 State the decision/action the artifact exists to drive (from Step 0), then confirm the artifact makes it explicit — the recommendation, the next step, the owner — or name where the reader is left with "so what do I do?" For a findings doc, confirm findings are prioritised. Not "actionable" without pointing at the action.

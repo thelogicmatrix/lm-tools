@@ -23,9 +23,10 @@ Auth note: Playwright runs its own isolated browser — it does NOT reuse your r
 
 ## Measure
 Viewports passing ÷ 4 (390, 768, 1024, 1280: no horizontal scroll, no clipped or overlapping
-text). Task-walk tasks completed ÷ attempted (Standard and above). Report both as "k/4" and "n/N".
-Any viewport failing on the primary flow, or a task the user cannot complete = blocker. Any other
-failure = should-fix.
+text). Task-walk tasks completed ÷ attempted (Standard and above). Lowest body-text contrast ratio
+measured. Report as "k/4", "n/N" and the ratio. Any viewport failing on the primary flow, a task
+the user cannot complete, or body text below the 4.5:1 AA floor = blocker. Any other failure =
+should-fix.
 
 ## Evidence of attack (clean-pass proof)
 Both screenshots (desktop + mobile) plus the console read, with named specific issues and coordinates/text quoted from the page — not "looks fine." State measured contrast ratios where checked, not eyeballed. State what you checked for redundancy, progressive disclosure, and page/step structure — name repeats found (or "none"), what's shown that should be deferred, and whether the content/task should be chunked or split. At Standard+: list every task attempted, its outcome (completed / friction / couldn't-complete), step count, and where friction occurred.

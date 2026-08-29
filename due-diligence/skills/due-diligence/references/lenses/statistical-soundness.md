@@ -21,7 +21,8 @@ Tags: data-analysis. Any artifact that draws a conclusion from data — a report
 Two counts. Row-count deltas at each pipeline boundary (join, filter, aggregation): report each
 boundary as "in → out" and flag any unexplained loss. Effect sizes or intervals reported ÷
 significance or lift claims, as "n/N". Unexplained row loss that could change the headline =
-blocker. Any significance claim with no effect size = should-fix.
+blocker. A significance claim with no effect size = should-fix, or nit where the effect size is
+easily inferred.
 
 ## Evidence of attack (clean-pass proof)
 Name the sample (source, size, selection mechanism) and state it was checked separately from precision; name the control/counterfactual (randomization, matching, DiD with parallel-trends check, or "correlational only" downgrade) for any causal claim; confirm row counts reconcile at each join/filter/aggregation boundary named; confirm outliers were investigated (robust method or documented cause) rather than silently dropped, and state whether removing them would flip the conclusion. "The numbers look right" is not evidence — "n=X drawn from Y, checked against Z control, row counts reconcile A→B→C" is.

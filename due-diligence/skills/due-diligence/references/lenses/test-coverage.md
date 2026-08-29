@@ -12,9 +12,10 @@ Tags: code. Any artifact containing tests, or logic (money, auth, concurrency, p
 - Ice-cream-cone shape: suite dominated by slow/flaky E2E tests standing in for what a unit test could catch in milliseconds, per the res file's pyramid/ice-cream-cone distinction.
 
 ## Measure
-Public functions or branches with at least one test ÷ total, from the test files present. Report
-as "n/N". A money, security or data-mutating path with 0 tests = blocker. Below 50% overall =
-should-fix.
+Public functions or branches with at least one test carrying a meaningful assertion ÷ total, from
+the test files present. Report as "n/N". A money, security or data-mutating path with 0 tests =
+blocker. Thin coverage on real logic, happy-path-only tests, or loose assertions on a non-trivial
+function = should-fix. A missing test on a trivial, low-risk path = nit.
 
 ## Evidence of attack (clean-pass proof)
 Name which risky paths (money calc, auth check, concurrency, parsing) have tests and quote or describe the actual assertion — not just "covered." If a coverage number is cited, spot-check that the assertions in the high-coverage file are real, not vacuous. State the suite's rough shape (unit vs. integration vs. E2E ratio) if relevant to the change.

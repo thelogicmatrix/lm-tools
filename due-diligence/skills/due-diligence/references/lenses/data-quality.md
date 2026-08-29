@@ -14,8 +14,8 @@ Tags: data-analysis, data-export. Any artifact whose output depends on a dataset
 
 ## Measure
 Per column checked: null rate, duplicate rate, out-of-range rate. Report the worst column of each.
-A rate that changes the headline figure once corrected = blocker. Any rate above 5% left
-undisclosed = should-fix.
+A rate that changes the headline figure once corrected = blocker. A rate not yet shown to flip a
+conclusion = should-fix. Minor validity noise in a non-load-bearing column = nit.
 
 ## Evidence of attack (clean-pass proof)
 State the dataset's shape (row count, key fields) and the checks run: null/missing rates on required fields, whether counts reconcile across stages, format/unit consistency, dedup status, and freshness. Spot-check a sample against source. Name issues found or confirm each dimension with the numbers, not "data looks clean."

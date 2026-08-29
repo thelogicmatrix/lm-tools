@@ -13,9 +13,9 @@ Tags: code. Any artifact containing loops, queries, or data loading over collect
 
 ## Measure
 Measured latency, throughput or cost against the stated budget, for the hot path named in the
-artifact. Report as "measured / budget". No budget stated = report the measurement and flag the
-missing budget as should-fix. Over budget on the primary path = blocker. Over budget on another
-hot path = should-fix. A cold path over budget = nit.
+artifact. Report as "measured / budget", or as the measurement alone where no budget is stated.
+Over budget on the primary path = blocker. Over budget on another hot path = should-fix. A cold
+path over budget = nit.
 
 ## Evidence of attack (clean-pass proof)
 Name the hot path (function/endpoint) and its actual complexity: "loop at line X does one query per iteration → N+1" or "nested loop over list of size n → O(n²), replaced by dict lookup would be O(n)." State whether the path is hot (inner loop / per-request / unbounded input) or one-time (config parsing, startup) — flagging a cold path as a performance defect is itself a defect per the res file's premature-optimization warning.
