@@ -161,8 +161,12 @@ function help() {
   learn gate <pass|fail> [--verified]
   learn page [concept]            stamp the week-N reference page
   learn brief [--for week|curriculum] [--tier scan|pack]
+                                  [--shape synthesis|synthesis+notes|synthesis+notes+raw]
+                                  [--research-root <dir>]
                                   write this week's (or the curriculum) brief for logical-research
-  learn profile                   read the learner profile`);
+  learn profile                   read the learner profile
+
+  week, gate, page and brief take --sprint <slug> when the tree holds more than one sprint.`);
 }
 
 export const TRACK_HEADINGS = [
@@ -298,7 +302,7 @@ function start(args) {
   console.log(`  content: ${sprint.content}/`);
   console.log(`  scope:   ${sprint.content}/sprint.md — write the goal and milestones into it`);
   // gtg owns the sprint as a resumable project, but learn never spawns it: the skill does,
-  // which is gtg's own GTG-DIRECTIVE convention. See the note in this task's brief.
+  // which is gtg's own GTG-DIRECTIVE convention.
   console.log(`GTG-NEW ${sprint.slug} — create the gtg project for "Learning: ${subject}" with parent "learning". Skip if gtg is not installed.`);
 }
 
