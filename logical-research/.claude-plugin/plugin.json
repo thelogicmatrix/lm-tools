@@ -1,6 +1,6 @@
 {
   "name": "logical-research",
-  "version": "1.0.0",
-  "description": "Logical Research — turn a bounded corpus (a channel, a book, a doc set) into reusable context: a synthesis with evidence-graded claims, per-item notes, and a traceable bibliography.",
+  "version": "1.1.0",
+  "description": "Logical Research — Scan a question or Pack a bounded corpus into reusable, traceable context: evidence-graded claims, sources ranked by authority, per-item notes and a bibliography at Pack.",
   "author": { "name": "Nathan Wong" }
 }

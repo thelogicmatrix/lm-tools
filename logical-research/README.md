@@ -43,11 +43,12 @@ cp -r logical-research/skills/logical-research <your-repo>/.claude/skills/
 ## Use
 
 *"research this channel for me"* · *"read all of these and synthesise"* · *"build me a knowledge
-pack on X"* — then answer the two scope questions it asks (doc shape, and what the research is
-*for*) and let it run.
+pack on X"*. On a Pack it asks two scope questions (doc shape, and what the research is *for*),
+then runs. A Scan asks nothing.
 
-Don't use it for a one-off question; that's a search. Don't use it on a corpus you can't enumerate
-up front — scope it down until you can.
+A single fact lookup with no synthesis is a search, not research. Anything that ranks sources or
+grades claims is Scan. Don't use it on a corpus you can't enumerate up front — scope it down
+until you can.
 
 It handles two kinds of corpus, and says which it assumed. An **authored** corpus is one mind
 across many items (a channel, a back catalogue) and the value is the author's method. An
@@ -57,13 +58,22 @@ each, and getting the kind wrong is the most expensive mistake available here.
 
 ## Called by another skill
 
-Any skill can drive it instead of you, by writing a **corpus brief** (`slug`, `root`, `shape`,
+Any skill can drive it instead of you, by writing a **corpus brief** (`slug`, `root`, `shape`, `tier`,
 `angle`, `corpus`) and handing it over — the same way a mail skill takes a batch file. A field the
 brief answers is never asked about, the output path is the return value, and this skill knows
 nothing about who called it. `SKILL.md` holds the format.
 
 That is what makes it a component rather than a destination: the caller keeps its own docs and
 links into the research pack, instead of copying the contents out and owning a second stale copy.
+
+## Two tiers
+
+| Tier | When | Output |
+|---|---|---|
+| **Scan** (default) | a question, or under about eight sources | one graded file, `<root>/<slug>.md` |
+| **Pack** | a bounded corpus you will return to | the full synthesis, notes and bibliography |
+
+Both rank sources by authority before reading and keep the grounded / supported / speculative split. Scan escalates to Pack when the source count grows or you say you will come back to it.
 
 ## Extending — your own reading angles
 
