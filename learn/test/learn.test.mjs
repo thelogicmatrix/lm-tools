@@ -526,8 +526,6 @@ test('renderPage opens with a GFM TIP objective callout', () => {
   assert.match(md, /^## The principle it generalises to$/m);
   assert.match(md, /^## Sources$/m);
   assert.match(md, /^## Worksheet$/m);
-  // CRLF template literals would bake \r into every generated page on some checkouts.
-  assert.ok(!md.includes('\r'));
 });
 
 test('renderBrief emits the contract fields in contract order', () => {

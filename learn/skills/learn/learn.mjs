@@ -383,36 +383,32 @@ function gate(args) {
 // One paragraph is one line, never hard-wrapped: a single newline inside a paragraph
 // renders as a visible line break in GFM/Typora.
 export function renderPage({ subject, week, concept }) {
-  // Joined on explicit newlines like renderBrief: this file is checked out with CRLF on some
-  // machines, and a CRLF template literal would bake \r into every generated week page.
-  return [
-    `# Week ${week} — ${concept}`,
-    '',
-    '> [!TIP]',
-    '> By the end of this session you will be able to <state the one objective here>.',
-    '',
-    `*${subject} · week ${week} · one concept, practiced to fluency.*`,
-    '',
-    '## Worked example',
-    '',
-    '<A complete, runnable, fully working example. Never pseudo-code.>',
-    '',
-    '## The principle it generalises to',
-    '',
-    '<What this is an instance of. This is the part that transfers.>',
-    '',
-    '> [!CAUTION]',
-    '> <Every simplification, flagged. Never present a beginner approximation as complete.>',
-    '',
-    '## Worksheet',
-    '',
-    '<Write what you worked out here. It gets graded, not just read.>',
-    '',
-    '## Sources',
-    '',
-    '- <real, checkable source>',
-    '',
-  ].join('\n');
+  return `# Week ${week} — ${concept}
+
+> [!TIP]
+> By the end of this session you will be able to <state the one objective here>.
+
+*${subject} · week ${week} · one concept, practiced to fluency.*
+
+## Worked example
+
+<A complete, runnable, fully working example. Never pseudo-code.>
+
+## The principle it generalises to
+
+<What this is an instance of. This is the part that transfers.>
+
+> [!CAUTION]
+> <Every simplification, flagged. Never present a beginner approximation as complete.>
+
+## Worksheet
+
+<Write what you worked out here. It gets graded, not just read.>
+
+## Sources
+
+- <real, checkable source>
+`;
 }
 
 export const BRIEF_SHAPES = ['synthesis', 'synthesis+notes', 'synthesis+notes+raw'];
