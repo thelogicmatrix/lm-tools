@@ -1,6 +1,6 @@
 {
   "name": "logical-research",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Scan a question or Pack a bounded corpus into reusable, traceable context with evidence-graded claims.",
   "author": { "name": "Nathan Wong" },
   "skills": "./skills/",
