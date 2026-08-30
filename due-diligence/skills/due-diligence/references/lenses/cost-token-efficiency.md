@@ -1,5 +1,5 @@
 # cost-token-efficiency — Is this LLM call spending tokens/tier where it doesn't need to?
-> Cites: internal — provider cost-control practice: model tier, max_tokens, prompt caching, batching, cheaper fallback path.
+> Cites: internal. Provider cost-control practice: model tier, max_tokens, prompt caching, batching, cheaper fallback path.
 
 ## Fires on
 Tags: llm-pipeline. Any artifact defining an LLM call or pipeline — model choice, prompt construction, context assembly, or a loop/batch of calls.

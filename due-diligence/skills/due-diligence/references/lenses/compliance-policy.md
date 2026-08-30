@@ -1,5 +1,5 @@
 # Compliance & Policy — catches org-rule and project-policy violations before external-send
-> Cites: internal — org and project policy; no external research base.
+> Cites: internal. Org and project policy; no external research base.
 
 ## Fires on
 Tags: external-send. Any artifact about to cross a boundary out of the local machine — a git commit/push, a cloud API call, an external log/analytics sink, a public asset, or a message/file sent outside the local session.

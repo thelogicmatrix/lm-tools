@@ -1,5 +1,5 @@
 # data-provenance — Does every fact trace to a real, named source?
-> Cites: none external — this is a DD-core principle (trace or delete). Pairs with res_technical-writing for passive-hedging tells.
+> Cites: none external. This is a DD-core principle (trace or delete). Pairs with res_technical-writing for passive-hedging tells.
 
 ## Fires on
 General lens (no tag) — select for any artifact carrying figures, names, dates, quotes, or factual claims, *especially* AI-generated (Step 0 Q1: AI output is presumed unverified until traced). Skip only for an artifact with no facts to trace (e.g. a pure UI mockup with placeholder text). DD's flagship anti-fabrication check.
