@@ -237,9 +237,9 @@ The point of the exercise. Three modes, cheapest first:
 1. **Principles only** — paste the "Applicable principles" section. ~2k tokens, covers most
    task-shaped uses ("review this against these principles").
 2. **Synthesis** — the whole README. ~8k tokens. For anything needing the reasoning behind a principle.
+3. **Synthesis + relevant notes** — add 2–4 note files by theme. For deep work in one area.
 
 Both token figures are estimates from the reference run, not measured counts.
-3. **Synthesis + relevant notes** — add 2–4 note files by theme. For deep work in one area.
 
 Design the principles section for this: **numbered, self-contained, imperative.** A principle that
 needs surrounding context to parse will be dropped or misapplied when quoted alone.

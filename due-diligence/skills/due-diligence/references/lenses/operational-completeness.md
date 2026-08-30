@@ -1,5 +1,5 @@
 # operational-completeness — Does it actually work, fully, on real inputs?
-> Cites: none single external — DD-core; draws on res_data-analysis (reconciliation) and res_code-quality (edge/error paths) where relevant.
+> Cites: none single external. DD-core; draws on res_data-analysis (reconciliation) and res_code-quality (edge/error paths) where relevant.
 
 ## Fires on
 General lens (no tag) — select for anything that *runs* or *processes*: code, a pipeline, a dataset, an analysis, a tool. Skip for static prose with nothing to execute (a plain blurb). The lens that catches the bug before the boss does.
