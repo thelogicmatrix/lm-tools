@@ -120,6 +120,23 @@ function commit(paths, message) {
     if (/nothing to commit|no changes added/i.test(out)) return; // identical content - files already on disk
     // Don't let a real git failure masquerade as success: the files are written, but say so.
     console.error(`gtg: git commit failed, changes are on disk but uncommitted - ${(e.stderr || e.message || '').toString().trim().split('\n')[0]}`);
+    // NAME THE PATHS, because nothing else ever will. `git add` has already succeeded by the
+    // time a commit failure lands here, so these records sit staged in the shared checkout -
+    // and writeCollection skips byte-identical files, so a later gtg run recomputes the same
+    // records, reports NO changed paths for them, and never names them again. The packed store
+    // was immune to this by accident: its pathspec was two fixed filenames, so the next commit
+    // re-added whatever was pending.
+    //
+    // Recovery is deliberately MANUAL - the user runs `git commit -- <the paths below>`. The
+    // automatic fix would be to widen the pathspec to the whole keep-set, and that is exactly
+    // what must not happen here: on one shared tree and index there is no way to tell our own
+    // stranded record from another session's in-flight one, so committing the keep-set would
+    // sweep their work into our commit. That is the 2026-07-27 incident with extra steps.
+    // Labelled "uncommitted", not "staged": a stale index.lock (the 2026-08-11 cause) fails
+    // the `git add` too, so on that path nothing is staged at all - verified, the tree shows
+    // an unstaged ` D` and an untracked `??`. `git commit -- <paths>` recovers either way,
+    // which is what the line is for, so the label states the thing that is always true.
+    console.error(`  uncommitted: ${paths.join(' ')}`);
     // ...and say so in the EXIT CODE, not only on stderr. A batch caller reads $?, not our
     // warnings: on 2026-08-11 a 39-call backfill hit a stale index.lock and every call after
     // it warned, exited 0 and kept going, ending with 14 uncommitted rows and files left
@@ -1067,14 +1084,19 @@ async function resumeConsume(argv) {
 // both of them loud: no change of ours to undo, and our change no longer being the
 // tip. Before 2026-08-04 undo took whatever commit was last and reverted it.
 //
-// Finding C1: the anchor commit used to be picked from _active.json alone. Two
-// mutations write _backlog.json ONLY (`gtg backlog --project ...` parking a new
-// idea, and `gtg resume <backlog-slug>`) - anchoring on _active.json skips right
-// past those, lands on an unrelated older active-list commit, reverts THAT
-// instead, and (since the restore code still ran against a mismatched parent)
-// silently deleted the backlog. Fix: the anchor considers both paths, and each
-// store is restored independently against ITS OWN state at `last^`, tolerating
-// "didn't exist at last^" per file rather than assuming both existed.
+// Finding C1, and the rule it left behind: the anchor must span BOTH collections.
+// It was once picked from the active store alone, but two mutations touch the
+// backlog ONLY (`gtg backlog --project ...` parking a new idea, and
+// `gtg resume <backlog-slug>`), so an active-only anchor skipped right past those,
+// landed on an unrelated older active-list commit, reverted THAT instead, and
+// silently deleted the backlog. STORE_PATHSPEC is what keeps that fixed now: it
+// names both sharded directories, so a backlog-only commit is still the anchor,
+// and it keeps the legacy packed files too so undoing a pre-shard commit works.
+//
+// The restore below is per PATH rather than per store. A sharded collection is
+// many files and a commit usually touches one or two of them, so rewinding a
+// whole directory would discard records the commit never mentioned - the same
+// class of over-reach C1 was about, one level down.
 function undo() {
   const storeLog = (extra = []) => {
     try {
