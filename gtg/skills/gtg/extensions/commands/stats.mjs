@@ -1,8 +1,8 @@
 // gtg stats - a few terminal lines from the history extractor. Read-only.
 import { buildReport } from '../lib/history.mjs';
 
-export default ({ root, readStore }) => {
-  const r = buildReport(root, readStore);
+export default ({ root }) => {
+  const r = buildReport(root);
   console.log(`${r.counts.active} active, ${r.counts.backlog} backlog`);
 
   const h = r.habit, t = r.throughput;

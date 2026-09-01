@@ -5,6 +5,7 @@
 import { execFileSync } from 'node:child_process';
 import { readdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { readCollection } from '../../lib/store.mjs';
 
 // Windows-safe path equality: resolve() normalises slashes/trailing-slash, then
 // compare case-insensitively (Windows filesystems are case-insensitive).
@@ -345,12 +346,26 @@ function isoWeek(dateStr) {
 }
 
 // Effort. duration_min is THIS session's length (not a running total), rewritten
-// onto the _active.json entry at each handoff; one `git log -p` pass recovers
+// onto the active entry at each handoff; one `git log -p` pass recovers
 // every duration ever committed. Within a diff, a duration is attributed to the
 // nearest preceding slug among ADDED lines, and to the commit's author date.
 //
+// ponytail: the slug scan is NOT reset per file, even though a sharded commit's diff can now
+// span several record files where the packed file was one. It does not need to be: a handoff
+// commits exactly ONE active record (writeCollection skips records whose bytes did not change,
+// which case 69 in the suite pins), and that record's own "slug" line always lands in the same
+// hunk as its duration_min - `sessions` sits two lines below `slug` and every handoff bumps it,
+// so the hunks merge. Reading the slug off the record's PATH instead would remove the
+// assumption; it earned no test that fails without it, so it is not here.
+//
+// The pathspec spans BOTH the legacy packed file and the sharded directory, because this
+// reads HISTORY and history crosses the migration: dropping the packed path would silently
+// zero every duration recorded before the shard, and dropping the directory would silently
+// zero every one recorded after it. Backlog records stay absent, matching the pre-shard
+// pathspec - parking an idea is not a timed session.
+//
 // Only HANDOFF commits count. `gtg activate` moves a backlog entry back into
-// _active.json and `gtg undo` restores a removed one - both re-add the entry
+// the active store and `gtg undo` restores a removed one - both re-add the entry
 // with its duration_min unchanged, which billed the same session a second time
 // (~6% of the total on the live store before this guard). A handoff is the only
 // commit that actually re-times anything, so the subject is the exact filter.
@@ -362,7 +377,8 @@ const noDurations = () => ({
 export function readDurations(root) {
   let out;
   try {
-    out = execFileSync('git', ['-C', root, 'log', '-p', '--format=%aI%x1f%s', '--', 'docs/handoffs/_active.json'],
+    out = execFileSync('git', ['-C', root, 'log', '-p', '--format=%aI%x1f%s', '--',
+      'docs/handoffs/_active.json', 'docs/handoffs/active'],
       { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', timeout: 15000, maxBuffer: 64 * 1024 * 1024 });
   } catch { return noDurations(); }
   // Same walk-up guard as readEvents: if root isn't itself a repo but is nested
@@ -437,13 +453,19 @@ export function fun(events, rows) {
   };
 }
 
-// Ties readers + derivations into one object. readStore is injected (the command
-// passes ctx.readStore) so this module never hard-codes the store path logic.
-export function buildReport(root, readStore) {
+// Ties readers + derivations into one object.
+//
+// Reads the record stores through readCollection, NOT the injected ctx.readStore this used
+// to take. readStore is a whole-file JSON reader, so once the stores became one file per
+// record it could only ever see the frozen pre-shard packed file - and `?.handoffs ?? []`
+// turns that into a silent [], which reported an empty report instead of failing. Records
+// have no store-path logic left to inject: readCollection reads the directory and falls back
+// to the packed file itself, so the migration is invisible here.
+export function buildReport(root) {
   const { events, available } = readEvents(root);
   const sessions = readSessions(root);
-  const active = readStore('docs/handoffs/_active.json')?.handoffs ?? [];
-  const backlog = readStore('docs/handoffs/_backlog.json')?.backlog ?? [];
+  const active = readCollection(root, 'docs/handoffs/active', 'docs/handoffs/_active.json', 'handoffs');
+  const backlog = readCollection(root, 'docs/handoffs/backlog', 'docs/handoffs/_backlog.json', 'backlog');
   const effort = readDurations(root);
   const rows = perProject(events, sessions, active, backlog, effort);
   const tp = throughput(events);

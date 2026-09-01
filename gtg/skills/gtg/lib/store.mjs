@@ -4,12 +4,15 @@
 // edits disjoint, and a same-project fork conflicts on one small file, which is correct.
 //
 // Extension-context audit (Task 1 Step 5) - what must stay signature-stable for Task 3:
-//   - `readStore(rel)` IS called by extensions, with ONE argument, and the caller indexes
-//     the wrapper key itself: extensions/lib/history.mjs:445-446 does
-//     `readStore('docs/handoffs/_active.json')?.handoffs ?? []` and the same for
-//     `_backlog.json`/`.backlog`. Reached via commands/report.mjs and commands/stats.mjs,
-//     which take `readStore` off the ctx. So `readStore` must keep returning a packed-shaped
-//     object (`{ handoffs: [...] }`), not a bare array, or history.mjs must change with it.
+//   - `readStore(rel)` IS called by extensions, with ONE argument, and the caller indexes the
+//     wrapper key itself, so it must keep returning a packed-shaped object (`{ handoffs: [...] }`)
+//     rather than a bare array. RESOLVED IN TASK 4 for the records specifically:
+//     extensions/lib/history.mjs did `readStore('docs/handoffs/_active.json')?.handoffs ?? []`,
+//     which degrades to a silent [] once the records live one per file, so buildReport now calls
+//     readCollection directly and report.mjs/stats.mjs no longer pass readStore at all. readStore
+//     itself is unchanged and still published on the ctx (gtg.mjs reads _session.json through it,
+//     and a user extension may too), so its shape contract still stands - nothing bundled depends
+//     on it for records any more. test/gtg.test.mjs case 71 is the regression guard.
 //   - `writeStore` is on the ctx (gtg.mjs:437, 989, 1145) but NO extension calls it.
 //   - `entries()` / `saveEntries()` are NOT on the ctx - internal to gtg.mjs (:108, :111).
 //     No shim needed; Task 3 may change their `(rel, key)` signature freely.
