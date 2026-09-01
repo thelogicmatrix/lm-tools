@@ -1,0 +1,116 @@
+// One file per record. Packed collections ({handoffs: [...]}) made every gtg write rewrite
+// the whole file, so two machines editing UNRELATED projects still collided on the same
+// bytes and a JSON array conflict has no semantic merge. Per-record files make unrelated
+// edits disjoint, and a same-project fork conflicts on one small file, which is correct.
+//
+// Extension-context audit (Task 1 Step 5) - what must stay signature-stable for Task 3:
+//   - `readStore(rel)` IS called by extensions, with ONE argument, and the caller indexes
+//     the wrapper key itself: extensions/lib/history.mjs:445-446 does
+//     `readStore('docs/handoffs/_active.json')?.handoffs ?? []` and the same for
+//     `_backlog.json`/`.backlog`. Reached via commands/report.mjs and commands/stats.mjs,
+//     which take `readStore` off the ctx. So `readStore` must keep returning a packed-shaped
+//     object (`{ handoffs: [...] }`), not a bare array, or history.mjs must change with it.
+//   - `writeStore` is on the ctx (gtg.mjs:437, 989, 1145) but NO extension calls it.
+//   - `entries()` / `saveEntries()` are NOT on the ctx - internal to gtg.mjs (:108, :111).
+//     No shim needed; Task 3 may change their `(rel, key)` signature freely.
+//   - extensions/commands/issues.mjs and learn.mjs read through `ctx.ownEntries()` (the
+//     closure at gtg.mjs:1130), never the store directly, so they follow whatever
+//     ownEntries returns.
+import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+
+const SLUG_OK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function slugFile(slug) {
+  if (typeof slug !== 'string' || !SLUG_OK.test(slug)) {
+    throw new Error(`gtg: record has an unusable slug ${JSON.stringify(slug)} - cannot name its file`);
+  }
+  return `${slug}.json`;
+}
+
+// reborn is Windows (case-insensitive FS), Obelisk is Linux (case-sensitive). Two slugs
+// differing only in case are two records on one machine and one clobbered record on the
+// other. Refuse the write rather than lose a record on whichever machine syncs second.
+export function slugCollision(items) {
+  const seen = new Set();
+  for (const it of items) {
+    const k = String(it?.slug ?? '').toLowerCase();
+    if (seen.has(k)) return k;
+    seen.add(k);
+  }
+  return null;
+}
+
+// Directory wins when it exists, even when empty: an empty sharded store is a real state
+// (everything parked), and falling back to a stale packed file there would resurrect
+// deleted records.
+export function readCollection(root, dir, legacyRel, legacyKey) {
+  const abs = join(root, dir);
+  if (existsSync(abs)) {
+    const out = [];
+    for (const f of readdirSync(abs).filter((f) => f.endsWith('.json')).sort()) {
+      const p = join(abs, f);
+      let rec;
+      try {
+        rec = JSON.parse(readFileSync(p, 'utf8'));
+      } catch (e) {
+        // NOT a silent skip. The packed store swallowed parse errors and returned null,
+        // which cost nothing when it meant "no store". Here it would mean one record
+        // silently disappearing from a list that otherwise looks complete.
+        throw new Error(`gtg: cannot parse ${dir}/${f} - ${e.message}`);
+      }
+      if (rec) out.push(rec);
+    }
+    return out;
+  }
+  const legacy = join(root, legacyRel);
+  if (!existsSync(legacy)) return [];
+  try {
+    const d = JSON.parse(readFileSync(legacy, 'utf8'));
+    return Array.isArray(d?.[legacyKey]) ? d[legacyKey].filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Returns repo-relative paths so the caller can hand them straight to commit(), which must
+// name every path on BOTH `git add` and `git commit` - deletions included, or the removal
+// stays in the working tree and the next session commits it as its own.
+export function writeCollection(root, dir, items) {
+  const collision = slugCollision(items);
+  if (collision) {
+    throw new Error(`gtg: slugs collide case-insensitively on "${collision}" - one machine would lose a record`);
+  }
+  for (const it of items) slugFile(it?.slug); // validate all before touching disk
+
+  const abs = join(root, dir);
+  const before = existsSync(abs)
+    ? new Set(readdirSync(abs).filter((f) => f.endsWith('.json')))
+    : new Set();
+
+  mkdirSync(abs, { recursive: true });
+
+  // Write everything first, delete last. A failure partway then leaves a SUPERSET of the
+  // intended state (a stale extra record), which a re-run converges. Deleting first would
+  // leave a hole, which nothing converges.
+  const written = [];
+  const keep = new Set();
+  for (const it of items) {
+    const f = slugFile(it.slug);
+    keep.add(f);
+    const body = JSON.stringify(it, null, 2) + '\n';
+    const p = join(abs, f);
+    if (existsSync(p) && readFileSync(p, 'utf8') === body) continue; // unchanged: leave it alone
+    writeFileSync(p, body);
+    written.push(`${dir}/${f}`);
+  }
+
+  const deleted = [];
+  for (const f of before) {
+    if (keep.has(f)) continue;
+    rmSync(join(abs, f));
+    deleted.push(`${dir}/${f}`);
+  }
+
+  return { written, deleted };
+}
