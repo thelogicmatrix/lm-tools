@@ -20,8 +20,9 @@ repo, or `$GTG_HUB` if set.
 
 ## Resume Procedure
 
-**One call:** `gtg.mjs resume <project>` (bare `gtg` → no argument). It prints the handoff,
-consumes the entry, and runs the after-resume hook. Exit 1 means it printed candidates: ask
+**One call:** `gtg.mjs resume <project>` (bare `gtg` → no argument). It syncs the hub from
+its mirror, prints the handoff, consumes the entry, and runs the after-resume hook. A leading
+`Synced obelisk-backup/master: ...` line means the sync pulled work down; it is not a warning. Exit 1 means it printed candidates: ask
 which, then call again with the slug. Exit 2 with "is a command" means run that command
 instead. Then, from the printed handoff: relay its first line. `## Methodology` is a decision
 already made, re-enter it without asking. `## Task list`: re-create each non-completed line

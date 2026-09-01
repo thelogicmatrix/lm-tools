@@ -751,8 +751,10 @@ function help() {
   gtg active <n|slug>          reactivate a backlog entry
   gtg remove <n|slug>          drop an entry (active first, then backlog)
   gtg resume [n|slug|name] [--keep]
-                               the whole pick-up: prints the handoff, consumes the entry (NOT a
-                               ship), runs <root>/.gtg/after-resume.mjs if present. Bare = the
+                               the whole pick-up: fast-forwards the hub from obelisk-backup
+                               (silent when offline or already current), prints the handoff,
+                               consumes the entry (NOT a ship), runs
+                               <root>/.gtg/after-resume.mjs if present. Bare = the
                                only active project, else the list. --keep reads without consuming
                                (issue packages). Exit 1 = choose from the candidates printed
   gtg supersede <n|slug> [--into <n|slug>]
