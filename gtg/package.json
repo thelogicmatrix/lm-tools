@@ -5,6 +5,6 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "node test/gtg.test.mjs && node test/issues.test.mjs && node --test test/store.test.mjs"
+    "test": "node test/gtg.test.mjs && node test/issues.test.mjs && node --test test/store.test.mjs && node --test test/migrate.test.mjs"
   }
 }
