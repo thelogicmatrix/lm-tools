@@ -2503,4 +2503,69 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   console.log('ok 72 - readStore keeps its packed shape on the published extension ctx');
 }
 
+// --- 73. resume fast-forwards from the mirror BEFORE it reads the store ---
+// The sync's whole value is its POSITION. It first shipped in .gtg/after-resume.mjs, which runs
+// after entries() has read, the handoff has printed and the consume has committed, so it could
+// only ever succeed when there was nothing to pull (2026-09-01, docs/runbooks/git-parity.md).
+// So this case pins the ordering rather than the call: the resumed record exists ONLY in the
+// commit sitting on the mirror, which makes it resolvable if and only if the fetch already ran.
+// A fetch anywhere after the read cannot make this pass, which is exactly the property wanted.
+//
+// A local bare repo stands in for Obelisk's Forgejo: same git, no network, no Tailscale.
+{
+  const mirror = mkdtempSync(join(tmpdir(), 'gtg-mirror-'));
+  execSync('git init -q --bare -b master', { cwd: mirror });
+  const url = mirror.split('\\').join('/');
+  const fromMirror = (dir, sh) => execSync(sh, { cwd: dir, encoding: 'utf8' }).trim();
+
+  // The hub, on master: the branch the sync fast-forwards, and the branch home actually sits on.
+  const repo = tempRepo();
+  execSync('git checkout -q -b master', { cwd: repo });
+  assert.equal(gtg(repo, HANDOFF_ARGS('local-a', 'Local A'), { input: BODY }).status, 0);
+  assert.equal(gtg(repo, HANDOFF_ARGS('local-c', 'Local C'), { input: BODY }).status, 0);
+  execSync(`git remote add obelisk-backup "${url}"`, { cwd: repo });
+  execSync('git push -q obelisk-backup master', { cwd: repo });
+
+  // The other machine: clone the mirror, wrap a project there, push. The hub has never seen it.
+  const other = mkdtempSync(join(tmpdir(), 'gtg-other-'));
+  execSync(`git clone -q "${url}" "${other.split('\\').join('/')}"`, { cwd: tmpdir() });
+  execSync('git config user.email test@test', { cwd: other });
+  execSync('git config user.name test', { cwd: other });
+  assert.equal(gtg(other, HANDOFF_ARGS('remote-b', 'Remote B'), { input: BODY }).status, 0);
+  execSync('git push -q origin master', { cwd: other });
+  assert.ok(!active(repo).some((e) => e.slug === 'remote-b'),
+    'fixture: the hub must not hold the record yet, or the case proves nothing');
+
+  const r = gtg(repo, ['resume', 'remote-b']);
+  assert.equal(r.status, 0,
+    `resume could not see a record that exists only on the mirror - the fetch ran after the read, or not at all: ${r.stderr}`);
+  assert.match(r.stdout, /RESUME: "Remote B"/);
+  assert.match(r.stdout, /- stuff/, 'and the handoff BODY came down with it');
+  assert.match(r.stdout, /fast-forward/i, 'a real fast-forward is the ONE case that speaks on stdout');
+
+  // Up to date: silence. A line on every resume is noise, and noise is how a real one goes unread.
+  const q = gtg(repo, ['resume', 'local-a']);
+  assert.equal(q.status, 0, q.stderr);
+  assert.doesNotMatch(q.stdout, /fast-forward/i, 'nothing to pull must say nothing');
+
+  // Diverged: both sides hold commits the other lacks. --ff-only refuses, and refusing is the
+  // point - auto-merging a divergence is what caused the 2026-08-02 fork. The resume still
+  // runs, on local state, and the notice goes to stderr so stdout keeps its one rule.
+  writeFileSync(join(repo, 'local.txt'), 'local only'); // no trailing LF: git's autocrlf warning is not test output
+  execSync('git add local.txt', { cwd: repo });
+  execSync('git commit -q -m "local only"', { cwd: repo });
+  assert.equal(gtg(other, HANDOFF_ARGS('remote-d', 'Remote D'), { input: BODY }).status, 0);
+  execSync('git push -q origin master', { cwd: other });
+  const d = gtg(repo, ['resume', 'local-c']);
+  assert.equal(d.status, 0, `a divergence must not fail the resume: ${d.stderr}`);
+  assert.match(d.stdout, /RESUME: "Local C"/, 'and it resumes from local state');
+  assert.doesNotMatch(d.stdout, /fast-forward/i, 'stdout stays silent when nothing moved');
+  assert.match(d.stderr, /will not fast-forward/, 'but a real fork has to surface somewhere');
+  assert.ok(!active(repo).some((e) => e.slug === 'remote-d'),
+    'and nothing from the diverged mirror was merged in');
+  assert.equal(fromMirror(repo, 'git rev-parse --abbrev-ref HEAD'), 'master',
+    'no rebase, no detach: the branch is where it was');
+  console.log('ok 73 - resume fast-forwards from the mirror before reading the store');
+}
+
 console.log('ALL PASS');

@@ -1007,9 +1007,61 @@ function commandFileFor(t) {
   return existsSync(join(ROOT, '.gtg', 'commands', `${t}.mjs`))
     || existsSync(join(CLI_DIR, 'extensions', 'commands', `${t}.mjs`));
 }
+
+// Fast-forward the hub from its mirror before anything reads the store. POSITION IS THE WHOLE
+// POINT (2026-09-01): this shipped first inside .gtg/after-resume.mjs, which runs AFTER
+// entries() has read, the handoff has printed and the consume has committed - so home was
+// always one commit ahead and --ff-only aborted in exactly the case the sync exists for, a
+// mirror carrying the other machine's work. A fetch after the read cannot change what the
+// read returned. Handing entries between Obelisk and reborn is why this store is git at all.
+// Background: docs/runbooks/git-parity.md.
+//
+// A convenience, NEVER a gate. Every git failure is swallowed and each call capped at 5s, so
+// a resume offline, off Tailscale, in a repo with no such remote, or mid-rebase behaves
+// exactly as it did before this existed. And stdout speaks only on a real fast-forward: a
+// line on every resume is noise, and noise on the hot path is how a real one goes unread.
+const SYNC_REMOTE = 'obelisk-backup'; // the hub's Forgejo mirror on Obelisk
+const SYNC_BRANCH = 'master';         // home's one branch - every worktree is branched off it
+function syncHub() {
+  // stderr piped, not inherited: execFileSync forwards a child's stderr to ours otherwise,
+  // and git narrates a refused fast-forward in nine hint: lines - five of git's own above every
+  // line of ours. The after-resume hook piped it for the same reason before this moved here.
+  const git = (...args) => execFileSync('git', args,
+    { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 }).toString().trim();
+  let before;
+  try {
+    // Branch-gated. gtg runs from feature worktrees too (GTG_HUB usually points them back at
+    // home, but not always), and fast-forwarding a feature branch onto master's tip merely
+    // because it happens to be an ancestor would rewrite what the caller is standing on.
+    // A detached HEAD reports as 'HEAD' and skips, which is the right answer there too.
+    if (git('rev-parse', '--abbrev-ref', 'HEAD') !== SYNC_BRANCH) return;
+    before = git('rev-parse', 'HEAD');
+    git('fetch', '--quiet', SYNC_REMOTE, SYNC_BRANCH);
+  } catch { return; } // no remote, host down, offline, not a repo: local state stands, silently
+  try {
+    git('merge', '--ff-only', '--quiet', `${SYNC_REMOTE}/${SYNC_BRANCH}`);
+  } catch {
+    // The fetch landed and the fast-forward was refused. Home being AHEAD of the mirror is the
+    // normal state and says nothing. The mirror holding commits home does not have means a
+    // genuine fork or a dirty tree in the way, and resolving either is Nathan's call, not a
+    // resume's - auto-merging a divergence is what caused the 2026-08-02 fork. On stderr, so
+    // "stdout speaks only on a real fast-forward" still holds.
+    try { git('merge-base', '--is-ancestor', `${SYNC_REMOTE}/${SYNC_BRANCH}`, 'HEAD'); } catch {
+      console.error(`gtg: ${SYNC_REMOTE}/${SYNC_BRANCH} will not fast-forward (diverged, or local changes in the way) - resuming from local state`);
+    }
+    return;
+  }
+  try {
+    const after = git('rev-parse', 'HEAD');
+    if (after !== before) console.log(`Synced ${SYNC_REMOTE}/${SYNC_BRANCH}: fast-forwarded to ${after.slice(0, 7)}`);
+  } catch { /* the merge already succeeded; failing to name it is not worth a word */ }
+}
+
 async function resumeConsume(argv) {
   const a = parseFlags(argv);
   const t = argv.find((x) => !x.startsWith('--'));
+  // Before the two reads below, deliberately. See syncHub: after them it is decoration.
+  syncHub();
   const act = entries('active');
   const bl = entries('backlog');
   let match = null;
