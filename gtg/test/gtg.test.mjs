@@ -1118,8 +1118,12 @@ const patchActive = (root, fn) => {
   writeFileSync(join(repo, 'docs/handoffs/2026-07-06-1830-alpha.md'), '# h');
   execSync('git add -A', { cwd: repo });
   execSync('git commit -q -m "handoff: Alpha — session 2"', { cwd: repo });
-  // a real prune touches _active.json under docs/handoffs/ (unlike --allow-empty,
-  // which the readEvents pathspec would filter out - pathspec follows real usage).
+  // A real prune touches the store under docs/handoffs/ - since the shard that is
+  // active/<slug>.json, not the packed file this fixture writes. Either satisfies readEvents,
+  // whose pathspec is the whole docs/handoffs/ directory; what the fixture must avoid is a
+  // commit touching NOTHING under it (an --allow-empty prune), which the pathspec filters out.
+  // Left packed deliberately: this case classifies a historical subject, and the real hub's
+  // history has prune commits from both sides of the migration.
   writeFileSync(join(repo, 'docs/handoffs/_active.json'), '{"handoffs":[]}');
   execSync('git add -A', { cwd: repo });
   execSync('git commit -q -m "gtg prune: remove Alpha - confirmed done"', { cwd: repo });
@@ -1406,8 +1410,10 @@ const patchActive = (root, fn) => {
 // packed file zeroes every duration recorded after the migration; one naming only the
 // directory zeroes every duration recorded before it. Neither failure raises anything - the
 // figure just reads low - so both halves are committed here in one repo and the total is the
-// assertion. The slug also has to come off the record's own PATH: a hunk that only re-times a
-// session need not carry the "slug" line, so a scan alone would bill it to the wrong project.
+// assertion. The slug scan needs no per-file reset to make this work, and history.mjs records
+// why: a handoff commits exactly ONE active record, and that record's own "slug" line always
+// lands in the hunk with its duration_min. Q's 30 minutes landing on Q rather than on P is the
+// half of this case that measures it.
 {
   const H = await import('../skills/gtg/extensions/lib/history.mjs');
   const repo = tempRepo();
@@ -2456,6 +2462,45 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   assert.deepEqual(doc.perProject.map((pp) => pp.project).sort(), ['R A', 'R B', 'R C'],
     'every project must reach the report through the sharded store');
   console.log('ok 71 - report and stats read the sharded store with no packed file present');
+}
+
+// --- 72. readStore keeps its packed shape for the published extension ctx ---
+// Case 6 pins that ctx.readStore EXISTS; this pins what it returns. Nothing bundled reads
+// records through it since Task 4 - buildReport calls readCollection - so the contract now
+// rests on no bundled caller at all, and a future edit could "simplify" readStore into
+// returning a bare array with the whole suite still green. Third-party extensions in
+// .gtg/commands/ are the real callers, and they index the wrapper key themselves, so
+// `readStore('...')?.handoffs ?? []` over a bare array yields [] with no error whatsoever -
+// exactly the silence that emptied `report` and `stats`, which case 71 caught from the other
+// side. Case 71 is now indifferent to readStore's shape; this case is the only thing holding it.
+{
+  const repo = tempRepo();
+  mkdirSync(join(repo, 'docs/handoffs'), { recursive: true });
+  mkdirSync(join(repo, '.gtg/commands'), { recursive: true });
+  // Packed on purpose: readStore is a whole-file JSON reader and this is the file a
+  // third-party extension names. gtg shards it on startup and leaves it in place, so it
+  // stays readable either way.
+  writeFileSync(join(repo, ACTIVE[1]),
+    JSON.stringify({ handoffs: [{ project: 'Shape', slug: 'shape', next: 'x' }] }, null, 2) + '\n');
+  writeFileSync(join(repo, '.gtg/commands/shape.mjs'),
+    `export default ({ readStore }) => {
+      const s = readStore('docs/handoffs/_active.json');
+      console.log(JSON.stringify({
+        isArray: Array.isArray(s),
+        wrapped: Array.isArray(s?.handoffs),
+        slugs: (s?.handoffs ?? []).map((e) => e.slug),
+      }));
+    }\n`);
+
+  const r = gtg(repo, ['shape']);
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout.trim());
+  assert.equal(out.isArray, false,
+    'readStore must NOT return a bare array - an extension indexing .handoffs on one gets undefined');
+  assert.equal(out.wrapped, true,
+    'readStore must return the packed wrapper object, so `readStore(rel)?.handoffs` resolves');
+  assert.deepEqual(out.slugs, ['shape'], 'and the records inside it must be reachable');
+  console.log('ok 72 - readStore keeps its packed shape on the published extension ctx');
 }
 
 console.log('ALL PASS');

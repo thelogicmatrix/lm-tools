@@ -83,10 +83,16 @@ const c = (code, s) => (COLOR ? `\x1b[${code}m${s}\x1b[0m` : String(s));
 
 // --- helpers (readStore/writeStore/commit are also the extension ctx) --------
 // readStore is a WHOLE-FILE JSON reader and stays one: it is published on the extension ctx,
-// and extensions/lib/history.mjs:445 does `readStore('...')?.handoffs ?? []`, so handing it a
-// bare array would yield [] with no error and silently empty `report` and `stats`. Nothing
-// inside gtg reads the record stores through it any more - that is `entries(which)` below.
+// and a caller indexes the wrapper key itself (`readStore('...')?.handoffs ?? []`), so handing
+// it a bare array would yield [] with no error at all. Nothing inside gtg reads the record
+// stores through it any more - that is `entries(which)` below - and since Task 4 no BUNDLED
+// extension does either: extensions/lib/history.mjs used to, and buildReport now calls
+// readCollection instead, because a whole-file reader cannot see a directory of records.
 // The remaining internal callers read _session.json, which is a genuine single-object file.
+//
+// So the shape contract is real but has no bundled caller left to enforce it. A third-party
+// extension in .gtg/commands/ is now the caller that depends on it, and test/gtg.test.mjs
+// case 72 is what holds it - keep that case if you touch this function.
 function readStore(rel) {
   const p = join(ROOT, rel);
   if (!existsSync(p)) return null;

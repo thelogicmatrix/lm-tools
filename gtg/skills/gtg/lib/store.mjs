@@ -11,8 +11,10 @@
 //     which degrades to a silent [] once the records live one per file, so buildReport now calls
 //     readCollection directly and report.mjs/stats.mjs no longer pass readStore at all. readStore
 //     itself is unchanged and still published on the ctx (gtg.mjs reads _session.json through it,
-//     and a user extension may too), so its shape contract still stands - nothing bundled depends
-//     on it for records any more. test/gtg.test.mjs case 71 is the regression guard.
+//     and a third-party extension in .gtg/commands/ may too), so its shape contract still stands,
+//     with no bundled caller left to enforce it. test/gtg.test.mjs case 72 asserts the shape
+//     directly and is the ONLY guard on it; case 71 guards the other half (a reader routed back
+//     through readStore for records) and is indifferent to what shape readStore returns.
 //   - `writeStore` is on the ctx (gtg.mjs:437, 989, 1145) but NO extension calls it.
 //   - `entries()` / `saveEntries()` are NOT on the ctx - internal to gtg.mjs (:108, :111).
 //     No shim needed; Task 3 may change their `(rel, key)` signature freely.
