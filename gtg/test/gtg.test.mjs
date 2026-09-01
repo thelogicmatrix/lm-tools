@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { readCollection, writeCollection } from '../skills/gtg/lib/store.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'gtg', 'gtg.mjs');
 
@@ -53,9 +54,32 @@ const HANDOFF_ARGS = (slug, project) => [
   '--eta', '~2h', '--next', 'do the next thing',
 ];
 const BODY = '## What Was Done This Session\n- stuff\n\n## Next Action\ndo the next thing\n';
-const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_active.json'), 'utf8'));
 
-// --- 1. handoff writes doc + _active.json entry, commits ---
+// Store readers. Through readCollection, not a hand-rolled file read, so a fixture that
+// seeds the LEGACY packed file (cases 18, 25) and one that runs a real gtg command (every
+// other case, sharded) are both read the same way gtg reads them.
+const ACTIVE = ['docs/handoffs/active', 'docs/handoffs/_active.json', 'handoffs'];
+const BACKLOG = ['docs/handoffs/backlog', 'docs/handoffs/_backlog.json', 'backlog'];
+const active = (root) => readCollection(root, ...ACTIVE);
+const backlog = (root) => readCollection(root, ...BACKLOG);
+// What a commit actually named, as "<status>\t<path>" lines. --no-renames on purpose: a park
+// moves a record between two directories with the body barely changing, and rename detection
+// would collapse the pair into one R line - hiding whether BOTH paths were named, which is the
+// only thing that decides whether the removal gets committed or left for the next session.
+const nameStatus = (root, ref) =>
+  execSync(`git show --no-renames --name-status --format= ${ref}`, { cwd: root, encoding: 'utf8' })
+    .trim().split('\n').filter(Boolean);
+
+// Mutate the store the way the other machine would: read, edit, write each record back.
+// Several cases backdate `updated` to trip the 7-day auto-shelf, which is the only way to
+// reach that path without waiting a week.
+const patchActive = (root, fn) => {
+  const items = active(root);
+  fn(items);
+  writeCollection(root, ACTIVE[0], items);
+};
+
+// --- 1. handoff writes doc + an active record, commits ---
 {
   const repo = tempRepo();
   const r = gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
@@ -66,7 +90,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const doc = readFileSync(join(repo, rel), 'utf8');
   assert.match(doc, /^# Handoff: Project A/);
   assert.match(doc, /## Resume Prompt\nSay: "gtg proj-a"/);
-  const entries = active(repo).handoffs;
+  const entries = active(repo);
   assert.equal(entries.length, 1);
   assert.equal(entries[0].slug, 'proj-a');
   assert.equal(entries[0].file, rel);
@@ -75,21 +99,21 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   // dedupe by slug: second handoff for same slug replaces, not appends
   const r2 = gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
   assert.equal(r2.status, 0, r2.stderr);
-  assert.equal(active(repo).handoffs.length, 1, 'dedupe by slug failed');
+  assert.equal(active(repo).length, 1, 'dedupe by slug failed');
   console.log('ok 1 - handoff');
 }
 
-// --- 1b. backlog park lands in _backlog.json ---
+// --- 1b. backlog park lands on the backlog store ---
 {
   const repo = tempRepo();
   const r = gtg(repo, ['backlog', '--project', 'Idea X', '--slug', 'idea-x',
     '--eta', '~1h', '--next', 'TBD'], { input: '## The Idea\nsomething\n' });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /PARKED on backlog/);
-  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  const bl = backlog(repo);
   assert.equal(bl.length, 1);
   assert.equal(bl[0].slug, 'idea-x');
-  assert.ok(!existsSync(join(repo, 'docs/handoffs/_active.json')), 'backlog park must not touch _active.json');
+  assert.ok(!existsSync(join(repo, ACTIVE[0])), 'backlog park must not touch the active store');
   console.log('ok 1b - backlog park');
 }
 
@@ -99,7 +123,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const other = tempRepo();
   const r = gtg(other, HANDOFF_ARGS('hub-proj', 'Hub Project'), { input: BODY, hub });
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(existsSync(join(hub, 'docs/handoffs/_active.json')), 'entry not in hub');
+  assert.deepEqual(active(hub).map((e) => e.slug), ['hub-proj'], 'entry not in hub');
   assert.ok(!existsSync(join(other, 'docs/handoffs')), 'entry leaked into cwd repo');
   const subject = execSync('git log -1 --format=%s', { cwd: hub, encoding: 'utf8' }).trim();
   assert.match(subject, /^handoff: Hub Project/, 'commit not in hub repo');
@@ -149,17 +173,14 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const repo = tempRepo();
   gtg(repo, HANDOFF_ARGS('stale-proj', 'Stale Project'), { input: BODY });
   // Backdate the entry 8 days
-  const ap = join(repo, 'docs/handoffs/_active.json');
-  const data = JSON.parse(readFileSync(ap, 'utf8'));
-  data.handoffs[0].updated = new Date(Date.now() - 8 * 86400000).toISOString();
-  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+  patchActive(repo, (h) => { h[0].updated = new Date(Date.now() - 8 * 86400000).toISOString(); });
   const r = gtg(repo, ['list']);
   assert.match(r.stdout, /Auto-shelved 1 project/);
   assert.match(r.stdout, /No active gtg projects/);
-  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  const bl = backlog(repo);
   assert.equal(bl.length, 1);
   assert.equal(bl[0].slug, 'stale-proj');
-  assert.equal(JSON.parse(readFileSync(ap, 'utf8')).handoffs.length, 0);
+  assert.equal(active(repo).length, 0);
   // shelf listing shows it
   const rb = gtg(repo, ['backlog']);
   assert.match(rb.stdout, /b1\. Stale Project/);
@@ -207,22 +228,22 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.match(r.stdout, /^docs\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-proj-c\.md$/m, 'handoff success output missing from stdout');
   assert.match(r.stdout, /RESUME: "gtg proj-c"/);
   assert.match(r.stderr, /uncommitted/i, 'genuine git commit failure must be surfaced as a warning, not swallowed');
-  assert.ok(existsSync(join(repo, 'docs/handoffs/_active.json')), 'entry should still be written to disk despite commit failure');
+  assert.equal(active(repo).length, 1, 'entry should still be written to disk despite commit failure');
   console.log('ok 3 - commit failure exits non-zero, write still reported');
 }
 
-// --- 3+4. remove empties _active.json; undo restores it ---
+// --- 3+4. remove empties the active store; undo restores it ---
 {
   const repo = tempRepo();
   gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
   const r = gtg(repo, ['remove', 'proj-a']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Removed: Project A/);
-  assert.equal(active(repo).handoffs.length, 0, 'remove left entries behind');
+  assert.equal(active(repo).length, 0, 'remove left entries behind');
   const ru = gtg(repo, ['undo']);
   assert.equal(ru.status, 0, ru.stderr);
-  assert.equal(active(repo).handoffs.length, 1, 'undo did not restore');
-  assert.equal(active(repo).handoffs[0].slug, 'proj-a');
+  assert.equal(active(repo).length, 1, 'undo did not restore');
+  assert.equal(active(repo)[0].slug, 'proj-a');
   console.log('ok 3+4 - remove + undo');
 }
 
@@ -232,12 +253,12 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
   const rb = gtg(repo, ['back', 'proj-a']);
   assert.match(rb.stdout, /Parked: Project A/);
-  assert.equal(active(repo).handoffs.length, 0);
-  const bl = () => JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  assert.equal(active(repo).length, 0);
+  const bl = () => backlog(repo);
   assert.equal(bl().length, 1);
   const ra = gtg(repo, ['active', 'b1']);
   assert.match(ra.stdout, /Activated: Project A/);
-  assert.equal(active(repo).handoffs.length, 1);
+  assert.equal(active(repo).length, 1);
   assert.equal(bl().length, 0);
   // remove falls through to backlog when not in active
   gtg(repo, ['back', 'proj-a']);
@@ -261,25 +282,23 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const r = gtg(repo, HANDOFF_ARGS('inject-test', evilProject), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
   assert.ok(!existsSync(marker), 'shell injection via --project executed a command');
-  assert.equal(active(repo).handoffs[0].project, evilProject,
+  assert.equal(active(repo)[0].project, evilProject,
     'stored project must be the literal string including $(...), untouched');
   console.log('ok - Finding C1: shell injection via --project neutralized');
 }
 
 // --- Finding I1: undo must restore BOTH stores, not leave the entry duplicated ---
-// back/active/autoShelf commit _active.json + _backlog.json together in one commit.
-// undo used to restore only _active.json from the pre-commit parent, leaving the
-// moved entry ALSO present in _backlog.json.
+// back/active/autoShelf commit both stores together in one commit. undo used to restore
+// only the active side from the pre-commit parent, leaving the moved entry ALSO present on
+// the backlog.
 {
   const repo = tempRepo();
   gtg(repo, HANDOFF_ARGS('proj-i1', 'Project I1'), { input: BODY });
   gtg(repo, ['back', 'proj-i1']);
   const ru = gtg(repo, ['undo']);
   assert.equal(ru.status, 0, ru.stderr);
-  const inActive = active(repo).handoffs.some((e) => e.slug === 'proj-i1');
-  const blPath = join(repo, 'docs/handoffs/_backlog.json');
-  const inBacklog = existsSync(blPath)
-    && JSON.parse(readFileSync(blPath, 'utf8')).backlog.some((e) => e.slug === 'proj-i1');
+  const inActive = active(repo).some((e) => e.slug === 'proj-i1');
+  const inBacklog = backlog(repo).some((e) => e.slug === 'proj-i1');
   assert.ok(inActive, 'undo should restore the entry to active');
   assert.ok(!inBacklog, 'undo left the entry duplicated in backlog too');
   console.log('ok - Finding I1: undo restores both stores after back');
@@ -328,20 +347,15 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 {
   const repo = tempRepo();
   gtg(repo, HANDOFF_ARGS('stale-undo', 'Stale Undo'), { input: BODY });
-  const ap = join(repo, 'docs/handoffs/_active.json');
-  const data = JSON.parse(readFileSync(ap, 'utf8'));
-  data.handoffs[0].updated = new Date(Date.now() - 8 * 86400000).toISOString();
-  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+  patchActive(repo, (h) => { h[0].updated = new Date(Date.now() - 8 * 86400000).toISOString(); });
   execSync('git add -A && git commit -q -m "backdate for test"', { cwd: repo, stdio: 'ignore' });
   gtg(repo, ['remove', 'stale-undo']);
   const commitsBeforeUndo = execSync('git rev-list --count HEAD', { cwd: repo, encoding: 'utf8' }).trim();
   const ru = gtg(repo, ['undo']);
   assert.equal(ru.status, 0, ru.stderr);
-  assert.equal(active(repo).handoffs.length, 1, 'undo did not restore the stale entry to active');
-  assert.equal(active(repo).handoffs[0].slug, 'stale-undo');
-  assert.ok(!existsSync(join(repo, 'docs/handoffs/_backlog.json'))
-    || JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog.length === 0,
-    'undo must not re-park the stale entry to backlog');
+  assert.equal(active(repo).length, 1, 'undo did not restore the stale entry to active');
+  assert.equal(active(repo)[0].slug, 'stale-undo');
+  assert.equal(backlog(repo).length, 0, 'undo must not re-park the stale entry to backlog');
   const commitsAfterUndo = execSync('git rev-list --count HEAD', { cwd: repo, encoding: 'utf8' }).trim();
   assert.equal(Number(commitsAfterUndo), Number(commitsBeforeUndo) + 1, 'undo must create exactly one commit, no autoShelf side-commit');
   console.log('ok - Finding 3: undo does not re-trigger autoShelf');
@@ -476,7 +490,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 
   r = gtg(repo, ['resume', 'proj-r']);
   assert.equal(r.status, 0, `resume failed: ${r.stderr}`);
-  assert.equal(active(repo).handoffs.length, 0, 'resume did not remove the entry');
+  assert.equal(active(repo).length, 0, 'resume did not remove the entry');
 
   const subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
   assert.match(subject, /^gtg resume: Project R - handoff consumed$/,
@@ -504,7 +518,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   let r = gtg(repo, HANDOFF_ARGS('proj-s', 'Project S'), { input: BODY });
   assert.equal(r.status, 0, `handoff failed: ${r.stderr}`);
 
-  let e = active(repo).handoffs[0];
+  let e = active(repo)[0];
   assert.equal(e.sessions, 1, 'first handoff should be session 1');
   assert.ok(!('phase' in e), 'phase must not be written');
   assert.match(e.created, /^\d{4}-\d{2}-\d{2}T/, 'created must be an ISO stamp');
@@ -519,7 +533,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   // second handoff for the same slug: sessions increments, created is carried
   r = gtg(repo, HANDOFF_ARGS('proj-s', 'Project S'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  e = active(repo).handoffs[0];
+  e = active(repo)[0];
   assert.equal(e.sessions, 2, 'second handoff should be session 2');
   assert.equal(e.created, firstCreated, 'created must not move on later handoffs');
   subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
@@ -544,7 +558,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 
   const r = gtg(repo, HANDOFF_ARGS('old-proj', 'Old Proj'), { input: BODY });
   assert.equal(r.status, 0, `handoff failed: ${r.stderr}`);
-  const e = active(repo).handoffs[0];
+  const e = active(repo)[0];
   // minor fix: firstHandoffDate() now carries the same local-offset suffix
   // nowIso() uses (a bare vs aware datetime otherwise breaks Python fromisoformat
   // comparisons) - assert via regex so the test isn't tied to the CI box's own tz.
@@ -565,7 +579,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 
   let r = gtg(repo, [...HANDOFF_ARGS('proj-w', 'Project W'), '--worktree', wt], { input: BODY });
   assert.equal(r.status, 0, `handoff failed: ${r.stderr}`);
-  let e = active(repo).handoffs[0];
+  let e = active(repo)[0];
   assert.equal(e.worktree, wt, 'worktree must be stored on the entry');
   assert.equal(e.branch, 'feat/elsewhere',
     `branch must come from the worktree, not the storage root, got: ${e.branch}`);
@@ -574,13 +588,13 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   r = gtg(repo, [...HANDOFF_ARGS('proj-w2', 'Project W2'), '--worktree', wt,
     '--branch', 'stated/branch'], { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  e = active(repo).handoffs.find((x) => x.slug === 'proj-w2');
+  e = active(repo).find((x) => x.slug === 'proj-w2');
   assert.equal(e.branch, 'stated/branch');
 
   // no --worktree: defaults to 'repo root' and detects in the storage root
   r = gtg(repo, HANDOFF_ARGS('proj-w3', 'Project W3'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  e = active(repo).handoffs.find((x) => x.slug === 'proj-w3');
+  e = active(repo).find((x) => x.slug === 'proj-w3');
   assert.equal(e.worktree, 'repo root');
   assert.equal(e.branch, 'main', `storage-root branch expected, got: ${e.branch}`);
 
@@ -588,7 +602,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   r = gtg(repo, [...HANDOFF_ARGS('proj-w4', 'Project W4'),
     '--worktree', join(repo, 'no-such-dir')], { input: BODY });
   assert.equal(r.status, 0, `missing worktree must not fail the handoff: ${r.stderr}`);
-  e = active(repo).handoffs.find((x) => x.slug === 'proj-w4');
+  e = active(repo).find((x) => x.slug === 'proj-w4');
   assert.equal(e.branch, '?', `unresolvable branch should be '?', got: ${e.branch}`);
 
   console.log('ok 11 - worktree and branch stored, detected in the right repo');
@@ -612,38 +626,38 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   let r = gtg(repo, [...HANDOFF_ARGS('sub-project', 'Ships Worldbuilding'),
     '--parent', 'atlas'], { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  let e = active(repo).handoffs.find((x) => x.slug === 'sub-project');
+  let e = active(repo).find((x) => x.slug === 'sub-project');
   assert.equal(e.parent, 'atlas', 'explicit --parent must be honoured verbatim');
 
   // fallback: slug prefix matches an INDEX.md page slug
   r = gtg(repo, HANDOFF_ARGS('widget-stats-page', 'Widget Stats Page'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  e = active(repo).handoffs.find((x) => x.slug === 'widget-stats-page');
+  e = active(repo).find((x) => x.slug === 'widget-stats-page');
   assert.equal(e.parent, 'widget', 'widget-* should infer the widget family');
 
   // fallback: two pages qualify ('widget' and 'widget-ads') - longest wins,
   // not whichever the shorter page happened to be listed first in INDEX.md
   r = gtg(repo, HANDOFF_ARGS('widget-ads-report', 'Widget Ads Report'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  e = active(repo).handoffs.find((x) => x.slug === 'widget-ads-report');
+  e = active(repo).find((x) => x.slug === 'widget-ads-report');
   assert.equal(e.parent, 'widget-ads', 'longest matching page slug must win the tie-break, not the first one found');
 
   // fallback: exact match - a project that IS the family
   r = gtg(repo, HANDOFF_ARGS('bench-and-bar', 'Bench & Bar'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  e = active(repo).handoffs.find((x) => x.slug === 'bench-and-bar');
+  e = active(repo).find((x) => x.slug === 'bench-and-bar');
   assert.equal(e.parent, 'bench-and-bar', 'an exact slug match is its own family');
 
   // no match: undefined, NOT a wrong guess
   r = gtg(repo, HANDOFF_ARGS('budget-planner', 'Budget Planner'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  e = active(repo).handoffs.find((x) => x.slug === 'budget-planner');
+  e = active(repo).find((x) => x.slug === 'budget-planner');
   assert.equal(e.parent, undefined, 'an unmatched slug must be standalone, not mis-assigned');
 
   // a partial word must not match: 'widgeteer' is not in the 'widget' family
   r = gtg(repo, HANDOFF_ARGS('widgeteer-thing', 'Widgeteer Thing'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  e = active(repo).handoffs.find((x) => x.slug === 'widgeteer-thing');
+  e = active(repo).find((x) => x.slug === 'widgeteer-thing');
   assert.equal(e.parent, undefined, 'prefix match must respect the hyphen boundary');
 
   // no INDEX.md at all must not throw
@@ -668,7 +682,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 
   let r = gtg(repo, HANDOFF_ARGS('proj-d', 'Project D'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  let e = active(repo).handoffs[0];
+  let e = active(repo)[0];
   assert.ok(e.duration_min >= 89 && e.duration_min <= 92,
     `expected ~90 minutes, got: ${e.duration_min}`);
 
@@ -680,14 +694,14 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
     JSON.stringify({ sessions: { 'C:/some/other/session': started } }, null, 2));
   r = gtg(other, HANDOFF_ARGS('proj-o', 'Project O'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(active(other).handoffs[0].duration_min, undefined,
+  assert.equal(active(other)[0].duration_min, undefined,
     "another session's stamp must not be borrowed");
 
   // no _session.json: the field is absent, NOT zero and NOT guessed
   const bare = tempRepo();
   r = gtg(bare, HANDOFF_ARGS('proj-e', 'Project E'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  e = active(bare).handoffs[0];
+  e = active(bare)[0];
   assert.equal(e.duration_min, undefined, 'no stamp must mean no figure, not zero');
 
   // a stale stamp (>24h) is ignored rather than reported as a 3-day session
@@ -697,7 +711,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
     JSON.stringify({ sessions: { [stale]: new Date(Date.now() - 72 * 3600000).toISOString() } }));
   r = gtg(stale, HANDOFF_ARGS('proj-f', 'Project F'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  e = active(stale).handoffs[0];
+  e = active(stale)[0];
   assert.equal(e.duration_min, undefined, 'a stale stamp must be discarded');
 
   // a malformed stamp must not throw
@@ -768,7 +782,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 }
 
 // --- 15. Finding C1: undo anchors on whichever store the last commit touched,
-// not _active.json alone - a backlog-only mutation (park a new idea) undoes
+// not the active one alone - a backlog-only mutation (park a new idea) undoes
 // itself, not an unrelated older active-list commit ---
 {
   const repo = tempRepo();
@@ -787,17 +801,16 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.doesNotMatch(ru.stdout, /Undone:.*Project B/,
     'undo must not revert the unrelated Project B handoff commit');
 
-  const names = active(repo).handoffs.map((e) => e.project).sort();
+  const names = active(repo).map((e) => e.project).sort();
   assert.deepEqual(names, ['Project A', 'Project B'],
     'undo of a backlog-only park must leave the active list untouched');
-  const blPath = join(repo, 'docs/handoffs/_backlog.json');
-  const backlogEmpty = !existsSync(blPath) || JSON.parse(readFileSync(blPath, 'utf8')).backlog.length === 0;
-  assert.ok(backlogEmpty, 'undo must remove the parked idea, not leave the backlog wiped-but-stale or untouched');
+  assert.equal(backlog(repo).length, 0,
+    'undo must remove the parked idea, not leave the backlog wiped-but-stale or untouched');
   console.log('ok 15 - Finding C1: undo targets a backlog-only mutation correctly');
 }
 
 // --- 15b. Finding C1: same bug via the OTHER backlog-only mutation, `gtg resume
-// <backlog-slug>` (consumes a backlog entry, writes _backlog.json alone) ---
+// <backlog-slug>` (consumes a backlog entry, writes the backlog store alone) ---
 {
   const repo = tempRepo();
   gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
@@ -809,28 +822,31 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(ru.status, 0, ru.stderr);
   assert.match(ru.stdout, /Undone: gtg resume: Idea Y/,
     `undo must target the backlog-consume commit, got: ${ru.stdout}`);
-  assert.equal(active(repo).handoffs.length, 1, 'undo of a backlog-only resume must not touch the active list');
-  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  assert.equal(active(repo).length, 1, 'undo of a backlog-only resume must not touch the active list');
+  const bl = backlog(repo);
   assert.equal(bl.length, 1, 'undo must restore the consumed backlog entry');
   assert.equal(bl[0].slug, 'idea-y');
   console.log('ok 15b - Finding C1: undo restores a consumed backlog-only entry');
 }
 
-// --- 16. Finding C1: undoing the very first-ever handoff removes _active.json
+// --- 16. Finding C1: undoing the very first-ever handoff removes the record file
 // entirely (no last^ to restore) rather than exiting 2 - the intended behaviour
 // change called out in the finding ---
 {
   const repo = tempRepo();
   const r = gtg(repo, HANDOFF_ARGS('only-one', 'Only One'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(existsSync(join(repo, 'docs/handoffs/_active.json')));
+  const rec = join(repo, ACTIVE[0], 'only-one.json');
+  assert.ok(existsSync(rec));
 
   const ru = gtg(repo, ['undo']);
   assert.equal(ru.status, 0, `undoing the first-ever handoff must succeed, not exit 2: ${ru.stderr}`);
   assert.match(ru.stdout, /Active entries now \(0\)/);
-  assert.ok(!existsSync(join(repo, 'docs/handoffs/_active.json')),
-    '_active.json must be removed entirely, since it never existed before this commit');
-  console.log('ok 16 - Finding C1: undo of the first-ever handoff removes _active.json, not exit 2');
+  assert.ok(!existsSync(rec),
+    'the record file must be removed entirely, since it never existed before this commit');
+  const st = execSync('git status --porcelain', { cwd: repo, encoding: 'utf8' });
+  assert.equal(st.trim(), '', `the undo left the removal uncommitted:\n${st}`);
+  console.log('ok 16 - Finding C1: undo of the first-ever handoff removes the record file, not exit 2');
 }
 
 // --- 17. Finding I1: parent and eta carry forward from the prior entry when
@@ -839,14 +855,14 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const repo = tempRepo();
   let r = gtg(repo, [...HANDOFF_ARGS('sub-proj', 'Sub Proj'), '--parent', 'atlas', '--eta', '~3h'], { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  let e = active(repo).handoffs[0];
+  let e = active(repo)[0];
   assert.equal(e.parent, 'atlas');
   assert.equal(e.eta, '~3h');
 
   // second handoff, same slug, NEITHER flag passed
   r = gtg(repo, ['handoff', '--project', 'Sub Proj', '--slug', 'sub-proj', '--next', 'more work'], { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  e = active(repo).handoffs[0];
+  e = active(repo)[0];
   assert.equal(e.parent, 'atlas', 'parent must carry forward from the prior entry when --parent is omitted');
   assert.equal(e.eta, '~3h', 'eta must carry forward from the prior entry when --eta is omitted');
 
@@ -854,7 +870,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   r = gtg(repo, ['handoff', '--project', 'Sub Proj', '--slug', 'sub-proj', '--next', 'x',
     '--parent', 'other-fam', '--eta', '~10m'], { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  e = active(repo).handoffs[0];
+  e = active(repo)[0];
   assert.equal(e.parent, 'other-fam', 'an explicit --parent must still override the carried-forward value');
   assert.equal(e.eta, '~10m', 'an explicit --eta must still override the carried-forward value');
   console.log('ok 17 - Finding I1: parent and eta carry forward when the flags are omitted');
@@ -885,23 +901,20 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const repo = tempRepo();
   let r = gtg(repo, HANDOFF_ARGS('proj-mono', 'Project Mono'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(active(repo).handoffs[0].sessions, 1);
+  assert.equal(active(repo)[0].sessions, 1);
 
   // Simulate the regression: bump the stored `sessions` far ahead (as a real
   // history of handoffs would have done), then delete the handoff .md files
   // (plain docs, the README explicitly says fine to prune) so the on-disk
   // count no longer agrees with what was already recorded.
-  const ap = join(repo, 'docs/handoffs/_active.json');
-  const data = JSON.parse(readFileSync(ap, 'utf8'));
-  data.handoffs[0].sessions = 5;
-  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
-  const handoffDoc = data.handoffs[0].file;
+  patchActive(repo, (h) => { h[0].sessions = 5; });
+  const handoffDoc = active(repo)[0].file;
   execSync(`git rm -q ${handoffDoc}`, { cwd: repo });
   execSync('git commit -q -m "prune old handoff docs"', { cwd: repo });
 
   r = gtg(repo, HANDOFF_ARGS('proj-mono', 'Project Mono'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  const sessions = active(repo).handoffs[0].sessions;
+  const sessions = active(repo)[0].sessions;
   assert.equal(sessions, 6, `sessions must never go backwards from a prior high-water mark, got: ${sessions}`);
   console.log('ok 19 - Finding I3: sessions counter never regresses');
 }
@@ -931,10 +944,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const repo = tempRepo();
   gtg(repo, HANDOFF_ARGS('s-one', 'S One'), { input: BODY });
   gtg(repo, HANDOFF_ARGS('s-two', 'S Two'), { input: BODY });
-  const ap = join(repo, 'docs/handoffs/_active.json');
-  const data = JSON.parse(readFileSync(ap, 'utf8'));
-  for (const e of data.handoffs) e.updated = new Date(Date.now() - 8 * 86400000).toISOString();
-  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+  patchActive(repo, (h) => { for (const e of h) e.updated = new Date(Date.now() - 8 * 86400000).toISOString(); });
 
   const r = gtg(repo, ['list']);
   assert.equal(r.status, 0, r.stderr);
@@ -953,7 +963,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 
   const r = gtg(repo, HANDOFF_ARGS('off-proj', 'Off Proj'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  const e = active(repo).handoffs[0];
+  const e = active(repo)[0];
   const createdOffset = e.created.match(/([+-]\d{2}:\d{2})$/);
   const updatedOffset = e.updated.match(/([+-]\d{2}:\d{2})$/);
   assert.ok(createdOffset, `created must carry a local-offset suffix like nowIso(), got: ${e.created}`);
@@ -1391,6 +1401,39 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   console.log('ok 32b - effort ignores non-handoff re-adds');
 }
 
+// --- 32c. effort: the duration pathspec spans the packed-to-sharded migration ---
+// readDurations reads HISTORY, and history crosses the shard. A pathspec naming only the
+// packed file zeroes every duration recorded after the migration; one naming only the
+// directory zeroes every duration recorded before it. Neither failure raises anything - the
+// figure just reads low - so both halves are committed here in one repo and the total is the
+// assertion. The slug also has to come off the record's own PATH: a hunk that only re-times a
+// session need not carry the "slug" line, so a scan alone would bill it to the wrong project.
+{
+  const H = await import('../skills/gtg/extensions/lib/history.mjs');
+  const repo = tempRepo();
+  mkdirSync(join(repo, 'docs/handoffs'), { recursive: true });
+
+  // Pre-shard: one duration committed to the packed file.
+  writeFileSync(join(repo, ACTIVE[1]),
+    JSON.stringify({ handoffs: [{ project: 'P', slug: 'p', duration_min: 45 }] }, null, 2) + '\n');
+  execSync('git add -A && git commit -q -m "handoff: P — session 1"', { cwd: repo });
+
+  // Post-shard: P re-timed, then Q added, as per-record files.
+  writeCollection(repo, ACTIVE[0], [{ project: 'P', slug: 'p', duration_min: 90 }]);
+  execSync('git add -A && git commit -q -m "handoff: P — session 2"', { cwd: repo });
+  writeCollection(repo, ACTIVE[0], [{ project: 'P', slug: 'p', duration_min: 90 },
+    { project: 'Q', slug: 'q', duration_min: 30 }]);
+  execSync('git add -A && git commit -q -m "handoff: Q — session 1"', { cwd: repo });
+
+  const d = H.readDurations(repo);
+  assert.equal(d.total, 45 + 90 + 30,
+    `every duration on both sides of the migration must be recovered, got ${d.total}`);
+  assert.equal(d.sessionsTimed, 3);
+  assert.deepEqual(d.bySlug.p.sort((a, b) => a - b), [45, 90], 'P is timed across the migration');
+  assert.deepEqual(d.bySlug.q, [30], "Q's duration must be billed to Q, not carried over from P");
+  console.log('ok 32c - effort spans the packed-to-sharded migration');
+}
+
 // --- 33. buildReport assembler + report/stats commands ---
 {
   const repo = tempRepo();
@@ -1536,7 +1579,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   gtg(repo, HANDOFF_ARGS('fam', 'Family Parent'), { input: BODY });
   gtg(repo, [...HANDOFF_ARGS('kid-one', 'Kid One'), '--parent', 'fam'], { input: BODY });
   gtg(repo, [...HANDOFF_ARGS('kid-two', 'Kid Two'), '--parent', 'fam'], { input: BODY });
-  const before = active(repo).handoffs.find((e) => e.slug === 'fam').file;
+  const before = active(repo).find((e) => e.slug === 'fam').file;
 
   const r = gtg(repo, ['rename', 'fam', 'family']);
   assert.equal(r.status, 0, r.stderr);
@@ -1544,7 +1587,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.match(r.stdout, /re-pointed 2 sub-project/);
   assert.match(r.stdout, /projects rename fam family/, 'it points at the portfolio half');
 
-  const hs = active(repo).handoffs;
+  const hs = active(repo);
   assert.equal(hs.filter((e) => e.slug === 'family').length, 1, 'renamed, not duplicated');
   assert.equal(hs.filter((e) => e.slug === 'fam').length, 0);
   assert.deepEqual(hs.filter((e) => e.parent === 'family').map((e) => e.slug).sort(),
@@ -1579,14 +1622,14 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   assert.equal(self.status, 2);
   assert.match(self.stderr, /already its slug/);
   assert.equal(gtg(repo, ['rename', 'nope', 'whatever']).status, 2);
-  assert.deepEqual(active(repo).handoffs.map((e) => e.slug).sort(), ['proj-a', 'proj-b'],
+  assert.deepEqual(active(repo).map((e) => e.slug).sort(), ['proj-a', 'proj-b'],
     'every refusal left both slugs alone');
 
   // A shelved entry is renameable, since resolve falls through to the backlog.
   gtg(repo, ['back', 'proj-a', '--no-list']);
   const shelved = gtg(repo, ['rename', 'proj-a', 'alpha', '--no-list']);
   assert.equal(shelved.status, 0, shelved.stderr);
-  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  const bl = backlog(repo);
   assert.equal(bl.filter((e) => e.slug === 'alpha').length, 1, 'the backlog entry was renamed');
   console.log('ok 38 - rename: refusals, and a backlog entry renames too');
 }
@@ -1638,14 +1681,12 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
     { input: BODY });
   // Simulate what a PORTFOLIO rename leaves behind: entries pointing at a portfolio slug that no
   // longer exists, while no gtg entry carries that slug itself.
-  const store = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_active.json'), 'utf8'));
-  for (const e of store.handoffs) if (e.slug === 'bali-trip') e.parent = 'bali-trip-2026';
-  writeFileSync(join(repo, 'docs/handoffs/_active.json'), JSON.stringify(store, null, 2));
+  patchActive(repo, (h) => { for (const e of h) if (e.slug === 'bali-trip') e.parent = 'bali-trip-2026'; });
 
   const r = gtg(repo, ['rename', 'bali-trip-2026', 'bali-trip', '--no-list']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Re-pointed 2 entries from parent 'bali-trip-2026' to 'bali-trip'/);
-  const after = active(repo).handoffs;
+  const after = active(repo);
   assert.equal(after.filter((e) => e.parent === 'bali-trip-2026').length, 0, 'no dangle left');
   assert.equal(after.filter((e) => e.parent === 'bali-trip').length, 2);
   // The target already existing as a slug is normal here, and must NOT be refused: that is the
@@ -1673,24 +1714,24 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const crossA = gtg(repo, ['undo'], { session: 'sess-A' });
   assert.equal(crossA.status, 2, 'undo must refuse when another session committed after ours');
   assert.match(crossA.stderr, /another session changed the store after yours/);
-  assert.equal(active(repo).handoffs.length, 2, 'a refused undo must not touch the stores');
+  assert.equal(active(repo).length, 2, 'a refused undo must not touch the stores');
 
   // A session that never mutated anything has nothing of its own to revert.
   const stranger = gtg(repo, ['undo'], { session: 'sess-C' });
   assert.equal(stranger.status, 2, 'undo must refuse a session with no change of its own');
   assert.match(stranger.stderr, /no change from this session to undo/);
-  assert.equal(active(repo).handoffs.length, 2, 'a refused undo must not touch the stores');
+  assert.equal(active(repo).length, 2, 'a refused undo must not touch the stores');
 
   // No session identity at all: refuse rather than revert a stranger's commit.
   const anon = gtg(repo, ['undo'], { session: null });
   assert.equal(anon.status, 2, 'undo must refuse without a session id');
   assert.match(anon.stderr, /no session id/);
-  assert.equal(active(repo).handoffs.length, 2, 'a refused undo must not touch the stores');
+  assert.equal(active(repo).length, 2, 'a refused undo must not touch the stores');
 
   // B owns the tip, so B's undo is the one that goes through.
   const ownB = gtg(repo, ['undo'], { session: 'sess-B' });
   assert.equal(ownB.status, 0, ownB.stderr);
-  const slugs = active(repo).handoffs.map((e) => e.slug);
+  const slugs = active(repo).map((e) => e.slug);
   assert.deepEqual(slugs, ['proj-a'], 'B\'s undo must revert B\'s own handoff only');
   console.log('ok 42 - undo is scoped to the calling session');
 }
@@ -1710,7 +1751,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const r = gtg(repo, ['supersede', 'slice-1', '--into', 'parent-proj']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Superseded: Slice One -> Parent Proj/);
-  assert.deepEqual(active(repo).handoffs.map((e) => e.slug), ['parent-proj'], 'entry not removed');
+  assert.deepEqual(active(repo).map((e) => e.slug), ['parent-proj'], 'entry not removed');
 
   const subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
   assert.equal(subject, 'gtg supersede: Slice One into Parent Proj');
@@ -1801,16 +1842,13 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 {
   const repo = tempRepo();
   gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
-  const ap = join(repo, 'docs/handoffs/_active.json');
-  const data = JSON.parse(readFileSync(ap, 'utf8'));
-  data.handoffs[0].updated = new Date(Date.now() - 9 * 86400000).toISOString();
-  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+  patchActive(repo, (h) => { h[0].updated = new Date(Date.now() - 9 * 86400000).toISOString(); });
   const r = gtg(repo, ['list']);
   assert.equal(r.status, 0, r.stderr);
-  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  const bl = backlog(repo);
   assert.ok(bl.some((e) => e.slug === 'issues-p9-x'),
     'an idle extension entry was not auto-shelved, so filtering happened before autoShelf');
-  assert.equal(active(repo).handoffs.length, 0, 'the shelved entry is gone from active');
+  assert.equal(active(repo).length, 0, 'the shelved entry is gone from active');
   console.log('ok 48 - autoShelf still sees extension entries');
 }
 
@@ -1921,14 +1959,11 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
     { input: BODY });
   gtg(repo, [...HANDOFF_ARGS('real-shelved', 'Real Shelved'), '--parent', 'gtg'], { input: BODY });
   // Backdate both past the 7-day cutoff, then let `list` run the sweep (same trick as case 2b).
-  const ap = join(repo, 'docs/handoffs/_active.json');
-  const data = JSON.parse(readFileSync(ap, 'utf8'));
-  for (const e of data.handoffs) e.updated = new Date(Date.now() - 9 * 86400000).toISOString();
-  writeFileSync(ap, JSON.stringify(data, null, 2) + '\n');
+  patchActive(repo, (h) => { for (const e of h) e.updated = new Date(Date.now() - 9 * 86400000).toISOString(); });
   gtg(repo, ['list']);
-  const bl = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  const bl = backlog(repo);
   assert.equal(bl.length, 2, 'setup: both entries must be on the shelf');            // GUARD
-  assert.equal(active(repo).handoffs.length, 0, 'setup: nothing left active');       // GUARD
+  assert.equal(active(repo).length, 0, 'setup: nothing left active');       // GUARD
 
   // The "No active gtg projects matching '<filter>'" line echoes the query back, so each
   // assertion below deliberately looks for the OTHER identifier: querying by slug asserts on the
@@ -2020,17 +2055,17 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
 // which command ran. Both directions, because `backlog` writes through the same function.
 {
   const repo = tempRepo();
-  const backlogOf = (r) => JSON.parse(readFileSync(join(r, 'docs/handoffs/_backlog.json'), 'utf8')).backlog;
+  const backlogOf = (r) => backlog(r);
   const slugs = (xs) => (xs ?? []).map((e) => e.slug);
 
   gtg(repo, ['backlog', '--project', 'Thing', '--slug', 'thing', '--next', 'TBD'], { input: BODY });
   gtg(repo, HANDOFF_ARGS('thing', 'Thing'), { input: BODY });
-  assert.deepEqual(slugs(active(repo).handoffs), ['thing'], 'handoff did not unpark the shelved slug');
+  assert.deepEqual(slugs(active(repo)), ['thing'], 'handoff did not unpark the shelved slug');
   assert.deepEqual(slugs(backlogOf(repo)), [], 'the backlog copy survived a handoff for the same slug');
 
   gtg(repo, ['backlog', '--project', 'Thing', '--slug', 'thing', '--next', 'TBD'], { input: BODY });
   assert.deepEqual(slugs(backlogOf(repo)), ['thing'], 'parking did not land on the backlog');
-  assert.deepEqual(slugs(active(repo).handoffs), [], 'the active copy survived a park of the same slug');
+  assert.deepEqual(slugs(active(repo)), [], 'the active copy survived a park of the same slug');
 
   const st = execSync('git status --porcelain', { cwd: repo, encoding: 'utf8' });
   assert.equal(st.trim(), '', `the unpark left the tree dirty:\n${st}`);
@@ -2048,16 +2083,12 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   // Backdated first, the way the auto-shelf tests do it, and captured BEFORE the unparent:
   // reading `updated` afterwards can only catch a deletion, and nowIso() is second-
   // granularity, so a stamp taken "now" would compare equal to a restamp in the same second.
-  const ap = join(dir, 'docs/handoffs/_active.json');
   const before = new Date(Date.now() - 2 * 86400000).toISOString();
-  const pre = JSON.parse(readFileSync(ap, 'utf8'));
-  pre.handoffs[0].updated = before;
-  writeFileSync(ap, JSON.stringify(pre, null, 2) + '\n');
+  patchActive(dir, (h) => { h[0].updated = before; });
   const cleared = gtg(dir, ['unparent', 'alpha']);
   assert.equal(cleared.status, 0, cleared.stderr);
   assert.match(cleared.stdout, /Cleared parent 'ghost' from Alpha/);
-  const store = JSON.parse(readFileSync(ap, 'utf8'));
-  const entry = store.handoffs.find((e) => e.slug === 'alpha');
+  const entry = active(dir).find((e) => e.slug === 'alpha');
   // Deleted, not nulled: absent has ONE representation, which is what every reader
   // already branches on.
   assert.equal('parent' in entry, false);
@@ -2093,8 +2124,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
     '--parent', 'ghost'], { input: 'body\n' });
   const out = gtg(dir, ['unparent', 'shelved']);
   assert.equal(out.status, 0, out.stderr);
-  const bl = JSON.parse(readFileSync(join(dir, 'docs/handoffs/_backlog.json'), 'utf8'));
-  assert.equal('parent' in bl.backlog.find((e) => e.slug === 'shelved'), false);
+  assert.equal('parent' in backlog(dir).find((e) => e.slug === 'shelved'), false);
   console.log('ok 57 - unparent reaches a backlog entry too');
 }
 
@@ -2106,7 +2136,7 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const r = gtg(dir, HANDOFF_ARGS('alpha', 'Alpha'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /slug: reusing alpha-project/);
-  const hs = active(dir).handoffs;
+  const hs = active(dir);
   assert.equal(hs.length, 1, 'must update the existing entry, not mint a second');
   assert.equal(hs[0].slug, 'alpha-project');
   assert.equal(hs[0].sessions, 2);
@@ -2120,11 +2150,11 @@ const active = (root) => JSON.parse(readFileSync(join(root, 'docs/handoffs/_acti
   const exact = gtg(dir, [...HANDOFF_ARGS('alpha', 'Alpha'), '--exact'], { input: BODY });
   assert.equal(exact.status, 0, exact.stderr);
   assert.doesNotMatch(exact.stdout, /slug: reusing/);
-  assert.equal(active(dir).handoffs.length, 2);
+  assert.equal(active(dir).length, 2);
   gtg(dir, HANDOFF_ARGS('alpha-two', 'Alpha Two'), { input: BODY });
   const amb = gtg(dir, HANDOFF_ARGS('alpha-x', 'Alpha'), { input: BODY });
   assert.doesNotMatch(amb.stdout, /slug: reusing/);
-  assert.equal(active(dir).handoffs.length, 4, 'two name matches must not pick one');
+  assert.equal(active(dir).length, 4, 'two name matches must not pick one');
   console.log('ok 59 - --exact and ambiguous matches keep the given slug');
 }
 
@@ -2181,7 +2211,7 @@ export default async (ctx) => {
   r = gtg(dir, HANDOFF_ARGS('hk2', 'Hooked Two'), { input: BODY });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /after-handoff hook failed - boom/);
-  assert.ok(active(dir).handoffs.some((e) => e.slug === 'hk2'), 'handoff survives a failing hook');
+  assert.ok(active(dir).some((e) => e.slug === 'hk2'), 'handoff survives a failing hook');
   assert.match(execSync('git log -1 --format=%s', { cwd: dir }).toString(), /^handoff: Hooked Two/);
   console.log('ok 61 - after-handoff hook: ctx, handoff-only, failure reported not hidden');
 }
@@ -2190,18 +2220,18 @@ export default async (ctx) => {
   // Which harness wrote it: detected from the env, --harness overrides, shown on the list row.
   const dir = tempRepo();
   let r = gtg(dir, HANDOFF_ARGS('c', 'Claude Side'), { input: BODY, env: { CLAUDECODE: '1' } });
-  assert.equal(active(dir).handoffs[0].harness, 'claude');
+  assert.equal(active(dir)[0].harness, 'claude');
   r = gtg(dir, HANDOFF_ARGS('x', 'Codex Side'), { input: BODY, env: { CLAUDECODE: '', CODEX_HOME: 'C:/x' } });
-  assert.equal(active(dir).handoffs.find((e) => e.slug === 'x').harness, 'codex');
+  assert.equal(active(dir).find((e) => e.slug === 'x').harness, 'codex');
   r = gtg(dir, [...HANDOFF_ARGS('o', 'Other'), '--harness', 'hermes'], { input: BODY, env: { CLAUDECODE: '1' } });
-  assert.equal(active(dir).handoffs.find((e) => e.slug === 'o').harness, 'hermes');
+  assert.equal(active(dir).find((e) => e.slug === 'o').harness, 'hermes');
   const list = gtg(dir, ['list']).stdout;
   assert.match(list, /Claude Side s1 \[~2h\] \([^)]*\) ·claude/);
   assert.match(list, /Codex Side s1 \[~2h\] \([^)]*\) ·codex/);
   assert.match(list, /Other s1 \[~2h\] \([^)]*\) ·hermes/);
   // An unidentified caller leaves the field off rather than guessing.
   r = gtg(dir, HANDOFF_ARGS('u', 'Unknown'), { input: BODY, env: { CLAUDECODE: '' } });
-  const u = active(dir).handoffs.find((e) => e.slug === 'u');
+  const u = active(dir).find((e) => e.slug === 'u');
   assert.equal('harness' in u && u.harness !== undefined, false);
   assert.doesNotMatch(gtg(dir, ['list']).stdout, /Unknown s1 \[~2h\] \([^)]*\) ·/);
   console.log('ok 62 - harness recorded from env or --harness and shown on the row');
@@ -2213,7 +2243,7 @@ export default async (ctx) => {
   const body = '## Where We Stopped\npara\n\n## Next Action\nShip the thing.\nsecond line ignored\n';
   let r = gtg(dir, ['handoff', '--project', 'Derived', '--slug', 'derived'], { input: body });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(active(dir).handoffs[0].next, 'Ship the thing.');
+  assert.equal(active(dir)[0].next, 'Ship the thing.');
   r = gtg(dir, ['handoff', '--project', 'NoNext', '--slug', 'nonext'], { input: '## Where We Stopped\nx\n' });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /missing --next \(or a ## Next Action section in the body\)/);
@@ -2230,7 +2260,7 @@ export default async (ctx) => {
   writeFileSync(join(wt, 'b.txt'), 'b\n');
   let r = gtg(wt, [...HANDOFF_ARGS('inf', 'Inferred'), '--wip'], { input: BODY, hub });
   assert.equal(r.status, 0, r.stderr);
-  const e = active(hub).handoffs[0];
+  const e = active(hub)[0];
   const norm = (s) => s.toLowerCase().split(String.fromCharCode(92)).join("/");
   assert.equal(norm(e.worktree), norm(wt));
   assert.equal(e.branch, 'main');
@@ -2238,7 +2268,7 @@ export default async (ctx) => {
   assert.match(doc, /## Commits this session\n- [0-9a-f]+ wip: gtg checkpoint - Inferred\n- [0-9a-f]+ feat: first/);
   assert.match(doc, /## Files touched\n- a\.txt\n- b\.txt/);
   r = gtg(hub, HANDOFF_ARGS('root', 'Root Project'), { input: BODY, hub });
-  const e2 = active(hub).handoffs.find((x) => x.slug === 'root');
+  const e2 = active(hub).find((x) => x.slug === 'root');
   assert.equal(e2.worktree, 'repo root');
   assert.doesNotMatch(readFileSync(join(hub, e2.file), 'utf8'), /## Commits this session/);
   console.log('ok 64 - worktree inferred from cwd; commits + files appended for a worktree only');
@@ -2255,14 +2285,14 @@ export default async (ctx) => {
   const env = { CLAUDE_CONFIG_DIR: cfg, CLAUDE_CODE_SESSION_ID: 'sess-1' };
   let r = gtg(dir, HANDOFF_ARGS('t', 'Tasked'), { input: BODY, env });
   assert.equal(r.status, 0, r.stderr);
-  let doc = readFileSync(join(dir, active(dir).handoffs[0].file), 'utf8');
+  let doc = readFileSync(join(dir, active(dir)[0].file), 'utf8');
   assert.match(doc, /## Task list\n- \[completed\] First\n- \[in_progress\] Second\n/);
   r = gtg(dir, HANDOFF_ARGS('t2', 'Own List'), { input: BODY + '\n## Task list\n- [pending] mine\n', env });
-  doc = readFileSync(join(dir, active(dir).handoffs.find((x) => x.slug === 't2').file), 'utf8');
+  doc = readFileSync(join(dir, active(dir).find((x) => x.slug === 't2').file), 'utf8');
   assert.equal((doc.match(/## Task list/g) || []).length, 1);
   assert.match(doc, /- \[pending\] mine/);
   r = gtg(dir, HANDOFF_ARGS('t3', 'No Session'), { input: BODY, env: { CLAUDE_CONFIG_DIR: cfg, CLAUDE_CODE_SESSION_ID: 'nope' } });
-  assert.doesNotMatch(readFileSync(join(dir, active(dir).handoffs.find((x) => x.slug === 't3').file), 'utf8'), /## Task list/);
+  assert.doesNotMatch(readFileSync(join(dir, active(dir).find((x) => x.slug === 't3').file), 'utf8'), /## Task list/);
   console.log('ok 65 - task list appended from the harness store, never duplicated, absent when unknown');
 }
 
@@ -2276,13 +2306,13 @@ export default async (ctx) => {
   assert.match(r.stdout, /^RESUME: "Only One" - handoff of \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(docs\/handoffs\/.*-one\.md\)\n# Handoff: Only One\n/);
   assert.match(r.stdout, /## Next Action\ndo the next thing/);
   assert.match(r.stdout, /Kept: Only One \(not consumed\)/);
-  assert.equal(active(dir).handoffs.length, 1, '--keep must not consume');
+  assert.equal(active(dir).length, 1, '--keep must not consume');
   // Bare resume with exactly one active project picks it without a name.
   r = gtg(dir, ['resume']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /RESUME: "Only One"/);
   assert.match(r.stdout, /Consumed: Only One$/m);
-  assert.equal(active(dir).handoffs.length, 0);
+  assert.equal(active(dir).length, 0);
   assert.match(execSync('git log -1 --format=%s', { cwd: dir }).toString(), /^gtg resume: Only One - handoff consumed/);
   r = gtg(dir, ['resume']);
   assert.equal(r.status, 2, 'nothing to resume exits 2');
@@ -2302,7 +2332,7 @@ export default async (ctx) => {
   r = gtg(dir, ['resume', 'alpha']);
   assert.equal(r.status, 1);
   assert.match(r.stdout, /'alpha' matches 2 active projects:\n  1\. Alpha One \(alpha-one\)/);
-  assert.equal(active(dir).handoffs.length, 2, 'ambiguity must not consume');
+  assert.equal(active(dir).length, 2, 'ambiguity must not consume');
   r = gtg(dir, ['resume', 'alpha-two']);
   assert.equal(r.status, 0, 'an exact slug is never ambiguous');
   gtg(dir, HANDOFF_ARGS('issues', 'Issues Triage'), { input: BODY });
@@ -2335,8 +2365,97 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   r = gtg(dir, ['resume', 'hk2']);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /after-resume hook failed - kaboom/);
-  assert.equal(active(dir).handoffs.length, 0, 'consume survives a failing hook');
+  assert.equal(active(dir).length, 0, 'consume survives a failing hook');
   console.log('ok 68 - after-resume hook: ctx, runs after consume, failure reported not hidden');
+}
+
+// --- 69. unrelated project edits on two machines produce disjoint file sets ---
+// The whole reason the store was sharded. store.test.mjs already pins this at the
+// writeCollection level; what it cannot see is whether a real handoff through the CLI still
+// rewrites only its own record. If it names a second project's file, two machines editing
+// unrelated projects still collide on bytes neither of them meant to touch, and a JSON array
+// conflict has no semantic merge.
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('alpha', 'Alpha'), { input: BODY });
+  gtg(repo, HANDOFF_ARGS('beta', 'Beta'), { input: BODY });
+
+  const obelisk = gtg(repo, [...HANDOFF_ARGS('alpha', 'Alpha'), '--next', 'from obelisk'], { input: BODY });
+  assert.equal(obelisk.status, 0, obelisk.stderr);
+  const aFiles = nameStatus(repo, 'HEAD');
+  const reborn = gtg(repo, [...HANDOFF_ARGS('beta', 'Beta'), '--next', 'from reborn'], { input: BODY });
+  assert.equal(reborn.status, 0, reborn.stderr);
+  const bFiles = nameStatus(repo, 'HEAD');
+
+  const records = (lines) => lines.map((l) => l.split('\t')[1])
+    .filter((f) => f.startsWith(`${ACTIVE[0]}/`)).sort();
+  assert.deepEqual(records(aFiles), [`${ACTIVE[0]}/alpha.json`],
+    `Alpha's handoff must rewrite Alpha's record and no other, got: ${aFiles.join(' | ')}`);
+  assert.deepEqual(records(bFiles), [`${ACTIVE[0]}/beta.json`],
+    `Beta's handoff must rewrite Beta's record and no other, got: ${bFiles.join(' | ')}`);
+  assert.equal(records(aFiles).some((f) => records(bFiles).includes(f)), false,
+    'the two projects still share a record file, so the two machines still conflict');
+  console.log('ok 69 - unrelated project edits touch disjoint record files');
+}
+
+// --- 70. a park commits both the created and the deleted record file by name ---
+// commit() names its paths on `git add` AND `git commit`. A move between the two stores is
+// now a delete plus a create in different directories, and the delete is the half that goes
+// missing: unnamed, it stays in the working tree for whichever session commits next, which is
+// exactly the ownerless-staged-file class the pathspec rule exists to stop.
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('alpha', 'Alpha'), { input: BODY });
+  const r = gtg(repo, ['back', 'alpha', '--no-list']);
+  assert.equal(r.status, 0, r.stderr);
+
+  const files = nameStatus(repo, 'HEAD');
+  assert.ok(files.includes(`D\t${ACTIVE[0]}/alpha.json`),
+    `the deletion must be in the commit, got: ${files.join(' | ')}`);
+  assert.ok(files.includes(`A\t${BACKLOG[0]}/alpha.json`),
+    `the creation must be in the commit, got: ${files.join(' | ')}`);
+  const st = execSync('git status --porcelain', { cwd: repo, encoding: 'utf8' });
+  assert.equal(st.trim(), '',
+    `nothing may be left staged or dirty for another session to commit:\n${st}`);
+  console.log('ok 70 - a park commits both the created and the deleted record file');
+}
+
+// --- 71. report and stats read the SHARDED store ---
+// The silent one. history.mjs used to read records through ctx.readStore, a whole-file JSON
+// reader, and `readStore('docs/handoffs/_active.json')?.handoffs ?? []` degrades to [] with no
+// error whatsoever once the records live one per file - so `report` and `stats` printed a
+// clean, plausible, empty answer. This fixture has NO packed file at all, which is the state
+// every hub created after the migration is in, and both expected counts are derived from the
+// store rather than written down, so a reader that goes back through readStore reports zero
+// against a non-zero store and fails here instead of lying.
+{
+  const repo = tempRepo();
+  for (const [slug, project] of [['ra', 'R A'], ['rb', 'R B'], ['rc', 'R C']]) {
+    const r = gtg(repo, HANDOFF_ARGS(slug, project), { input: BODY });
+    assert.equal(r.status, 0, r.stderr);
+  }
+  gtg(repo, ['back', 'rc', '--no-list']);
+
+  assert.ok(!existsSync(join(repo, ACTIVE[1])), 'setup: no packed active file may exist here');
+  assert.ok(!existsSync(join(repo, BACKLOG[1])), 'setup: no packed backlog file may exist here');
+  const nActive = active(repo).length;
+  const nBacklog = backlog(repo).length;
+  assert.equal(nActive, 2, 'setup: two records left active');   // GUARD
+  assert.equal(nBacklog, 1, 'setup: one record parked');        // GUARD
+
+  const rs = gtg(repo, ['stats']);
+  assert.equal(rs.status, 0, rs.stderr);
+  assert.match(rs.stdout, new RegExp(`^${nActive} active, ${nBacklog} backlog$`, 'm'),
+    `stats must count the sharded store, got:\n${rs.stdout}`);
+
+  const rr = gtg(repo, ['report']);
+  assert.equal(rr.status, 0, rr.stderr);
+  const doc = JSON.parse(readFileSync(join(repo, 'docs/handoffs/_report.json'), 'utf8'));
+  assert.equal(doc.counts.active, nActive, 'report must count the sharded active store');
+  assert.equal(doc.counts.backlog, nBacklog, 'report must count the sharded backlog store');
+  assert.deepEqual(doc.perProject.map((pp) => pp.project).sort(), ['R A', 'R B', 'R C'],
+    'every project must reach the report through the sharded store');
+  console.log('ok 71 - report and stats read the sharded store with no packed file present');
 }
 
 console.log('ALL PASS');
