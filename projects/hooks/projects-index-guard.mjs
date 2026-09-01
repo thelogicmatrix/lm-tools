@@ -1,18 +1,25 @@
 #!/usr/bin/env node
 import { posix } from 'node:path';
 
-// PreToolUse guard: docs/projects/INDEX.md is rendered from docs/projects/_projects.json, so a
-// hand-edit to the index is lost the next time any verb runs. The store is hand-editable by
-// design (see the note above `rank` in projects.mjs), so it is guarded for a different
-// reason: editing it directly skips validateSlug, validateStatus and assertRenderable, and
-// leaves the rendered index disagreeing with the store until someone renders again.
+// PreToolUse guard: docs/projects/INDEX.md is rendered from the store, so a hand-edit to the
+// index is lost the next time any verb runs. The store is hand-editable by design (see the note
+// above `rank` in projects.mjs), so it is guarded for a different reason: editing it directly
+// skips validateSlug, validateStatus and assertRenderable, and leaves the rendered index
+// disagreeing with the store until someone renders again.
+//
+// The store is docs/projects/entries/<slug>.json, one file per project. docs/projects/_projects.json
+// is the packed array it replaced: still read as a fallback, and still guarded, because a hand-edit
+// there is silently IGNORED on any tree that has the directory, which is worse than being refused.
+// A slug is a filename now, so a hand-edit can also file a record where no verb will look for it.
 //
 // The segment is matched wherever it sits in the path rather than under one absolute root. The
 // spec includes /c/Users/you/docs/projects/_projects.json, which no absolute-root anchor
 // matches, so a root anchor cannot satisfy the tests. The cost is that another repo's own
 // docs/projects/INDEX.md is denied too. That trade is deliberate: a false deny costs one retry,
 // a false allow costs hand-written prose.
-const GUARDED = [/(^|\/)docs\/projects\/INDEX\.md$/i, /(^|\/)docs\/projects\/_projects\.json$/i];
+const GUARDED = [/(^|\/)docs\/projects\/INDEX\.md$/i,
+  /(^|\/)docs\/projects\/_projects\.json$/i,
+  /(^|\/)docs\/projects\/entries\/[^/]+\.json$/i];
 
 // NotebookEdit passes a notebook_path rather than a file_path, so it can never reach the regexes.
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
@@ -30,8 +37,8 @@ export function decide(input) {
   return {
     permissionDecision: 'deny',
     permissionDecisionReason:
-      'docs/projects/INDEX.md is rendered from docs/projects/_projects.json, so a hand-edit to '
-      + 'the index is lost the next time any verb runs, and a hand-edit to the store skips the '
+      'docs/projects/INDEX.md is rendered from docs/projects/entries/<slug>.json, so a hand-edit '
+      + 'to the index is lost the next time any verb runs, and a hand-edit to a record skips the '
       + "CLI's validation and leaves the index out of sync. Use `projects register <slug>` to add "
       + 'a project, `projects status <slug> <status>` to set its status, `projects current <slug>` '
       + "to replace a page's Current state from stdin, `projects archive <slug>` to retire one, "

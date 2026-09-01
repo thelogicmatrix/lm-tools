@@ -14,6 +14,29 @@ test('denies the generated index and the store, on either slash style', () => {
   }
 });
 
+// The store is one file per project now, so the guarded shape is a directory of records rather
+// than one array file. The reason is the same as it always was: a hand-edit skips validateSlug,
+// validateStatus and assertRenderable, and leaves the rendered index disagreeing with the store.
+// A slug is also a FILENAME now, so a hand-edit can put a record somewhere no verb will find it.
+test('denies a per-project record file under entries/', () => {
+  for (const p of ['docs/projects/entries/alpha.json',
+                   'C:/Users/you/docs/projects/entries/alpha.json',
+                   'C:\\Users\\you\\docs\\projects\\entries\\alpha.json',
+                   'docs/projects/entries/./alpha.json',
+                   'docs//projects/entries/alpha.json']) {
+    assert.equal(decide(w(p)).permissionDecision, 'deny', p);
+  }
+});
+
+test('does not deny things that only look like a record file', () => {
+  for (const p of ['docs/projects/entries.md',
+                   'docs/projects/entries/alpha.md',
+                   'docs/projects/archive/entries/alpha.json',
+                   'C:/dev/other/mydocs/projects/entries/alpha.json']) {
+    assert.equal(decide(w(p)), null, p);
+  }
+});
+
 test('allows narrative pages, which are hand-written by design', () => {
   for (const p of ['C:/Users/you/docs/projects/price-alerts.md',
                    'C:/Users/you/docs/projects/CRITIQUES.md',

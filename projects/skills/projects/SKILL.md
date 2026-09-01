@@ -11,9 +11,9 @@ what-should-I-do-today dashboard.
 
 `projects` below is `node "${CLAUDE_PLUGIN_ROOT}/skills/projects/projects.mjs"`. Store:
 `docs/projects/` in the current git repo, or `$PROJECTS_ROOT` when set. The CLI owns every
-mechanic: it renders `INDEX.md` from `_projects.json` on every mutating verb (a hand-edit is
-overwritten), a write-guard hook denies `Write` and `Edit` on both, and each mutating verb
-commits its own files.
+mechanic: it renders `INDEX.md` from `docs/projects/entries/<slug>.json`, one file per project,
+on every mutating verb (a hand-edit is overwritten), a write-guard hook denies `Write` and `Edit`
+on both, and each mutating verb commits only the files it touched.
 
 | Trigger | Do this |
 |---|---|
@@ -31,7 +31,7 @@ commits its own files.
 
 **Zero-model rule:** shell out, relay the output, never re-derive a number the CLI printed.
 Every mutation takes the **slug**, never a list number, because list numbers re-sort. The
-slug is the bracketed token on the list row. Never read `_projects.json` for it, and never
+slug is the bracketed token on the list row. Never read the store files for it, and never
 take it from a page filename, which diverges the moment either is renamed:
 
 ```
@@ -39,9 +39,12 @@ Tooling:
   1. Demo Project [demo] (active): Registered 2026-08-04. No status written yet.
 ```
 
-`Migrate it first` means `INDEX.md` still holds a hand-typed table never migrated into
-`_projects.json`. Every verb refuses on purpose. Stop and tell the user; do not hand-write
-the store and do not touch the table.
+`Migrate it first` means `INDEX.md` still holds a hand-typed table never migrated into the
+store. Every verb refuses on purpose. Stop and tell the user; do not hand-write the store and
+do not touch the table.
+
+A merge conflict in `INDEX.md` is noise: it is a rendered file with no meaningful merge. Take
+either side and run any `projects` command, which regenerates it from the store.
 
 **You own** the narrative, Future Directions, and the body text passed to `current`.
 Everything else is the CLI's.

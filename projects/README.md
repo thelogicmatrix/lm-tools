@@ -65,9 +65,39 @@ noise wearing the costume of a signal.
 
 ## The write-guard
 
-The bundled `PreToolUse` hook denies `Write`/`Edit` on `INDEX.md` and `_projects.json` and
-names the verb to use instead. It is not paranoia: the index is regenerated on every
-mutating verb, so a hand-edit is not merely discouraged, it is *lost* at the next write.
+The bundled `PreToolUse` hook denies `Write`/`Edit` on `INDEX.md`, on the per-project record
+files under `docs/projects/entries/`, and on the packed `docs/projects/_projects.json` they
+replaced, and names the verb to use instead. It is not paranoia: the index is regenerated on
+every mutating verb, so a hand-edit is not merely discouraged, it is *lost* at the next write.
+
+## The store is one file per project
+
+`docs/projects/entries/<slug>.json` holds one project each. A packed array made every write
+rewrite the whole file, so two machines editing unrelated projects still collided on the same
+bytes, and a JSON array conflict has no semantic merge. One file per project makes unrelated
+edits disjoint, and a same-project fork conflicts on one small file, which is correct.
+
+`docs/projects/_projects.json` is the packed array it replaced. It is still READ when the
+directory is absent, so the first run on an unsharded tree migrates itself (backing the packed
+file up to `_projects.json.pre-shard` first) and a rollback to an older plugin still finds its
+data. Deleting it is a later, separate step.
+
+`INDEX.md` is still rendered and committed, because it is what makes the list readable on
+Forgejo and what `gtg`'s `inferParent` reads to resolve project families. It rewrites wholesale
+on every operation, so it stays a conflict point: **on a conflict take either side and run any
+`projects` command**, which regenerates it from the store. A rendered file has no meaningful
+merge, so the conflict is noise and regeneration is the fix.
+
+Pin the record files as-is in `.gitattributes` alongside the index:
+
+```
+docs/projects/INDEX.md -merge
+docs/projects/entries/*.json -text
+```
+
+The `-text` line is correctness, not tidiness. A write is skipped when the file's bytes
+already equal the record's serialisation, so under a `text=auto` rule every record reads as
+changed after a fresh clone on Windows and every command rewrites the whole store.
 
 ## Pairs with
 
