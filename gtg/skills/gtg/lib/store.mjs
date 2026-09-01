@@ -16,7 +16,7 @@
 //   - extensions/commands/issues.mjs and learn.mjs read through `ctx.ownEntries()` (the
 //     closure at gtg.mjs:1130), never the store directly, so they follow whatever
 //     ownEntries returns.
-import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 
 const SLUG_OK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -84,33 +84,44 @@ export function writeCollection(root, dir, items) {
   for (const it of items) slugFile(it?.slug); // validate all before touching disk
 
   const abs = join(root, dir);
-  const before = existsSync(abs)
-    ? new Set(readdirSync(abs).filter((f) => f.endsWith('.json')))
-    : new Set();
+  const before = existsSync(abs) ? readdirSync(abs).filter((f) => f.endsWith('.json')) : [];
+  const keep = new Set(items.map((it) => slugFile(it.slug)));
+  const stale = before.filter((f) => !keep.has(f));
 
   mkdirSync(abs, { recursive: true });
+
+  const written = new Set();
+  const deleted = new Set();
+
+  // A slug whose case changed (Alpha -> alpha) is TWO files on Obelisk and ONE on reborn.
+  // Rename the old casing onto the new one BEFORE writing: on reborn the write would
+  // otherwise land in the old file and the delete pass below would then remove the record
+  // we just wrote. rename never leaves a hole, so a crash here cannot lose the record.
+  for (const f of stale) {
+    const target = [...keep].find((k) => k.toLowerCase() === f.toLowerCase());
+    if (!target) continue;
+    renameSync(join(abs, f), join(abs, target));
+    deleted.add(`${dir}/${f}`);
+    written.add(`${dir}/${target}`); // git must be told the new path even if the body matches
+  }
 
   // Write everything first, delete last. A failure partway then leaves a SUPERSET of the
   // intended state (a stale extra record), which a re-run converges. Deleting first would
   // leave a hole, which nothing converges.
-  const written = [];
-  const keep = new Set();
   for (const it of items) {
     const f = slugFile(it.slug);
-    keep.add(f);
     const body = JSON.stringify(it, null, 2) + '\n';
     const p = join(abs, f);
     if (existsSync(p) && readFileSync(p, 'utf8') === body) continue; // unchanged: leave it alone
     writeFileSync(p, body);
-    written.push(`${dir}/${f}`);
+    written.add(`${dir}/${f}`);
   }
 
-  const deleted = [];
-  for (const f of before) {
-    if (keep.has(f)) continue;
+  for (const f of stale) {
+    if (deleted.has(`${dir}/${f}`)) continue; // renamed onto a kept name above
     rmSync(join(abs, f));
-    deleted.push(`${dir}/${f}`);
+    deleted.add(`${dir}/${f}`);
   }
 
-  return { written, deleted };
+  return { written: [...written], deleted: [...deleted] };
 }

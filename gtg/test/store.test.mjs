@@ -98,6 +98,19 @@ test('a case-colliding write is refused before any file is touched', () => {
   assert.equal(existsSync(join(root, 'd')), false);
 });
 
+// Alpha.json and alpha.json are two files on Obelisk and one file on reborn. Writing the
+// new casing on reborn lands in the old file, so a naive delete-what-is-not-kept pass
+// removes the record it just wrote.
+test('a slug whose case changed keeps the record and reports both paths', () => {
+  const root = tmp();
+  writeCollection(root, 'd', [{ slug: 'Alpha', n: 1 }]);
+  const res = writeCollection(root, 'd', [{ slug: 'alpha', n: 2 }]);
+  assert.deepEqual(readCollection(root, 'd', 'legacy.json', 'items'), [{ slug: 'alpha', n: 2 }]);
+  assert.deepEqual(readdirSync(join(root, 'd')), ['alpha.json']);
+  assert.deepEqual(res.deleted, ['d/Alpha.json']);
+  assert.deepEqual(res.written, ['d/alpha.json']);
+});
+
 test('a path-traversing slug is refused', () => {
   assert.throws(() => writeCollection(tmp(), 'd', [{ slug: '../escape' }]), /slug/);
 });
