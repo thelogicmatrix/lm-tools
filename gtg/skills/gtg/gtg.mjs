@@ -751,7 +751,7 @@ function help() {
   gtg active <n|slug>          reactivate a backlog entry
   gtg remove <n|slug>          drop an entry (active first, then backlog)
   gtg resume [n|slug|name] [--keep]
-                               the whole pick-up: fast-forwards the hub from obelisk-backup
+                               the whole pick-up: fast-forwards the hub from its upstream
                                (silent when offline or already current), prints the handoff,
                                consumes the entry (NOT a ship), runs
                                <root>/.gtg/after-resume.mjs if present. Bare = the
@@ -1010,7 +1010,7 @@ function commandFileFor(t) {
     || existsSync(join(CLI_DIR, 'extensions', 'commands', `${t}.mjs`));
 }
 
-// Fast-forward the hub from its mirror before anything reads the store. POSITION IS THE WHOLE
+// Fast-forward the hub from whatever it tracks before anything reads the store. POSITION IS THE WHOLE
 // POINT (2026-09-01): this shipped first inside .gtg/after-resume.mjs, which runs AFTER
 // entries() has read, the handoff has printed and the consume has committed - so home was
 // always one commit ahead and --ff-only aborted in exactly the case the sync exists for, a
@@ -1022,40 +1022,66 @@ function commandFileFor(t) {
 // a resume offline, off Tailscale, in a repo with no such remote, or mid-rebase behaves
 // exactly as it did before this existed. And stdout speaks only on a real fast-forward: a
 // line on every resume is noise, and noise on the hot path is how a real one goes unread.
-const SYNC_REMOTE = 'obelisk-backup'; // the hub's Forgejo mirror on Obelisk
-const SYNC_BRANCH = 'master';         // home's one branch - every worktree is branched off it
+// WHERE to sync from is resolved per branch, not named (2026-09-01 fix round). The first cut
+// hardcoded obelisk-backup/master, which made the feature one-directional: Obelisk's clone calls
+// the same repo `origin` and may sit on `main`, so its every resume fetched nothing and said
+// nothing - half of the two-machine handoff this plan exists for was simply not implemented.
+//
+// branch.<b>.remote + branch.<b>.merge rather than `rev-parse @{u}`: @{u} answers with
+// "<remote>/<branch>" as ONE string, and either half may itself contain a slash, so splitting it
+// guesses. The config keys hold the two halves already separated.
+//
+// No upstream falls back to the named pair, which is home's own situation today (nothing there
+// sets branch.*.remote) - and only on the branch that mirror carries. A feature branch with no
+// upstream must never be moved, gtg runs from feature worktrees, and a detached HEAD (mid-rebase,
+// mid-bisect) reports 'HEAD' and skips. Where an upstream DOES exist it is always the right
+// target, so the lookup carries the guard the branch comparison used to.
+const SYNC_REMOTE = 'obelisk-backup'; // fallback only: home's Forgejo mirror on Obelisk
+const SYNC_BRANCH = 'master';         // fallback only: the branch that mirror carries
+function syncTarget(git) {
+  let branch;
+  try { branch = git('rev-parse', '--abbrev-ref', 'HEAD'); } catch { return null; }
+  if (!branch || branch === 'HEAD') return null;
+  try {
+    const remote = git('config', '--get', `branch.${branch}.remote`);
+    const merge = git('config', '--get', `branch.${branch}.merge`);
+    if (remote && merge) return { remote, branch: merge.replace('refs/heads/', '') };
+  } catch { /* --get exits 1 when unset: no upstream, try the fallback below */ }
+  return branch === SYNC_BRANCH ? { remote: SYNC_REMOTE, branch: SYNC_BRANCH } : null;
+}
 function syncHub() {
   // stderr piped, not inherited: execFileSync forwards a child's stderr to ours otherwise,
   // and git narrates a refused fast-forward in nine hint: lines - five of git's own above every
   // line of ours. The after-resume hook piped it for the same reason before this moved here.
   const git = (...args) => execFileSync('git', args,
     { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 }).toString().trim();
+  const target = syncTarget(git);
+  if (!target) return; // detached, or a branch with neither an upstream nor the fallback's name
+  const name = `${target.remote}/${target.branch}`;
   let before;
   try {
-    // Branch-gated. gtg runs from feature worktrees too (GTG_HUB usually points them back at
-    // home, but not always), and fast-forwarding a feature branch onto master's tip merely
-    // because it happens to be an ancestor would rewrite what the caller is standing on.
-    // A detached HEAD reports as 'HEAD' and skips, which is the right answer there too.
-    if (git('rev-parse', '--abbrev-ref', 'HEAD') !== SYNC_BRANCH) return;
     before = git('rev-parse', 'HEAD');
-    git('fetch', '--quiet', SYNC_REMOTE, SYNC_BRANCH);
+    git('fetch', '--quiet', target.remote, target.branch);
   } catch { return; } // no remote, host down, offline, not a repo: local state stands, silently
   try {
-    git('merge', '--ff-only', '--quiet', `${SYNC_REMOTE}/${SYNC_BRANCH}`);
+    // FETCH_HEAD, not <remote>/<branch>: the fetch above just set it to exactly what came down,
+    // so nothing here rests on the remote's refspec having updated a tracking ref - and a
+    // branch.<b>.remote holding a URL rather than a name has no tracking ref at all.
+    git('merge', '--ff-only', '--quiet', 'FETCH_HEAD');
   } catch {
     // The fetch landed and the fast-forward was refused. Home being AHEAD of the mirror is the
     // normal state and says nothing. The mirror holding commits home does not have means a
     // genuine fork or a dirty tree in the way, and resolving either is Nathan's call, not a
     // resume's - auto-merging a divergence is what caused the 2026-08-02 fork. On stderr, so
     // "stdout speaks only on a real fast-forward" still holds.
-    try { git('merge-base', '--is-ancestor', `${SYNC_REMOTE}/${SYNC_BRANCH}`, 'HEAD'); } catch {
-      console.error(`gtg: ${SYNC_REMOTE}/${SYNC_BRANCH} will not fast-forward (diverged, or local changes in the way) - resuming from local state`);
+    try { git('merge-base', '--is-ancestor', 'FETCH_HEAD', 'HEAD'); } catch {
+      console.error(`gtg: ${name} will not fast-forward (diverged, or local changes in the way) - resuming from local state`);
     }
     return;
   }
   try {
     const after = git('rev-parse', 'HEAD');
-    if (after !== before) console.log(`Synced ${SYNC_REMOTE}/${SYNC_BRANCH}: fast-forwarded to ${after.slice(0, 7)}`);
+    if (after !== before) console.log(`Synced ${name}: fast-forwarded to ${after.slice(0, 7)}`);
   } catch { /* the merge already succeeded; failing to name it is not worth a word */ }
 }
 

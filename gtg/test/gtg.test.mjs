@@ -2525,6 +2525,12 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   assert.equal(gtg(repo, HANDOFF_ARGS('local-c', 'Local C'), { input: BODY }).status, 0);
   execSync(`git remote add obelisk-backup "${url}"`, { cwd: repo });
   execSync('git push -q obelisk-backup master', { cwd: repo });
+  // No -u, deliberately: this fixture is HOME's shape, where nothing sets branch.*.remote, so
+  // the whole case runs down the fallback to the obelisk-backup/master pair. Case 74 covers the
+  // upstream lookup that comes first. Asserted, not assumed - a push that quietly set an
+  // upstream would move this case onto the other path and neither would be tested twice over.
+  assert.throws(() => execSync('git config --get branch.master.remote', { cwd: repo, stdio: 'ignore' }),
+    'fixture: master must have NO upstream here, or this stops testing the fallback');
 
   // The other machine: clone the mirror, wrap a project there, push. The hub has never seen it.
   const other = mkdtempSync(join(tmpdir(), 'gtg-other-'));
@@ -2566,6 +2572,65 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   assert.equal(fromMirror(repo, 'git rev-parse --abbrev-ref HEAD'), 'master',
     'no rebase, no detach: the branch is where it was');
   console.log('ok 73 - resume fast-forwards from the mirror before reading the store');
+}
+
+// --- 74. the sync target is the branch's own upstream, not a hardcoded pair ---
+// Obelisk's shape is a CLONE: its remote is `origin`, its branch can be `main`, and neither
+// half matches the obelisk-backup/master pair the first cut named. That made the sync
+// one-directional - home pulled Obelisk's work, Obelisk's every resume fetched nothing and said
+// nothing - and handing entries BOTH ways is the whole reason the store is git. So the target
+// comes from branch.<b>.remote + branch.<b>.merge, and this case stands on the far side of the
+// exchange: nothing named obelisk-backup exists anywhere in it.
+{
+  const mirror = mkdtempSync(join(tmpdir(), 'gtg-mirror2-'));
+  execSync('git init -q --bare -b main', { cwd: mirror });
+  const url = mirror.split('\\').join('/');
+  const clone = (prefix) => {
+    const d = mkdtempSync(join(tmpdir(), prefix));
+    execSync(`git clone -q "${url}" "${d.split('\\').join('/')}"`, { cwd: tmpdir() });
+    execSync('git config user.email test@test', { cwd: d });
+    execSync('git config user.name test', { cwd: d });
+    return d;
+  };
+
+  // Seed the mirror so there is something to clone.
+  const seed = tempRepo();
+  assert.equal(gtg(seed, HANDOFF_ARGS('seed-a', 'Seed A'), { input: BODY }).status, 0);
+  execSync(`git remote add origin "${url}"`, { cwd: seed });
+  execSync('git push -q origin main', { cwd: seed });
+
+  const obelisk = clone('gtg-obelisk-');
+  assert.equal(execSync('git config --get branch.main.remote', { cwd: obelisk, encoding: 'utf8' }).trim(),
+    'origin', 'fixture: a clone tracks origin, which is precisely what the hardcoded pair missed');
+  assert.equal(execSync('git rev-parse --abbrev-ref HEAD', { cwd: obelisk, encoding: 'utf8' }).trim(),
+    'main', 'fixture: and it is not on master either');
+  assert.equal(execSync('git remote', { cwd: obelisk, encoding: 'utf8' }).trim(), 'origin',
+    'fixture: no obelisk-backup remote exists here at all');
+
+  // reborn wraps a project and pushes. Obelisk has never seen it.
+  const reborn = clone('gtg-reborn-');
+  assert.equal(gtg(reborn, HANDOFF_ARGS('from-reborn', 'From Reborn'), { input: BODY }).status, 0);
+  execSync('git push -q origin main', { cwd: reborn });
+
+  const r = gtg(obelisk, ['resume', 'from-reborn']);
+  assert.equal(r.status, 0,
+    `the far side of the exchange saw nothing - the target was not resolved from its upstream: ${r.stderr}`);
+  assert.match(r.stdout, /RESUME: "From Reborn"/);
+  assert.match(r.stdout, /Synced origin\/main: fast-forwarded/,
+    'and it names the upstream it actually used, not the fallback pair');
+
+  // A feature branch with no upstream: nothing to resolve, nothing to fall back to, so the sync
+  // skips. This is the guard the old branch comparison held, now carried by the lookup itself.
+  execSync('git checkout -q -b feat/y', { cwd: obelisk });
+  assert.equal(gtg(reborn, HANDOFF_ARGS('later-work', 'Later Work'), { input: BODY }).status, 0);
+  execSync('git push -q origin main', { cwd: reborn });
+  const f = gtg(obelisk, ['resume', 'seed-a']);
+  assert.equal(f.status, 0, f.stderr);
+  assert.doesNotMatch(f.stdout, /fast-forward/i, 'a branch with no upstream must not be moved');
+  assert.equal(f.stderr, '', 'and must not be narrated either');
+  assert.ok(!active(obelisk).some((e) => e.slug === 'later-work'),
+    'nothing was pulled onto the feature branch');
+  console.log('ok 74 - the sync target comes from the branch upstream, with the named pair as fallback');
 }
 
 console.log('ALL PASS');
