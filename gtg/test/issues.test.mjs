@@ -67,11 +67,10 @@ const run = (root, args = []) => {
       // Mirrors gtg.mjs: both stores, already filtered to this command's own parent
       // namespace, so the command never sees the namespace string itself.
       ownEntries: () => {
-        const grab = (dir, legacyRel, legacyKey) =>
-          readCollection(root, dir, legacyRel, legacyKey).filter((e) => e.parent === 'issues');
+        const grab = (dir) => readCollection(root, dir).filter((e) => e.parent === 'issues');
         return {
-          active: grab('docs/handoffs/active', 'docs/handoffs/_active.json', 'handoffs'),
-          shelved: grab('docs/handoffs/backlog', 'docs/handoffs/_backlog.json', 'backlog'),
+          active: grab('docs/handoffs/active'),
+          shelved: grab('docs/handoffs/backlog'),
         };
       },
       writeStore: () => { throw new Error('writeStore must not be used'); },

@@ -7,10 +7,12 @@ import { posix } from 'node:path';
 // skips validateSlug, validateStatus and assertRenderable, and leaves the rendered index
 // disagreeing with the store until someone renders again.
 //
-// The store is docs/projects/entries/<slug>.json, one file per project. docs/projects/_projects.json
-// is the packed array it replaced: still read as a fallback, and still guarded, because a hand-edit
-// there is silently IGNORED on any tree that has the directory, which is worse than being refused.
-// A slug is a filename now, so a hand-edit can also file a record where no verb will look for it.
+// The store is docs/projects/entries/<slug>.json, one file per project, and it is the ONLY store.
+// docs/projects/_projects.json is the packed array it replaced: DELETED in projects 1.3.0 and
+// read by nothing, and still guarded for exactly that reason - writing it now creates a file no
+// verb will ever look at, so the edit is silently IGNORED, which is worse than being refused.
+// A slug is a filename, so a hand-edit under entries/ can likewise file a record where no verb
+// will look for it.
 //
 // The segment is matched wherever it sits in the path rather than under one absolute root. The
 // spec includes /c/Users/you/docs/projects/_projects.json, which no absolute-root anchor

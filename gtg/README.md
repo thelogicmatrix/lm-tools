@@ -88,10 +88,10 @@ export default async ({ root, args, ownEntries, readStore, writeStore, commit })
 
 **Don't read the records through `readStore`.** It is a whole-file JSON reader and the records
 live one per file since 3.1.0 (see *Storage format*). `readStore('docs/handoffs/_active.json')`
-still returns something, because the packed file is still on disk — but it is **frozen at the
-moment of the migration**, so a command reading it serves the entries as they were then and
-reports everything written since as missing, with no error anywhere. `ownEntries()` reads the
-sharded store; `readStore` is for genuine single-object files like `_session.json`.
+returns `null` since 3.3.0, because that packed file is deleted — and `?.handoffs ?? []` turns
+`null` into an empty list, so a command reading it reports every live entry as missing with no
+error anywhere. `ownEntries()` reads the sharded store; `readStore` is for genuine single-object
+files like `_session.json`.
 
 `ctx` = `{ root, args, readStore(path), writeStore(path, data), commit(paths, message), countHandoffFiles(slug), ownEntries() }`.
 `countHandoffFiles(slug)` returns how many `docs/handoffs/*.md` files exist for that slug — the
@@ -195,17 +195,16 @@ file, which is correct.
 Each directory also holds a `.gitkeep`. Git cannot track an empty directory, and an emptied
 collection — the last active entry consumed, or everything parked — has to survive as an *empty*
 collection: without the keeper the directory is simply absent on the other machine's checkout,
-the reader falls back to the packed file, and every entry deleted here comes back there.
+which reads as a store that was never created rather than one deliberately emptied.
 
-`docs/handoffs/_active.json` (`{"handoffs":[...]}`) and `_backlog.json` (key `backlog`) are the
-packed files this replaced. They are still READ when the matching directory is absent, so the
-first run on an unsharded tree migrates itself — backing each one up to `<name>.pre-shard` first
-— and a rollback to an older plugin still finds its data. That data is the snapshot taken at
-the shard: anything written after it lives only in the directory, so a rollback shows the
-pre-shard state and the later records stay in git history under `docs/handoffs/active/`
-until you re-shard. Deleting the packed files is a later, separate step. **The directory
-wins whenever it exists, even when empty**, precisely so a stale packed file cannot resurrect
-deleted entries.
+`docs/handoffs/_active.json` (`{"handoffs":[...]}`) and `_backlog.json` (key `backlog`) were the
+packed files this replaced. **Both are deleted as of 3.3.0, along with the self-migration and
+the fallback that read them.** A directory is now the whole store, and an absent directory is a
+fresh hub rather than a tree waiting to be migrated. Rolling back to a pre-3.1.0 plugin means
+restoring a packed file from git history — `git show <pre-shard-commit>:docs/handoffs/_active.json`
+— and installing that plugin; the snapshot is the state at the shard, so records written after
+it stay in the directory's own history. To migrate a still-packed tree, install 3.1.0–3.2.0
+once and let it shard, then upgrade.
 
 Pin the record files as-is in `.gitattributes`:
 
