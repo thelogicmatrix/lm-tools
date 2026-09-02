@@ -85,7 +85,9 @@ comes back there.
 `docs/projects/_projects.json` is the packed array it replaced. It is still READ when the
 directory is absent, so the first run on an unsharded tree migrates itself (backing the packed
 file up to `_projects.json.pre-shard` first) and a rollback to an older plugin still finds its
-data. Deleting it is a later, separate step.
+data. That data is the snapshot taken at the shard: rows written after it live only in the
+directory, so a rollback shows the pre-shard state and the later rows stay in git history under
+`docs/projects/entries/` until you re-shard. Deleting it is a later, separate step.
 
 `INDEX.md` is still rendered and committed, because it is what makes the list readable on
 Forgejo and what `gtg`'s `inferParent` reads to resolve project families. It rewrites wholesale

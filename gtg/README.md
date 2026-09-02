@@ -200,9 +200,12 @@ the reader falls back to the packed file, and every entry deleted here comes bac
 `docs/handoffs/_active.json` (`{"handoffs":[...]}`) and `_backlog.json` (key `backlog`) are the
 packed files this replaced. They are still READ when the matching directory is absent, so the
 first run on an unsharded tree migrates itself — backing each one up to `<name>.pre-shard` first
-— and a rollback to an older plugin still finds its data. Deleting them is a later, separate
-step. **The directory wins whenever it exists, even when empty**, precisely so a stale packed
-file cannot resurrect deleted entries.
+— and a rollback to an older plugin still finds its data. That data is the snapshot taken at
+the shard: anything written after it lives only in the directory, so a rollback shows the
+pre-shard state and the later records stay in git history under `docs/handoffs/active/`
+until you re-shard. Deleting the packed files is a later, separate step. **The directory
+wins whenever it exists, even when empty**, precisely so a stale packed file cannot resurrect
+deleted entries.
 
 Pin the record files as-is in `.gitattributes`:
 
