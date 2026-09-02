@@ -501,7 +501,7 @@ Say: "gtg ${a.slug}"
   };
   if (a['dry-run']) {
     console.log(`--- DRY RUN: would write ${relFile} ---\n${doc}`);
-    console.log(`--- ${COLLECTIONS[which].dir}/${a.slug}.json entry ---\n${JSON.stringify(entry, null, 2)}`);
+    console.log(`--- ${COLLECTIONS[which]}/${a.slug}.json entry ---\n${JSON.stringify(entry, null, 2)}`);
     return;
   }
   mkdirSync(join(ROOT, 'docs/handoffs'), { recursive: true });

@@ -2687,6 +2687,35 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   console.log('ok 74 - the sync target comes from the branch upstream, with the named pair as fallback');
 }
 
+// --- 76. --dry-run names the record file it WOULD write, in both collections ---
+// The whole point of --dry-run is telling the operator which file a handoff is about to write, so
+// it is the one output that must not lie about the path. It lied: the preview read
+// `COLLECTIONS[which].dir` and COLLECTIONS collapsed to plain directory strings in 3.3.0, so the
+// line printed `undefined/<slug>.json` while every other path in the CLI was right. A 19-case
+// suite stayed green over it because nothing here had ever run --dry-run at all - `grep -c "DRY
+// RUN"` returned 0. Asserted on the LITERAL expected path rather than on the absence of
+// "undefined", so the next shape change fails here with the wrong path named rather than passing
+// on a differently-wrong one. Both collections, because `which` is the variable that broke.
+{
+  const repo = tempRepo();
+  for (const [args, dir, slug] of [
+    [HANDOFF_ARGS('dr-active', 'DR Active'), ACTIVE, 'dr-active'],
+    [['backlog', '--project', 'DR Parked', '--slug', 'dr-parked', '--eta', '~1h', '--next', 'TBD'],
+      BACKLOG, 'dr-parked'],
+  ]) {
+    const r = gtg(repo, [...args, '--dry-run'], { input: BODY });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes(`--- ${dir}/${slug}.json entry ---`),
+      `--dry-run must name the record file it would write, got:
+${r.stdout}`);
+    // The other half of the contract: a preview writes and commits nothing.
+    assert.equal(existsSync(join(repo, dir, `${slug}.json`)), false, 'a dry run wrote a record');
+    assert.deepEqual(active(repo), [], 'a dry run touched the active store');
+    assert.deepEqual(backlog(repo), [], 'a dry run touched the backlog store');
+  }
+  console.log('ok 76 - --dry-run names the record file it would write, for both collections');
+}
+
 // Case 75 lived here: it pinned that the import-time self-migration ran AFTER the resume
 // sync, so a second machine on a still-packed tree could not commit its own shard over the
 // same records and fork history. Removed in 3.3.0 with the migration itself - there is no
