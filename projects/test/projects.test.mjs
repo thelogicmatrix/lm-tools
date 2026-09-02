@@ -6,8 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readStore, writeStore, REL_ENTRIES, validateStatus, validateSlug, sortProjects, commit, resolveRoot, today, REL_STORE, STATUSES, renderIndex, parseIndex, assertRenderable, THEMES, THEME_ORDER, validateTheme } from '../skills/projects/projects.mjs';
 
+// Record files only. writeCollection also keeps a .gitkeep in the directory - that is what stops
+// an emptied store from vanishing out of git and being resurrected from the packed file on the
+// other machine - and it is not a project. The store tests own the assertions about it.
 const entryFiles = (root) => (existsSync(join(root, REL_ENTRIES))
-  ? readdirSync(join(root, REL_ENTRIES)).sort() : []);
+  ? readdirSync(join(root, REL_ENTRIES)).filter((f) => f.endsWith('.json')).sort() : []);
 // One string standing for the whole store's bytes, for the "changed nothing" assertions
 // that used to read _projects.json directly. Names are included, so a rename shows up too.
 const storeBytes = (root) => entryFiles(root)
@@ -2060,7 +2063,10 @@ test('writeStore writes one file per project and reports the paths it touched', 
   const touched = writeStore(root, { projects: [
     { slug: 'alpha', name: 'Alpha' }, { slug: 'beta', name: 'Beta' }] });
   assert.deepEqual(entryFiles(root), ['alpha.json', 'beta.json']);
-  assert.deepEqual([...touched].sort(), [`${REL_ENTRIES}/alpha.json`, `${REL_ENTRIES}/beta.json`]);
+  // .gitkeep is in the touched set on the first write, deliberately: commit() names only the
+  // paths it is handed, so a keeper left out here would exist on this machine and nowhere else.
+  assert.deepEqual([...touched].sort(),
+    [`${REL_ENTRIES}/.gitkeep`, `${REL_ENTRIES}/alpha.json`, `${REL_ENTRIES}/beta.json`]);
   assert.equal(readFileSync(join(root, REL_ENTRIES, 'alpha.json'), 'utf8'),
     JSON.stringify({ slug: 'alpha', name: 'Alpha' }, null, 2) + '\n');
   assert.ok(!existsSync(join(root, REL_STORE)), 'the packed file is not written any more');
@@ -2145,8 +2151,10 @@ test('the first run on a packed tree shards it, commits the backup, and does not
   assert.ok(existsSync(join(root, REL_STORE)), 'contraction is Task 7, not this one');
   assert.ok(existsSync(join(root, `${REL_STORE}.pre-shard`)));
   const shardCommit = git('show', '--name-only', '--format=', 'HEAD').toString().trim().split('\n').sort();
-  assert.deepEqual(shardCommit, [`${REL_ENTRIES}/alpha.json`, `${REL_ENTRIES}/beta.json`,
-    `${REL_STORE}.pre-shard`].sort(), 'the backup rides along: the other machine skips the migration');
+  assert.deepEqual(shardCommit, [`${REL_ENTRIES}/.gitkeep`, `${REL_ENTRIES}/alpha.json`,
+    `${REL_ENTRIES}/beta.json`, `${REL_STORE}.pre-shard`].sort(),
+  'the backup rides along: the other machine skips the migration. So does .gitkeep, or the'
+  + ' directory exists only here and an emptied store falls back to the packed file there');
   assert.equal(git('status', '--porcelain').toString().trim(), '');
 
   const second = runCli(root, []);

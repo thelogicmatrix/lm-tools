@@ -83,6 +83,19 @@ export function writeCollection(root, dir, items) {
   const written = new Set();
   const deleted = new Set();
 
+  // Git cannot track an empty directory. Without this file a collection that empties out - the
+  // last active entry consumed, a prune, everything parked - simply does not exist in the other
+  // machine's checkout, so readCollection takes the LEGACY branch there and returns the frozen
+  // packed array, and migrateCollection re-shards it, resurrecting every record just deleted
+  // with no error anywhere. The "directory wins even when empty" rule is defeated by git rather
+  // than by the code unless something keeps the directory itself tracked. Created once, beside
+  // the first write, and named in `written` so commit() adds it on that same commit.
+  const gitkeep = join(abs, '.gitkeep');
+  if (!existsSync(gitkeep)) {
+    writeFileSync(gitkeep, '');
+    written.add(`${dir}/.gitkeep`);
+  }
+
   // A slug whose case changed (Alpha -> alpha) is TWO files on Obelisk and ONE on reborn.
   // Rename the old casing onto the new one BEFORE writing: on reborn the write would
   // otherwise land in the old file and the delete pass below would then remove the record

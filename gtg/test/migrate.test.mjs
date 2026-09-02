@@ -7,6 +7,9 @@ import { migrateCollection } from '../skills/gtg/lib/migrate.mjs';
 import { readCollection } from '../skills/gtg/lib/store.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'gtg-mig-'));
+// Record files only: writeCollection also drops a .gitkeep in every collection directory, which
+// is what keeps an emptied collection alive in git and is not a record.
+const records = (root) => readdirSync(join(root, 'docs/shard')).filter((f) => f.endsWith('.json')).sort();
 const seed = (root, items) => {
   mkdirSync(join(root, 'docs'), { recursive: true });
   writeFileSync(join(root, 'docs/packed.json'), JSON.stringify({ items }, null, 2) + '\n');
@@ -19,7 +22,9 @@ test('every record survives: count in equals count out', () => {
   const res = migrateCollection(root, 'docs/shard', 'docs/packed.json', 'items');
   assert.equal(res.migrated, 48);
   assert.equal(res.skipped, false);
-  assert.equal(readdirSync(join(root, 'docs/shard')).length, 48);
+  assert.equal(records(root).length, 48);
+  assert.ok(res.paths.includes('docs/shard/.gitkeep'),
+    'the migration must COMMIT the keeper too, or the directory only exists on this machine');
 });
 
 test('record content is preserved field for field', () => {
@@ -37,7 +42,7 @@ test('a second run is a no-op and does not duplicate or wipe', () => {
   const again = migrateCollection(root, 'docs/shard', 'docs/packed.json', 'items');
   assert.equal(again.skipped, true);
   assert.equal(again.migrated, 0);
-  assert.equal(readdirSync(join(root, 'docs/shard')).length, 2);
+  assert.equal(records(root).length, 2);
 });
 
 test('a run on an already-migrated tree does not resurrect deleted records', () => {
@@ -48,7 +53,7 @@ test('a run on an already-migrated tree does not resurrect deleted records', () 
   rmSync(join(root, 'docs/shard/b.json'));
   const again = migrateCollection(root, 'docs/shard', 'docs/packed.json', 'items');
   assert.equal(again.skipped, true);
-  assert.deepEqual(readdirSync(join(root, 'docs/shard')), ['a.json']);
+  assert.deepEqual(records(root), ['a.json']);
 });
 
 test('a backup of the packed file is written before anything else', () => {

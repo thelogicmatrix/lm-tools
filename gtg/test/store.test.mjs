@@ -45,9 +45,11 @@ test('a malformed record file throws rather than silently vanishing', () => {
 test('write creates one file per record and reports its paths', () => {
   const root = tmp();
   const res = writeCollection(root, 'd', [{ slug: 'alpha' }, { slug: 'beta' }]);
-  assert.deepEqual(res.written.sort(), ['d/alpha.json', 'd/beta.json']);
+  // .gitkeep rides along on the FIRST write, path included, so the same commit that adds the
+  // records adds the thing that keeps the directory alive once they are all gone.
+  assert.deepEqual(res.written.sort(), ['d/.gitkeep', 'd/alpha.json', 'd/beta.json']);
   assert.deepEqual(res.deleted, []);
-  assert.deepEqual(readdirSync(join(root, 'd')).sort(), ['alpha.json', 'beta.json']);
+  assert.deepEqual(readdirSync(join(root, 'd')).sort(), ['.gitkeep', 'alpha.json', 'beta.json']);
 });
 
 test('write deletes files for removed records and reports them', () => {
@@ -68,12 +70,28 @@ test('unrelated record edits touch disjoint files - the point of the change', ()
   assert.deepEqual(b.written, ['d/beta.json']);
 });
 
-test('writing an empty collection deletes every file', () => {
+test('writing an empty collection deletes every record file', () => {
   const root = tmp();
   writeCollection(root, 'd', [{ slug: 'alpha' }]);
   const res = writeCollection(root, 'd', []);
   assert.deepEqual(res.deleted, ['d/alpha.json']);
-  assert.deepEqual(readdirSync(join(root, 'd')), []);
+  assert.deepEqual(readdirSync(join(root, 'd')).sort(), ['.gitkeep']);
+});
+
+// The failure this prevents is not local. Git cannot track an empty directory, so without the
+// .gitkeep an emptied collection is ABSENT on the other machine's checkout, readCollection falls
+// through to the frozen packed file, and the migration re-shards it - every deleted record back
+// from the dead, silently. So: the directory and its keeper survive, and the read is [] rather
+// than the legacy fallback, which is exactly what the second machine must see.
+test('an emptied collection keeps its directory, and reads empty rather than falling back', () => {
+  const root = tmp();
+  writeFileSync(join(root, 'legacy.json'), JSON.stringify({ items: [{ slug: 'ghost' }] }));
+  writeCollection(root, 'd', [{ slug: 'alpha' }]);
+  writeCollection(root, 'd', []);
+  assert.equal(existsSync(join(root, 'd')), true, 'the directory must survive an emptying write');
+  assert.equal(existsSync(join(root, 'd', '.gitkeep')), true, 'and git needs a file in it to carry it');
+  assert.deepEqual(readCollection(root, 'd', 'legacy.json', 'items'), [],
+    'an empty sharded store is a real state - the packed file must NOT resurrect its records');
 });
 
 test('record files round-trip byte-identically through read and write', () => {
@@ -106,7 +124,7 @@ test('a slug whose case changed keeps the record and reports both paths', () => 
   writeCollection(root, 'd', [{ slug: 'Alpha', n: 1 }]);
   const res = writeCollection(root, 'd', [{ slug: 'alpha', n: 2 }]);
   assert.deepEqual(readCollection(root, 'd', 'legacy.json', 'items'), [{ slug: 'alpha', n: 2 }]);
-  assert.deepEqual(readdirSync(join(root, 'd')), ['alpha.json']);
+  assert.deepEqual(readdirSync(join(root, 'd')).sort(), ['.gitkeep', 'alpha.json']);
   assert.deepEqual(res.deleted, ['d/Alpha.json']);
   assert.deepEqual(res.written, ['d/alpha.json']);
 });
