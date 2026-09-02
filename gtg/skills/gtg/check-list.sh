@@ -4,14 +4,18 @@ set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/docs/handoffs"
+mkdir -p "$TMP/docs/handoffs/active"
 NOW="$(date +%Y-%m-%dT%H:%M:%S%z)"
-cat > "$TMP/docs/handoffs/_active.json" <<EOF
-{"handoffs":[
- {"project":"Alpha","slug":"alpha","sessions":3,"created":"$NOW","eta":"~2h","next":"do x","file":"f","updated":"$NOW"},
- {"project":"Beta","slug":"beta","tier":"Sonnet","next":"do y","file":"f","updated":"$NOW"},
- {"project":"Gamma","slug":"gamma","next":"do z","file":"f","updated":"$NOW"}
-]}
+# One file per record: the sharded store is the only store since 3.3.0, and seeding the packed
+# file here would render an empty list rather than failing an assertion.
+cat > "$TMP/docs/handoffs/active/alpha.json" <<EOF
+{"project":"Alpha","slug":"alpha","sessions":3,"created":"$NOW","eta":"~2h","next":"do x","file":"f","updated":"$NOW"}
+EOF
+cat > "$TMP/docs/handoffs/active/beta.json" <<EOF
+{"project":"Beta","slug":"beta","tier":"Sonnet","next":"do y","file":"f","updated":"$NOW"}
+EOF
+cat > "$TMP/docs/handoffs/active/gamma.json" <<EOF
+{"project":"Gamma","slug":"gamma","next":"do z","file":"f","updated":"$NOW"}
 EOF
 # Finding I2: a legacy entry (no `sessions` field) must render the TRUE count of
 # handoff files on disk, not a hardcoded 1 — cover both a 1-file and a 9-file case.

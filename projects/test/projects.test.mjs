@@ -7,8 +7,8 @@ import { join } from 'node:path';
 import { readStore, writeStore, REL_ENTRIES, validateStatus, validateSlug, sortProjects, commit, resolveRoot, today, REL_STORE, STATUSES, renderIndex, parseIndex, assertRenderable, THEMES, THEME_ORDER, validateTheme } from '../skills/projects/projects.mjs';
 
 // Record files only. writeCollection also keeps a .gitkeep in the directory - that is what stops
-// an emptied store from vanishing out of git and being resurrected from the packed file on the
-// other machine - and it is not a project. The store tests own the assertions about it.
+// an emptied store from vanishing out of git and reading on the other machine as a root where
+// nothing was ever registered - and it is not a project. The store tests own the assertions.
 const entryFiles = (root) => (existsSync(join(root, REL_ENTRIES))
   ? readdirSync(join(root, REL_ENTRIES)).filter((f) => f.endsWith('.json')).sort() : []);
 // One string standing for the whole store's bytes, for the "changed nothing" assertions
@@ -608,7 +608,7 @@ test('a page with narrative but no Current state block prints (no current state)
 });
 
 test('a page field that escapes docs/projects is never read, and the other rows still print', () => {
-  // _projects.json is hand-editable, so `page` is as untrusted here as it is in the mutating
+  // A record file is hand-editable, so `page` is as untrusted here as it is in the mutating
   // verbs. Bare `projects` with no args is the widest surface in the CLI, and before this went
   // through pagePath a row reading `page: "../../.ssh/config"` printed that file's contents.
   const root = fixture();
@@ -765,7 +765,7 @@ test('every verb rejects a traversal slug before it can reach path.join', () => 
 });
 
 test('a hand-edited page field cannot walk a write or a rename out of docs/projects', () => {
-  // _projects.json is hand-editable, so `page` is exactly as untrusted as a slug. archive is
+  // A record file is hand-editable, so `page` is exactly as untrusted as a slug. archive is
   // the sharp one: renameSync would MOVE the named file, wherever in the tree it sits.
   const root = seeded();
   const store = readStore(root);
@@ -944,8 +944,18 @@ test('an unexpected throw prints its stack instead of a bare one-line message', 
   // The blanket catch used to print `e.message` alone, so any bug in this file exited 1 with a
   // single unattributed line and no frames. A deliberate refusal still prints just its message
   // (asserted by the tests above), and anything else is treated as a bug and gets to be loud.
+  //
+  // Provoked through a RECORD file. It used to be provoked with `{"projects":{}}` in the packed
+  // store, which readStore handed on as a non-array; nothing reads the packed file since 1.3.0,
+  // so that fixture renders a clean empty index at exit 0. A record whose `where` is a string
+  // rather than an array is the equivalent: a shape no verb writes, which the CLI hits deep in
+  // renderRow instead of refusing up front. Records are hand-editable by design, so the class is
+  // real - it is why projects-index-guard.mjs guards entries/ at all.
   const { root } = gitFixture();
-  writeFileSync(join(root, REL_STORE), '{"version":1,"projects":{}}\n');
+  mkdirSync(join(root, REL_ENTRIES), { recursive: true });
+  writeFileSync(join(root, REL_ENTRIES, 'demo.json'), JSON.stringify({
+    slug: 'demo', name: 'Demo', status: 'active', where: 'C:/dev/demo', page: 'demo.md',
+    lastTouched: '2026-01-01' }) + '\n');
   const r = runCli(root, ['render']);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /internal error/);
@@ -1755,12 +1765,18 @@ test('log reads history from git and follows a page across a rename', () => {
 test('rename warns when a gtg entry still names the old slug as its parent', () => {
   const { root } = gitFixture();
   runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
-  mkdirSync(join(root, 'docs/handoffs'), { recursive: true });
-  writeFileSync(join(root, 'docs/handoffs/_active.json'), JSON.stringify({ handoffs: [
-    { slug: 'alpha', project: 'Alpha', parent: 'alpha' },
-    { slug: 'unrelated', project: 'Unrelated', parent: 'something-else' }] }));
-  writeFileSync(join(root, 'docs/handoffs/_backlog.json'), JSON.stringify({ backlog: [
-    { slug: 'shelved-kid', project: 'Shelved Kid', parent: 'alpha' }] }));
+  // gtg's own store, one record per file, seeded the way gtg 3.3.0 leaves it. This fixture used
+  // to seed the packed _active.json / _backlog.json, which is what warnDanglingParents read -
+  // and gtg deletes both, so against a real hub the warning had gone silent at exit 0.
+  const seed = (dir, recs) => {
+    mkdirSync(join(root, 'docs/handoffs', dir), { recursive: true });
+    for (const rec of recs) {
+      writeFileSync(join(root, 'docs/handoffs', dir, `${rec.slug}.json`), JSON.stringify(rec, null, 2) + '\n');
+    }
+  };
+  seed('active', [{ slug: 'alpha', project: 'Alpha', parent: 'alpha' },
+    { slug: 'unrelated', project: 'Unrelated', parent: 'something-else' }]);
+  seed('backlog', [{ slug: 'shelved-kid', project: 'Shelved Kid', parent: 'alpha' }]);
 
   const r = runCli(root, ['rename', 'alpha', 'omega']);
   assert.equal(r.status, 0, r.stderr);
@@ -1772,8 +1788,8 @@ test('rename warns when a gtg entry still names the old slug as its parent', () 
   assert.match(r.stdout, /gtg rename alpha omega/);
 
   // Read-only: this CLI must never write a store it does not own.
-  const after = JSON.parse(readFileSync(join(root, 'docs/handoffs/_active.json'), 'utf8'));
-  assert.equal(after.handoffs[0].parent, 'alpha', "gtg's store is untouched");
+  const after = JSON.parse(readFileSync(join(root, 'docs/handoffs/active/alpha.json'), 'utf8'));
+  assert.equal(after.parent, 'alpha', "gtg's store is untouched");
 });
 
 test('rename says nothing about gtg when there is no gtg store to read', () => {
@@ -2072,25 +2088,28 @@ test('writeStore writes one file per project and reports the paths it touched', 
   assert.ok(!existsSync(join(root, REL_STORE)), 'the packed file is not written any more');
 });
 
-test('the directory wins over a stale packed file, and its absence falls back to it', () => {
-  const root = fixture();
-  writeFileSync(join(root, REL_STORE), JSON.stringify({ version: 1, projects: [
+// The contraction, pinned from the outside. readStore used to read the packed file whenever
+// entries/ was absent, and the packed file is deleted in 1.3.0, so a re-added fallback would
+// read a file that is not there - and its failure shape was `{projects: []}`, which fails no
+// assertion and silently empties an index. So the packed rows must be IGNORED, whether entries/
+// is missing or merely empty. No INDEX.md in either fixture, or readStore's own rows-here-and-
+// none-there guard would throw before the assertion is reached.
+test('a packed file is ignored whether the entries directory is missing or empty', () => {
+  const ghost = JSON.stringify({ version: 1, projects: [
     { slug: 'ghost', name: 'Ghost', status: 'active', where: [], page: 'ghost.md',
-      lastTouched: '2026-01-01' }] }) + '\n');
-  // Expand before contract: nothing deletes the packed file here, so a rollback to the old
-  // plugin still finds its data.
-  assert.deepEqual(readStore(root).projects.map((p) => p.slug), ['ghost'], 'legacy fallback');
-  writeStore(root, { projects: [{ slug: 'real', name: 'Real' }] });
-  assert.deepEqual(readStore(root).projects.map((p) => p.slug), ['real']);
-  assert.ok(existsSync(join(root, REL_STORE)), 'and the packed file is still there');
-});
+      lastTouched: '2026-01-01' }] }) + '\n';
 
-test('an empty entries directory reads as empty rather than resurrecting the packed rows', () => {
-  const root = fixture();
-  writeFileSync(join(root, REL_STORE), JSON.stringify({ version: 1, projects: [
-    { slug: 'ghost', name: 'Ghost' }] }) + '\n');
-  mkdirSync(join(root, REL_ENTRIES), { recursive: true });
-  assert.deepEqual(readStore(root).projects, []);
+  const missing = fixture();
+  writeFileSync(join(missing, REL_STORE), ghost);
+  assert.deepEqual(readStore(missing).projects, [], 'no entries/ is a root with no projects');
+  writeStore(missing, { projects: [{ slug: 'real', name: 'Real' }] });
+  assert.deepEqual(readStore(missing).projects.map((p) => p.slug), ['real']);
+  assert.ok(existsSync(join(missing, REL_STORE)), 'and nothing here deletes the packed file');
+
+  const empty = fixture();
+  writeFileSync(join(empty, REL_STORE), ghost);
+  mkdirSync(join(empty, REL_ENTRIES), { recursive: true });
+  assert.deepEqual(readStore(empty).projects, []);
 });
 
 test('the store-level version field is gone, not carried into a per-record file', () => {
@@ -2130,49 +2149,32 @@ mtest('archive commits the deleted entry file, leaving nothing in the working tr
   assert.deepEqual(entryFiles(root), ['beta.json']);
 });
 
-test('the first run on a packed tree shards it, commits the backup, and does not re-shard', () => {
+// Two migration cases lived here: the first run on a packed tree sharding it and committing the
+// `.pre-shard` backup, and a corrupt packed file warning rather than making the CLI unusable.
+// Both went with the self-migration in 1.3.0. This is what replaces them - a packed tree is no
+// longer migrated, it is simply not read, and the CLI runs on it as a root with no projects
+// rather than warning about a file it might have shattered. To migrate one, install 1.1.1-1.2.0
+// once and let it shard, then upgrade.
+test('a packed tree is left untouched, not migrated, and no verb chokes on one', () => {
   const { root, git } = gitFixture();
-  const packed = { version: 1, projects: [
-    { slug: 'alpha', name: 'Alpha', status: 'active', where: ['C:/dev/alpha'], page: 'alpha.md',
-      theme: 'tooling', lastTouched: '2026-07-20' },
-    { slug: 'beta', name: 'Beta', status: 'paused', where: [], page: 'beta.md',
-      theme: 'work', lastTouched: '2026-07-21' }] };
-  writeFileSync(join(root, REL_STORE), JSON.stringify(packed, null, 2) + '\n');
+  writeFileSync(join(root, REL_STORE), JSON.stringify({ version: 1, projects: [
+    { slug: 'alpha', name: 'Alpha', status: 'active', where: [], page: 'alpha.md',
+      theme: 'tooling', lastTouched: '2026-07-20' }] }, null, 2) + '\n');
   git('add', '--', REL_STORE);
   git('commit', '-q', '-m', 'seed', '--', REL_STORE);
 
-  const first = runCli(root, []);
-  assert.equal(first.status, 0, first.stderr);
-  assert.match(first.stderr, /sharded 2 project/, 'the one-time notice goes to stderr, not stdout');
-  assert.deepEqual(entryFiles(root), ['alpha.json', 'beta.json']);
-  // Every field survives, and the packed file plus its backup are both left on disk.
-  assert.deepEqual(readStore(root).projects.map((p) => p.slug).sort(), ['alpha', 'beta']);
-  assert.deepEqual(JSON.parse(readFileSync(join(root, REL_ENTRIES, 'alpha.json'), 'utf8')), packed.projects[0]);
-  assert.ok(existsSync(join(root, REL_STORE)), 'contraction is Task 7, not this one');
-  assert.ok(existsSync(join(root, `${REL_STORE}.pre-shard`)));
-  const shardCommit = git('show', '--name-only', '--format=', 'HEAD').toString().trim().split('\n').sort();
-  assert.deepEqual(shardCommit, [`${REL_ENTRIES}/.gitkeep`, `${REL_ENTRIES}/alpha.json`,
-    `${REL_ENTRIES}/beta.json`, `${REL_STORE}.pre-shard`].sort(),
-  'the backup rides along: the other machine skips the migration. So does .gitkeep, or the'
-  + ' directory exists only here and an emptied store falls back to the packed file there');
-  assert.equal(git('status', '--porcelain').toString().trim(), '');
-
-  const second = runCli(root, []);
-  assert.equal(second.status, 0, second.stderr);
-  assert.doesNotMatch(second.stderr, /sharded/, 'a second run is a no-op');
-  assert.deepEqual(entryFiles(root), ['alpha.json', 'beta.json']);
-});
-
-test('a migration that cannot read the packed file warns and keeps reading it', () => {
-  // migrateCollection throws on unparseable JSON and this runs before EVERY verb, `help`
-  // included. Uncaught, one bad file would make the CLI entirely unusable.
-  const { root } = gitFixture();
-  writeFileSync(join(root, REL_STORE), '{ not json');
   const r = runCli(root, ['help']);
-  assert.equal(r.status, 1, 'the failure is in the exit code, not only on stderr');
-  assert.match(r.stderr, /could not shard/);
-  assert.match(r.stdout, /INDEX\.md is generated/, 'and the verb still ran');
-  assert.equal(existsSync(join(root, REL_ENTRIES)), false, 'nothing half-written');
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stderr, /shard/i, 'nothing migrates and nothing announces a migration');
+  assert.equal(existsSync(join(root, REL_ENTRIES)), false, 'and no store is conjured from it');
+  assert.equal(git('status', '--porcelain').toString().trim(), '', 'the packed file is untouched');
+
+  // Corrupt is no different, because nothing parses it any more.
+  const bad = gitFixture().root;
+  writeFileSync(join(bad, REL_STORE), '{ not json');
+  const rb = runCli(bad, ['help']);
+  assert.equal(rb.status, 0, 'an unparseable packed file cannot break a verb that never reads it');
+  assert.match(rb.stdout, /INDEX\.md is generated/, 'and the verb still ran');
 });
 
 test('INDEX.md is still rendered from the sharded store and still guards an empty one', () => {

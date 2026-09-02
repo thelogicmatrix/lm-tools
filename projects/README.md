@@ -66,9 +66,10 @@ noise wearing the costume of a signal.
 ## The write-guard
 
 The bundled `PreToolUse` hook denies `Write`/`Edit` on `INDEX.md`, on the per-project record
-files under `docs/projects/entries/`, and on the packed `docs/projects/_projects.json` they
-replaced, and names the verb to use instead. It is not paranoia: the index is regenerated on
-every mutating verb, so a hand-edit is not merely discouraged, it is *lost* at the next write.
+files under `docs/projects/entries/`, and on the deleted packed `docs/projects/_projects.json`
+they replaced, and names the verb to use instead. It is not paranoia: the index is regenerated
+on every mutating verb, so a hand-edit is not merely discouraged, it is *lost* at the next
+write — and an edit to the packed path is worse, because nothing reads that file at all.
 
 ## The store is one file per project
 
@@ -79,15 +80,16 @@ edits disjoint, and a same-project fork conflicts on one small file, which is co
 
 The directory also holds a `.gitkeep`. Git cannot track an empty directory, and an emptied store
 has to survive as an *empty* store: without the keeper the directory is simply absent on the
-other machine's checkout, the reader falls back to the packed file, and every row archived here
-comes back there.
+other machine's checkout, which reads as a root where nothing was ever registered rather than
+one deliberately emptied.
 
-`docs/projects/_projects.json` is the packed array it replaced. It is still READ when the
-directory is absent, so the first run on an unsharded tree migrates itself (backing the packed
-file up to `_projects.json.pre-shard` first) and a rollback to an older plugin still finds its
-data. That data is the snapshot taken at the shard: rows written after it live only in the
-directory, so a rollback shows the pre-shard state and the later rows stay in git history under
-`docs/projects/entries/` until you re-shard. Deleting it is a later, separate step.
+`docs/projects/_projects.json` was the packed array it replaced. **It is deleted as of 1.3.0,
+along with the self-migration and the fallback that read it.** The directory is now the whole
+store, and an absent directory is a root with no projects rather than a tree waiting to be
+migrated. Rolling back to a pre-1.1.1 plugin means restoring the packed file from git history —
+`git show <pre-shard-commit>:docs/projects/_projects.json` — and installing that plugin; the
+snapshot is the state at the shard, so rows written after it stay in the directory's own
+history. To migrate a still-packed tree, install 1.1.1–1.2.0 once and let it shard, then upgrade.
 
 `INDEX.md` is still rendered and committed, because it is what makes the list readable on
 Forgejo and what `gtg`'s `inferParent` reads to resolve project families. It rewrites wholesale

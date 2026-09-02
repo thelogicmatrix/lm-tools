@@ -358,11 +358,12 @@ function isoWeek(dateStr) {
 // so the hunks merge. Reading the slug off the record's PATH instead would remove the
 // assumption; it earned no test that fails without it, so it is not here.
 //
-// The pathspec spans BOTH the legacy packed file and the sharded directory, because this
-// reads HISTORY and history crosses the migration: dropping the packed path would silently
-// zero every duration recorded before the shard, and dropping the directory would silently
-// zero every one recorded after it. Backlog records stay absent, matching the pre-shard
-// pathspec - parking an idea is not a timed session.
+// The pathspec spans BOTH the packed file and the sharded directory, because this reads
+// HISTORY and history crosses the migration: dropping the packed path would silently zero
+// every duration recorded before the shard, and dropping the directory would silently zero
+// every one recorded after it. The packed file is DELETED from the worktree, which changes
+// nothing here - a pathspec matches the commits that touched it. Backlog records stay absent,
+// matching the pre-shard pathspec - parking an idea is not a timed session.
 //
 // Only HANDOFF commits count. `gtg activate` moves a backlog entry back into
 // the active store and `gtg undo` restores a removed one - both re-add the entry
@@ -457,15 +458,16 @@ export function fun(events, rows) {
 //
 // Reads the record stores through readCollection, NOT the injected ctx.readStore this used
 // to take. readStore is a whole-file JSON reader, so once the stores became one file per
-// record it could only ever see the frozen pre-shard packed file - and `?.handoffs ?? []`
-// turns that into a silent [], which reported an empty report instead of failing. Records
-// have no store-path logic left to inject: readCollection reads the directory and falls back
-// to the packed file itself, so the migration is invisible here.
+// record it could only ever see the frozen packed file - and `?.handoffs ?? []` turns that
+// into a silent [], which reported an empty report instead of failing. The packed files are
+// deleted now, so the same mistake reads a missing file and produces the same silent [].
+// There is no store-path logic left to inject: readCollection names the directory, and that
+// directory is the whole store.
 export function buildReport(root) {
   const { events, available } = readEvents(root);
   const sessions = readSessions(root);
-  const active = readCollection(root, 'docs/handoffs/active', 'docs/handoffs/_active.json', 'handoffs');
-  const backlog = readCollection(root, 'docs/handoffs/backlog', 'docs/handoffs/_backlog.json', 'backlog');
+  const active = readCollection(root, 'docs/handoffs/active');
+  const backlog = readCollection(root, 'docs/handoffs/backlog');
   const effort = readDurations(root);
   const rows = perProject(events, sessions, active, backlog, effort);
   const tp = throughput(events);

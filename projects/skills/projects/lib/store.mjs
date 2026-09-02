@@ -31,36 +31,32 @@ export function slugCollision(items) {
   return null;
 }
 
-// Directory wins when it exists, even when empty: an empty sharded store is a real state
-// (everything archived), and falling back to a stale packed file there would resurrect
-// deleted records.
-export function readCollection(root, dir, legacyRel, legacyKey) {
+// The directory is the ONLY store. This used to fall back to the packed file when the directory
+// was absent, and the packed files are deleted now, so there is nothing left to fall back to.
+// Absent therefore means what empty means: a store holding no records. That is a real state -
+// everything archived - and the fallback was the thing that could turn it into a resurrection,
+// by reading a frozen array on any checkout the directory had not reached.
+//
+// A rollback is `git show <pre-shard-commit>:<packed file>` plus the pre-shard plugin, not a
+// code path here. See docs/runbooks/git-parity.md in the store's own repo.
+export function readCollection(root, dir) {
   const abs = join(root, dir);
-  if (existsSync(abs)) {
-    const out = [];
-    for (const f of readdirSync(abs).filter((f) => f.endsWith('.json')).sort()) {
-      const p = join(abs, f);
-      let rec;
-      try {
-        rec = JSON.parse(readFileSync(p, 'utf8'));
-      } catch (e) {
-        // NOT a silent skip. The packed store swallowed parse errors and returned null,
-        // which cost nothing when it meant "no store". Here it would mean one record
-        // silently disappearing from a list that otherwise looks complete.
-        throw new Error(`projects: cannot parse ${dir}/${f} - ${e.message}`);
-      }
-      if (rec) out.push(rec);
+  if (!existsSync(abs)) return [];
+  const out = [];
+  for (const f of readdirSync(abs).filter((f) => f.endsWith('.json')).sort()) {
+    const p = join(abs, f);
+    let rec;
+    try {
+      rec = JSON.parse(readFileSync(p, 'utf8'));
+    } catch (e) {
+      // NOT a silent skip. The packed store swallowed parse errors and returned null,
+      // which cost nothing when it meant "no store". Here it would mean one record
+      // silently disappearing from a list that otherwise looks complete.
+      throw new Error(`projects: cannot parse ${dir}/${f} - ${e.message}`);
     }
-    return out;
+    if (rec) out.push(rec);
   }
-  const legacy = join(root, legacyRel);
-  if (!existsSync(legacy)) return [];
-  try {
-    const d = JSON.parse(readFileSync(legacy, 'utf8'));
-    return Array.isArray(d?.[legacyKey]) ? d[legacyKey].filter(Boolean) : [];
-  } catch {
-    return [];
-  }
+  return out;
 }
 
 // Returns repo-relative paths so the caller can hand them straight to commit(), which must
@@ -85,11 +81,12 @@ export function writeCollection(root, dir, items) {
 
   // Git cannot track an empty directory. Without this file a collection that empties out - the
   // last active entry consumed, a prune, everything parked - simply does not exist in the other
-  // machine's checkout, so readCollection takes the LEGACY branch there and returns the frozen
-  // packed array, and migrateCollection re-shards it, resurrecting every record just deleted
-  // with no error anywhere. The "directory wins even when empty" rule is defeated by git rather
-  // than by the code unless something keeps the directory itself tracked. Created once, beside
-  // the first write, and named in `written` so commit() adds it on that same commit.
+  // machine's checkout. That used to be a silent resurrection: readCollection took the LEGACY
+  // branch there and returned the frozen packed array, and migrateCollection re-sharded it. With
+  // the packed files gone the failure is smaller but still wrong - the collection reads as a
+  // store that was never created rather than as one deliberately emptied, and the first write on
+  // that machine re-creates the directory as a fresh commit, forking history against this one.
+  // Created once, beside the first write, and named in `written` so commit() adds it there.
   const gitkeep = join(abs, '.gitkeep');
   if (!existsSync(gitkeep)) {
     writeFileSync(gitkeep, '');

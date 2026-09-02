@@ -55,13 +55,26 @@ const HANDOFF_ARGS = (slug, project) => [
 ];
 const BODY = '## What Was Done This Session\n- stuff\n\n## Next Action\ndo the next thing\n';
 
-// Store readers. Through readCollection, not a hand-rolled file read, so a fixture that
-// seeds the LEGACY packed file (cases 18, 25) and one that runs a real gtg command (every
-// other case, sharded) are both read the same way gtg reads them.
-const ACTIVE = ['docs/handoffs/active', 'docs/handoffs/_active.json', 'handoffs'];
-const BACKLOG = ['docs/handoffs/backlog', 'docs/handoffs/_backlog.json', 'backlog'];
-const active = (root) => readCollection(root, ...ACTIVE);
-const backlog = (root) => readCollection(root, ...BACKLOG);
+// Store readers. Through readCollection, not a hand-rolled file read, so every fixture is read
+// the same way gtg reads it.
+const ACTIVE = 'docs/handoffs/active';
+const BACKLOG = 'docs/handoffs/backlog';
+const active = (root) => readCollection(root, ACTIVE);
+const backlog = (root) => readCollection(root, BACKLOG);
+// The packed stores, DELETED in 3.3.0. Named only by the cases that are ABOUT the pre-shard era:
+// the two effort cases that read git history across the migration, case 71 asserting no packed
+// file is present, and case 72 seeding one as the whole-file JSON that a third-party extension
+// hands to readStore. No fixture may seed one and expect the CLI to read it as a store.
+const PACKED_ACTIVE = 'docs/handoffs/_active.json';
+const PACKED_BACKLOG = 'docs/handoffs/_backlog.json';
+// One active record per file, written straight to disk. Cases 18 and 25 need an entry with NO
+// `sessions` field, which no gtg verb will write - a handoff always stamps one - so the fixture
+// has to place the record itself. It used to place a packed _active.json and let the startup
+// migration shard it; there is no migration now, so it writes the record file directly.
+const seedActive = (root, recs) => {
+  mkdirSync(join(root, ACTIVE), { recursive: true });
+  for (const r of recs) writeFileSync(join(root, ACTIVE, `${r.slug}.json`), JSON.stringify(r, null, 2) + '\n');
+};
 // What a commit actually named, as "<status>\t<path>" lines. --no-renames on purpose: a park
 // moves a record between two directories with the body barely changing, and rename detection
 // would collapse the pair into one R line - hiding whether BOTH paths were named, which is the
@@ -76,7 +89,7 @@ const nameStatus = (root, ref) =>
 const patchActive = (root, fn) => {
   const items = active(root);
   fn(items);
-  writeCollection(root, ACTIVE[0], items);
+  writeCollection(root, ACTIVE, items);
 };
 
 // --- 1. handoff writes doc + an active record, commits ---
@@ -113,7 +126,7 @@ const patchActive = (root, fn) => {
   const bl = backlog(repo);
   assert.equal(bl.length, 1);
   assert.equal(bl[0].slug, 'idea-x');
-  assert.ok(!existsSync(join(repo, ACTIVE[0])), 'backlog park must not touch the active store');
+  assert.ok(!existsSync(join(repo, ACTIVE)), 'backlog park must not touch the active store');
   console.log('ok 1b - backlog park');
 }
 
@@ -843,7 +856,7 @@ const patchActive = (root, fn) => {
   const repo = tempRepo();
   const r = gtg(repo, HANDOFF_ARGS('only-one', 'Only One'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  const rec = join(repo, ACTIVE[0], 'only-one.json');
+  const rec = join(repo, ACTIVE, 'only-one.json');
   assert.ok(existsSync(rec));
 
   const ru = gtg(repo, ['undo']);
@@ -890,9 +903,7 @@ const patchActive = (root, fn) => {
   const dir = join(repo, 'docs/handoffs');
   mkdirSync(dir, { recursive: true });
   for (let i = 1; i <= 9; i++) writeFileSync(join(dir, `2026-01-0${i}-0900-legacy-proj.md`), '# old\n');
-  writeFileSync(join(dir, '_active.json'), JSON.stringify({
-    handoffs: [{ project: 'Legacy Proj', slug: 'legacy-proj', next: 'x', file: 'f', updated: new Date().toISOString() }],
-  }, null, 2));
+  seedActive(repo, [{ project: 'Legacy Proj', slug: 'legacy-proj', next: 'x', file: 'f', updated: new Date().toISOString() }]);
 
   const r = gtg(repo, ['list']);
   assert.equal(r.status, 0, r.stderr);
@@ -1032,9 +1043,7 @@ const patchActive = (root, fn) => {
   const dir = join(repo, 'docs/handoffs');
   mkdirSync(dir, { recursive: true });
   for (let i = 1; i <= 4; i++) writeFileSync(join(dir, `2026-02-0${i}-0900-legacy-stats.md`), '# old\n');
-  writeFileSync(join(dir, '_active.json'), JSON.stringify({
-    handoffs: [{ project: 'Legacy Stats', slug: 'legacy-stats', next: 'x', file: 'f', updated: new Date().toISOString() }],
-  }, null, 2));
+  seedActive(repo, [{ project: 'Legacy Stats', slug: 'legacy-stats', next: 'x', file: 'f', updated: new Date().toISOString() }]);
 
   const r = gtg(repo, ['stats']);
   assert.equal(r.status, 0, r.stderr);
@@ -1427,14 +1436,14 @@ const patchActive = (root, fn) => {
   mkdirSync(join(repo, 'docs/handoffs'), { recursive: true });
 
   // Pre-shard: one duration committed to the packed file.
-  writeFileSync(join(repo, ACTIVE[1]),
+  writeFileSync(join(repo, PACKED_ACTIVE),
     JSON.stringify({ handoffs: [{ project: 'P', slug: 'p', duration_min: 45 }] }, null, 2) + '\n');
   execSync('git add -A && git commit -q -m "handoff: P — session 1"', { cwd: repo });
 
   // Post-shard: P re-timed, then Q added, as per-record files.
-  writeCollection(repo, ACTIVE[0], [{ project: 'P', slug: 'p', duration_min: 90 }]);
+  writeCollection(repo, ACTIVE, [{ project: 'P', slug: 'p', duration_min: 90 }]);
   execSync('git add -A && git commit -q -m "handoff: P — session 2"', { cwd: repo });
-  writeCollection(repo, ACTIVE[0], [{ project: 'P', slug: 'p', duration_min: 90 },
+  writeCollection(repo, ACTIVE, [{ project: 'P', slug: 'p', duration_min: 90 },
     { project: 'Q', slug: 'q', duration_min: 30 }]);
   execSync('git add -A && git commit -q -m "handoff: Q — session 1"', { cwd: repo });
 
@@ -2436,10 +2445,10 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   const bFiles = nameStatus(repo, 'HEAD');
 
   const records = (lines) => lines.map((l) => l.split('\t')[1])
-    .filter((f) => f.startsWith(`${ACTIVE[0]}/`)).sort();
-  assert.deepEqual(records(aFiles), [`${ACTIVE[0]}/alpha.json`],
+    .filter((f) => f.startsWith(`${ACTIVE}/`)).sort();
+  assert.deepEqual(records(aFiles), [`${ACTIVE}/alpha.json`],
     `Alpha's handoff must rewrite Alpha's record and no other, got: ${aFiles.join(' | ')}`);
-  assert.deepEqual(records(bFiles), [`${ACTIVE[0]}/beta.json`],
+  assert.deepEqual(records(bFiles), [`${ACTIVE}/beta.json`],
     `Beta's handoff must rewrite Beta's record and no other, got: ${bFiles.join(' | ')}`);
   assert.equal(records(aFiles).some((f) => records(bFiles).includes(f)), false,
     'the two projects still share a record file, so the two machines still conflict');
@@ -2458,9 +2467,9 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   assert.equal(r.status, 0, r.stderr);
 
   const files = nameStatus(repo, 'HEAD');
-  assert.ok(files.includes(`D\t${ACTIVE[0]}/alpha.json`),
+  assert.ok(files.includes(`D\t${ACTIVE}/alpha.json`),
     `the deletion must be in the commit, got: ${files.join(' | ')}`);
-  assert.ok(files.includes(`A\t${BACKLOG[0]}/alpha.json`),
+  assert.ok(files.includes(`A\t${BACKLOG}/alpha.json`),
     `the creation must be in the commit, got: ${files.join(' | ')}`);
   const st = execSync('git status --porcelain', { cwd: repo, encoding: 'utf8' });
   assert.equal(st.trim(), '',
@@ -2484,8 +2493,8 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   }
   gtg(repo, ['back', 'rc', '--no-list']);
 
-  assert.ok(!existsSync(join(repo, ACTIVE[1])), 'setup: no packed active file may exist here');
-  assert.ok(!existsSync(join(repo, BACKLOG[1])), 'setup: no packed backlog file may exist here');
+  assert.ok(!existsSync(join(repo, PACKED_ACTIVE)), 'setup: no packed active file may exist here');
+  assert.ok(!existsSync(join(repo, PACKED_BACKLOG)), 'setup: no packed backlog file may exist here');
   const nActive = active(repo).length;
   const nBacklog = backlog(repo).length;
   assert.equal(nActive, 2, 'setup: two records left active');   // GUARD
@@ -2519,10 +2528,13 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   const repo = tempRepo();
   mkdirSync(join(repo, 'docs/handoffs'), { recursive: true });
   mkdirSync(join(repo, '.gtg/commands'), { recursive: true });
-  // Packed on purpose: readStore is a whole-file JSON reader and this is the file a
-  // third-party extension names. gtg shards it on startup and leaves it in place, so it
-  // stays readable either way.
-  writeFileSync(join(repo, ACTIVE[1]),
+  // Packed on purpose, and written by the FIXTURE rather than left behind by anything gtg
+  // does. This used to lean on the startup migration sharding the file and leaving it in
+  // place; there is no migration and no packed file in a real hub since 3.3.0, and neither
+  // matters to what is under test. readStore is a whole-file JSON reader handed a path by a
+  // third-party extension, so what this pins is the SHAPE it returns for whatever file it is
+  // given - the one thing a "simplify readStore to a bare array" edit would break silently.
+  writeFileSync(join(repo, PACKED_ACTIVE),
     JSON.stringify({ handoffs: [{ project: 'Shape', slug: 'shape', next: 'x' }] }, null, 2) + '\n');
   writeFileSync(join(repo, '.gtg/commands/shape.mjs'),
     `export default ({ readStore }) => {
@@ -2675,60 +2687,39 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   console.log('ok 74 - the sync target comes from the branch upstream, with the named pair as fallback');
 }
 
-// --- 75. the self-migration runs AFTER the sync, so a still-packed tree cannot fork ---
-// The migration is import-time code: it executes before dispatch, so before resumeConsume's own
-// syncHub(). The order on the second machine's first command of this version was therefore
-// migrate -> commit "gtg: shard ..." -> fetch -> --ff-only REFUSED, because by then both machines
-// held their own shard commit over the same source records, and every cross-machine handoff after
-// that needed a human to resolve a fork. On exactly the two-machine round trip this store change
-// exists to make work.
-//
-// Pinned the way case 73 pins its ordering: the record being resumed exists ONLY in the mirror's
-// packed file, so it is resolvable if and only if the fetch ran before the shard commit was made.
-// A sync anywhere after the migration cannot make this pass.
+// --- 76. --dry-run names the record file it WOULD write, in both collections ---
+// The whole point of --dry-run is telling the operator which file a handoff is about to write, so
+// it is the one output that must not lie about the path. It lied: the preview read
+// `COLLECTIONS[which].dir` and COLLECTIONS collapsed to plain directory strings in 3.3.0, so the
+// line printed `undefined/<slug>.json` while every other path in the CLI was right. A 19-case
+// suite stayed green over it because nothing here had ever run --dry-run at all - `grep -c "DRY
+// RUN"` returned 0. Asserted on the LITERAL expected path rather than on the absence of
+// "undefined", so the next shape change fails here with the wrong path named rather than passing
+// on a differently-wrong one. Both collections, because `which` is the variable that broke.
 {
-  const packed = (items) => JSON.stringify({ handoffs: items }, null, 2) + '\n';
-  const rec = (slug, project) => ({
-    project, slug, next: 'do the thing', sessions: 1,
-    created: '2026-09-01', updated: new Date().toISOString(), worktree: 'repo root',
-  });
-
-  const mirror = mkdtempSync(join(tmpdir(), 'gtg-mirror3-'));
-  execSync('git init -q --bare -b master', { cwd: mirror });
-  const url = mirror.split('\\').join('/');
-
-  // The hub, still PACKED: no gtg of this version has ever run here, so there is no shard
-  // directory and the migration below is genuinely pending.
   const repo = tempRepo();
-  execSync('git checkout -q -b master', { cwd: repo });
-  mkdirSync(join(repo, 'docs/handoffs'), { recursive: true });
-  writeFileSync(join(repo, 'docs/handoffs/_active.json'), packed([rec('local-a', 'Local A')]));
-  execSync('git add docs/handoffs/_active.json', { cwd: repo });
-  execSync('git commit -q -m "packed store"', { cwd: repo });
-  execSync(`git remote add obelisk-backup "${url}"`, { cwd: repo });
-  execSync('git push -q obelisk-backup master', { cwd: repo });
-
-  // The other machine parks a second project while still on the old, packed plugin.
-  const other = mkdtempSync(join(tmpdir(), 'gtg-other3-'));
-  execSync(`git clone -q "${url}" "${other.split('\\').join('/')}"`, { cwd: tmpdir() });
-  execSync('git config user.email test@test', { cwd: other });
-  execSync('git config user.name test', { cwd: other });
-  writeFileSync(join(other, 'docs/handoffs/_active.json'),
-    packed([rec('local-a', 'Local A'), rec('remote-b', 'Remote B')]));
-  execSync('git commit -q -am "packed store: remote-b"', { cwd: other });
-  execSync('git push -q origin master', { cwd: other });
-
-  assert.equal(existsSync(join(repo, ACTIVE[0])), false,
-    'fixture: the hub must still be unsharded, or there is no migration to order against');
-  const r = gtg(repo, ['resume', 'remote-b']);
-  assert.equal(r.status, 0,
-    `the shard commit landed before the fetch, so the mirror could not fast-forward: ${r.stderr}`);
-  assert.match(r.stdout, /RESUME: "Remote B"/);
-  assert.doesNotMatch(r.stderr, /will not fast-forward/,
-    'a divergence here means the migration committed ahead of the sync');
-  assert.ok(existsSync(join(repo, ACTIVE[0])),
-    'and the tree still got sharded - after the pull, over the merged records');
-  console.log('ok 75 - the resume sync runs before the self-migration, so a packed tree cannot fork');
+  for (const [args, dir, slug] of [
+    [HANDOFF_ARGS('dr-active', 'DR Active'), ACTIVE, 'dr-active'],
+    [['backlog', '--project', 'DR Parked', '--slug', 'dr-parked', '--eta', '~1h', '--next', 'TBD'],
+      BACKLOG, 'dr-parked'],
+  ]) {
+    const r = gtg(repo, [...args, '--dry-run'], { input: BODY });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes(`--- ${dir}/${slug}.json entry ---`),
+      `--dry-run must name the record file it would write, got:
+${r.stdout}`);
+    // The other half of the contract: a preview writes and commits nothing.
+    assert.equal(existsSync(join(repo, dir, `${slug}.json`)), false, 'a dry run wrote a record');
+    assert.deepEqual(active(repo), [], 'a dry run touched the active store');
+    assert.deepEqual(backlog(repo), [], 'a dry run touched the backlog store');
+  }
+  console.log('ok 76 - --dry-run names the record file it would write, for both collections');
 }
+
+// Case 75 lived here: it pinned that the import-time self-migration ran AFTER the resume
+// sync, so a second machine on a still-packed tree could not commit its own shard over the
+// same records and fork history. Removed in 3.3.0 with the migration itself - there is no
+// packed store left to migrate, so the ordering it guarded no longer exists. The sync that
+// remains is resumeConsume's, and case 73 pins its position ahead of every read.
 
 console.log('ALL PASS');

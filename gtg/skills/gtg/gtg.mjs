@@ -7,7 +7,6 @@ import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { readCollection, writeCollection } from './lib/store.mjs';
-import { migrateCollection } from './lib/migrate.mjs';
 
 // --- storage root -----------------------------------------------------------
 function resolveRoot() {
@@ -21,20 +20,20 @@ function resolveRoot() {
   }
 }
 const ROOT = resolveRoot();
-const REL_ACTIVE = 'docs/handoffs/_active.json';   // legacy packed store, read-only after Task 2
-const REL_BACKLOG = 'docs/handoffs/_backlog.json'; // legacy packed store, read-only after Task 2
 const DIR_ACTIVE = 'docs/handoffs/active';
 const DIR_BACKLOG = 'docs/handoffs/backlog';
-const COLLECTIONS = {
-  active: { dir: DIR_ACTIVE, legacyRel: REL_ACTIVE, legacyKey: 'handoffs' },
-  backlog: { dir: DIR_BACKLOG, legacyRel: REL_BACKLOG, legacyKey: 'backlog' },
-};
-// Git-history pathspec for the stores: BOTH the legacy packed files and the sharded
-// directories, because `log` and `undo` read HISTORY and history spans the migration.
-// Dropping the packed paths would make every pre-shard commit invisible to `gtg log` and
-// would leave `gtg undo` unable to see its own change (the whole store moved out from
-// under the pathspec it anchors on).
-const STORE_PATHSPEC = [REL_ACTIVE, REL_BACKLOG, DIR_ACTIVE, DIR_BACKLOG];
+// `which` -> the directory that holds its records. One file per record, and the directory is the
+// whole store: the packed files these replaced are deleted as of 3.3.0, and nothing reads them.
+const COLLECTIONS = { active: DIR_ACTIVE, backlog: DIR_BACKLOG };
+// The packed stores, DELETED in 3.3.0 and named here for git HISTORY only. They are not read
+// from disk anywhere - readCollection lost its fallback with them - but `log` and `undo` read
+// history, and history spans the migration. Dropping these two paths would make every pre-shard
+// commit invisible to `gtg log` and would leave `gtg undo` on a pre-shard commit unable to see
+// its own change (the whole store moved out from under the pathspec it anchors on). A pathspec
+// naming a path that no longer exists in the worktree is legal and matches its old commits.
+const PACKED_ACTIVE = 'docs/handoffs/_active.json';
+const PACKED_BACKLOG = 'docs/handoffs/_backlog.json';
+const STORE_PATHSPEC = [PACKED_ACTIVE, PACKED_BACKLOG, DIR_ACTIVE, DIR_BACKLOG];
 // Directory of this CLI file - bundled extensions ship alongside it under extensions/.
 const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -169,15 +168,13 @@ function commit(paths, message) {
 // it at render, so a directory read (alphabetical by slug) renders identically to the packed
 // array it replaces.
 function entries(which) {
-  const { dir, legacyRel, legacyKey } = COLLECTIONS[which];
-  return readCollection(ROOT, dir, legacyRel, legacyKey);
+  return readCollection(ROOT, COLLECTIONS[which]);
 }
 // Returns the repo-relative paths touched, INCLUDING deletions, because commit() must name
 // every path on both `git add` and `git commit` or a removal is left for another session to
 // pick up as its own.
 function saveEntries(which, items) {
-  const { dir } = COLLECTIONS[which];
-  const { written, deleted } = writeCollection(ROOT, dir, items);
+  const { written, deleted } = writeCollection(ROOT, COLLECTIONS[which], items);
   return [...written, ...deleted];
 }
 
@@ -188,65 +185,23 @@ function saveEntries(which, items) {
 // moment syncTarget reached its fallback.
 const SYNC_REMOTE = 'obelisk-backup'; // fallback only: home's Forgejo mirror on Obelisk
 const SYNC_BRANCH = 'master';         // fallback only: the branch that mirror carries
-// syncHub runs once per process. It is called from the migration block below on the resume path
-// and again from resumeConsume; without the memo a migrating resume pays two fetches and two
-// 5-second timeouts with the hub unreachable. Declared here for the same dead-zone reason.
+// syncHub runs once per process, called from resumeConsume. The memo outlived the second caller
+// that needed it - an import-time sync ahead of the self-migration, removed in 3.3.0 with the
+// migration itself - and is kept because it is what makes the call idempotent for any future
+// caller: a second fetch costs another 5-second timeout with the hub unreachable.
 let synced = false;
 
-// PULL BEFORE YOU SHARD. The migration below is import-time code: it runs before dispatch, so
-// before resumeConsume's own syncHub(). On the second machine's first command of this version the
-// order was therefore migrate -> commit "gtg: shard ..." -> fetch -> --ff-only REFUSED, because by
-// then both machines held their own shard commit over the same source records. Every subsequent
-// cross-machine handoff then needs a human to resolve a fork - on exactly the two-machine round
-// trip this whole store change exists to make work. Synced first, the shard either arrives already
-// done (and the migration skips) or is computed over the merged tree.
-//
-// Gated twice, both deliberately narrow. On a migration that is actually PENDING, because syncHub
-// is a 5-second-capped network call and every gtg command but `resume` has always been local -
-// after the one migrating run this costs nothing again. And on the resume path (`resume`, or no
-// verb at all), which is where the sync already belongs; a `gtg handoff` that happens to be the
-// migrating command still shards locally, and its commit is a plain commit that post-commit
-// mirrors, so the next resume on either machine reconciles it. syncHub() memoises, so
-// resumeConsume's own call later in this same process is a no-op rather than a second fetch.
-const RESUME_PATH = !process.argv[2] || process.argv[2] === 'resume';
-const MIGRATION_PENDING = Object.values(COLLECTIONS)
-  .some((col) => !existsSync(join(ROOT, col.dir)) && existsSync(join(ROOT, col.legacyRel)));
-if (RESUME_PATH && MIGRATION_PENDING) syncHub();
-
-// Self-migrating: the first gtg command on a packed tree shards it. Guarded on the
-// directory's existence, so this is a no-op on every subsequent run and on a tree that
-// arrived already-migrated from the other machine.
-//
-// migrateCollection THROWS on a corrupt or slug-colliding packed file, and this loop runs
-// before EVERY command, `help` and `log` included. Uncaught, one bad file would make gtg
-// entirely unusable - a hard regression, because readCollection's legacy branch swallows the
-// same parse error and reads as empty. So: catch PER COLLECTION (a corrupt backlog must not
-// take the active list down with it), name the file on stderr, set a failing exit code, and
-// carry on with the pre-shard behaviour. Nothing is destroyed on this path - the .pre-shard
-// backup is made only after the parse succeeds and the packed file is never deleted - and the
-// warning repeats on every invocation until the file is fixed, which is the diagnostic the old
-// silent-empty read never gave.
-//
-// `migrated: 0, skipped: false` is also the shape for "no packed file ever existed" (a fresh
-// hub), so only a real migration is allowed to say anything.
-for (const [name, col] of Object.entries(COLLECTIONS)) {
-  try {
-    const r = migrateCollection(ROOT, col.dir, col.legacyRel, col.legacyKey);
-    if (r.migrated) {
-      // r.paths carries the `<packed>.pre-shard` backup as well as the record files, and it is
-      // committed deliberately: the second machine pulls an already-sharded tree and skips the
-      // migration, so a backup that only ever existed locally would leave it no rollback copy.
-      commit(r.paths, `gtg: shard ${name} store into ${col.dir}/ (${r.migrated} records)`);
-      // stderr, not stdout: the calling skill parses stdout, and a one-time notice must not
-      // land in front of a resume body or a `--dry-run` dump.
-      console.error(`gtg: sharded ${r.migrated} ${name} record(s) into ${col.dir}/`);
-    }
-  } catch (e) {
-    console.error(`gtg: could not shard the ${name} store - ${(e?.message || String(e)).split('\n')[0]}`);
-    console.error(`  Still reading ${col.legacyRel}. Fix that file and the next gtg command retries.`);
-    process.exitCode = 1;
-  }
-}
+// NO import-time migration since 3.3.0. It read the packed stores and sharded them, and both
+// packed files are deleted, so there is nothing to migrate from: a tree with no record
+// directory is a fresh hub, and the first write creates it. What went with the migration:
+//   - the `RESUME_PATH && MIGRATION_PENDING` sync that had to run BEFORE the shard commit, or
+//     the two machines each committed their own shard over the same records and every later
+//     cross-machine handoff needed a human to resolve the fork. The sync that matters is still
+//     there, in resumeConsume, ahead of every read - see syncHub() and gtg.test.mjs case 73.
+//   - the per-collection catch that kept a corrupt packed file from taking gtg down entirely.
+//     readCollection now throws per RECORD instead, which is the same protection one level
+//     down: one unparseable record names itself rather than emptying a list.
+// A pre-shard tree needs the pre-shard plugin. docs/runbooks/git-parity.md has the rollback.
 // Local UTC-offset suffix e.g. "+08:00" for the given Date - shared by nowIso()
 // and firstHandoffDate() so both emit the same aware-datetime format (a bare
 // vs offset-suffixed stamp otherwise makes Python's fromisoformat raise when
@@ -546,7 +501,7 @@ Say: "gtg ${a.slug}"
   };
   if (a['dry-run']) {
     console.log(`--- DRY RUN: would write ${relFile} ---\n${doc}`);
-    console.log(`--- ${COLLECTIONS[which].dir}/${a.slug}.json entry ---\n${JSON.stringify(entry, null, 2)}`);
+    console.log(`--- ${COLLECTIONS[which]}/${a.slug}.json entry ---\n${JSON.stringify(entry, null, 2)}`);
     return;
   }
   mkdirSync(join(ROOT, 'docs/handoffs'), { recursive: true });
@@ -1241,7 +1196,7 @@ async function resumeConsume(argv) {
 // landed on an unrelated older active-list commit, reverted THAT instead, and
 // silently deleted the backlog. STORE_PATHSPEC is what keeps that fixed now: it
 // names both sharded directories, so a backlog-only commit is still the anchor,
-// and it keeps the legacy packed files too so undoing a pre-shard commit works.
+// and it keeps the deleted packed files too so undoing a pre-shard commit works.
 //
 // The restore below is per PATH rather than per store. A sharded collection is
 // many files and a commit usually touches one or two of them, so rewinding a
@@ -1376,9 +1331,10 @@ else {
       // Both stores, always. An entry idle over 7 days is auto-shelved onto the backlog by
       // `list`, so an active-only read reports a live package as missing.
       //
-      // Through `entries`, NOT `readStore`: readStore keeps its packed shape for the published
-      // extension context, so reading the store through it here would serve issues.mjs and
-      // learn.mjs the frozen pre-shard file and report every entry written since as missing.
+      // Through `entries`, NOT `readStore`: readStore is a whole-file JSON reader, kept at its
+      // packed shape for the published extension context, so reading records through it here
+      // would name a file that no longer exists and serve issues.mjs and learn.mjs a silent
+      // empty list - every live entry reported as missing, at exit 0.
       const ownEntries = () => {
         const grab = (which) => (ownParent ? entries(which).filter((e) => e.parent === ownParent) : []);
         return { active: grab('active'), shelved: grab('backlog') };

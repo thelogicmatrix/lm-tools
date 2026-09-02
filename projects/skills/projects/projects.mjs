@@ -8,7 +8,6 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdir
 import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { readCollection, writeCollection } from './lib/store.mjs';
-import { migrateCollection } from './lib/migrate.mjs';
 
 export const STATUSES = {
   active: '🟢 active',
@@ -39,10 +38,13 @@ export const THEME_ORDER = Object.keys(THEMES);
 // and with every row themed the section renders on no row and never appears.
 export const UNTHEMED = 'Unthemed';
 export const PROJECTS_DIR = 'docs/projects';
-// The sharded store, one file per project. REL_STORE is the packed file it replaced: still
-// READ as a fallback and still on disk, so a rollback to the pre-shard plugin finds its data.
-// Contraction (deleting it) is a separate step, after a real round-trip between two machines.
+// The sharded store, one file per project, and the only store there is.
 export const REL_ENTRIES = `${PROJECTS_DIR}/entries`;
+// The packed file REL_ENTRIES replaced. DELETED from the worktree in 1.3.0, along with the
+// self-migration and the fallback that read it, and kept as a constant for one reason: git
+// HISTORY. `projects log` names it in its pathspec so the log does not cut off at the migration,
+// and projects-index-guard.mjs still refuses a hand-edit to it, because writing a file no verb
+// reads is silently ignored, which is worse than being refused. Nothing reads it from disk.
 export const REL_STORE = `${PROJECTS_DIR}/_projects.json`;
 export const REL_INDEX = `${PROJECTS_DIR}/INDEX.md`;
 // A slug is a FILENAME now (docs/projects/entries/<slug>.json), so this has to be at least as
@@ -77,19 +79,11 @@ function indexRowCount(root) {
 // deleted, so the parameter went with it: a documented way past this guard with no legitimate
 // caller left is a hole waiting for an illegitimate one.
 export function readStore(root) {
-  const p = join(root, REL_STORE);
-  // The DIRECTORY wins whenever it exists, even empty: an empty sharded store is a real state
-  // (everything archived), and falling back to the packed file there would resurrect rows the
-  // other machine deleted. Only when it is absent does the packed file get read, and it is read
-  // by parseStore rather than readCollection's own legacy branch, which swallows a parse error
-  // and returns empty - exactly the silent-empty read the refusal below exists to catch.
-  // No legacy arguments on the call: this branch has already proved the directory exists, so
-  // readCollection's packed fallback is unreachable from here. Passing them read as if it could
-  // still fire, which is the opposite of what the comment above says happens.
-  const sharded = existsSync(join(root, REL_ENTRIES));
-  const store = sharded
-    ? { projects: readCollection(root, REL_ENTRIES) }
-    : (existsSync(p) ? parseStore(p) : { projects: [] });
+  // The directory is the store. It used to fall back to the packed file when the directory was
+  // absent; the packed file is deleted, so an absent directory is a root with no projects
+  // registered yet, which readCollection returns as []. The refusal below is what keeps that
+  // from quietly wiping a populated INDEX.md.
+  const store = { projects: readCollection(root, REL_ENTRIES) };
   // Refused HERE because every verb reads the store through this one function, so one guard covers
   // all of them and every verb added later. Without it, rows in INDEX.md with none in the store is a
   // loaded gun: this returns an empty list, saveAndRender renders a bare header over the table, and
@@ -108,32 +102,20 @@ export function readStore(root) {
   if (!store.projects.length) {
     const rows = indexRowCount(root);
     if (rows) {
-      // Name the store that was actually READ. With an empty entries/ and a populated INDEX.md
-      // the packed file is never consulted, so naming _projects.json sent the reader to a file
-      // that is not the problem. "Migrate it first" itself stays verbatim: main's exit-code
-      // classifier matches on that phrase, and SKILL.md explains it to the model by name.
-      throw new Error(`projects: ${REL_INDEX} carries ${rows} row(s) and ${sharded ? REL_ENTRIES : REL_STORE
+      // Names entries/ unconditionally now: it is the only store, so it is always the one that
+      // was read. "Migrate it first" stays verbatim - main's exit-code classifier matches on
+      // that phrase, and SKILL.md explains it to the model by name.
+      throw new Error(`projects: ${REL_INDEX} carries ${rows} row(s) and ${REL_ENTRIES
         } has none. Migrate it first. Any verb here would render an empty index over it`);
     }
   }
   return store;
 }
 
-function parseStore(p) {
-  try {
-    const d = JSON.parse(readFileSync(p, 'utf8'));
-    // `version` is dropped, not moved to a _meta.json. Nothing ever read it: parseStore
-    // synthesised it and writeStore echoed it back, and no branch anywhere compared it.
-    // A per-record layout has nowhere for it to live and no reader to want it there.
-    return { projects: d.projects ?? [] };
-  } catch (e) {
-    // ponytail: still an exit rather than a throw, unlike the refusal above. Pre-existing Task 1
-    // behaviour with no test on it, and resolveRoot does the same. Convert both together if a
-    // programmatic caller ever needs to survive a corrupt store.
-    console.error(`projects: ${REL_STORE} is not valid JSON. ${e.message}`);
-    process.exit(2);
-  }
-}
+// parseStore went with the packed file in 1.3.0. It was readStore's fallback reader and had no
+// other caller. The store-level `version` field went with it and has no replacement: nothing
+// ever read it - parseStore synthesised it and writeStore echoed it back - and a per-record
+// layout has nowhere for it to live.
 
 // Returns the repo-relative paths it touched, INCLUDING deletions, because commit() must name
 // every path on both `git add` and `git commit` or a removal is left in the working tree for
@@ -795,12 +777,14 @@ export function cmdRename(root, args, opts = {}) {
 // against this root, which is not a problem worth a word.
 function warnDanglingParents(root, from, to) {
   const hits = [];
-  for (const [rel, key] of [['docs/handoffs/_active.json', 'handoffs'],
-    ['docs/handoffs/_backlog.json', 'backlog']]) {
+  // gtg's own sharded stores, read the same way gtg reads them. These were the packed
+  // docs/handoffs/_active.json and _backlog.json until gtg 3.3.0 deleted them; against a
+  // deleted file this loop found nothing and reported nothing, at exit 0, which is the exact
+  // silent-miss the warning exists to prevent.
+  for (const dir of ['docs/handoffs/active', 'docs/handoffs/backlog']) {
     try {
-      const d = JSON.parse(readFileSync(join(root, rel), 'utf8'));
-      for (const e of (d?.[key] || [])) if (e && e.parent === from) hits.push(e.slug);
-    } catch { /* not installed, or not readable. Either way there is nothing to report. */ }
+      for (const e of readCollection(root, dir)) if (e && e.parent === from) hits.push(e.slug);
+    } catch { /* not installed, or an unreadable record. Either way there is nothing to report. */ }
   }
   if (!hits.length) return;
   // Named remedy, not just a warning. `gtg rename` re-points a parent reference even when no
@@ -1032,7 +1016,7 @@ export function cmdSync(root, _args, opts = {}) {
   // A repo that has never registered anything has no folder, and readdirSync on a missing
   // directory throws an ENOENT that main would report as a bug in this file.
   for (const f of existsSync(dir) ? readdirSync(dir) : []) {
-    // archive/, entries/ and _projects.json are not .md, so the extension test drops all three.
+    // archive/ and entries/ are not .md, so the extension test drops both.
     if (!f.endsWith('.md') || f === 'INDEX.md' || f === 'CRITIQUES.md') continue;
     if (!pagesInUse.has(f)) flags.push(`NO-ROW ${f}: a page in ${PROJECTS_DIR} with no row pointing at it`);
   }
@@ -1103,41 +1087,16 @@ INDEX.md is generated. Never hand-edit it.
 // the only two that do not carry the `projects: ` prefix.
 const DELIBERATE = /^(projects: |invalid slug|unknown status|unknown theme)/;
 
-// Self-migrating: the first command on a packed tree shards it. Guarded on the entries
-// directory's existence, so this is a no-op on every later run and on a tree that arrived
-// already-sharded from the other machine.
-//
-// migrateCollection THROWS on a corrupt or slug-colliding packed file, and this runs before
-// EVERY verb, `help` included. Uncaught, one bad file would make the CLI entirely unusable, so:
-// catch, name the problem on stderr, set a failing exit code, and carry on reading the packed
-// file exactly as before. Nothing is destroyed on that path - the `.pre-shard` backup is taken
-// only after the parse succeeds and the packed file is never deleted - and the warning repeats
-// on every invocation until the file is fixed.
-//
-// Called from main() rather than at module load: `root` comes from resolveRoot, and the tests
-// import this module against a dozen fixture roots. A programmatic caller that skips main gets
-// readStore's packed-file fallback, which is why the fallback stays.
-function shardStore(root) {
-  try {
-    const r = migrateCollection(root, REL_ENTRIES, REL_STORE, 'projects');
-    if (!r.migrated) return;
-    // r.paths carries the `.pre-shard` backup as well as the record files, and it is committed
-    // deliberately: the second machine pulls an already-sharded tree and skips the migration,
-    // so a backup that only ever existed locally would leave it no rollback copy.
-    commit(root, r.paths, `projects: shard the store into ${REL_ENTRIES}/ (${r.migrated} projects)`);
-    // stderr, not stdout: the calling skill parses stdout, and a one-time notice must not land
-    // in front of a list or a rendered report.
-    console.error(`projects: sharded ${r.migrated} project(s) into ${REL_ENTRIES}/`);
-  } catch (e) {
-    console.error(`projects: could not shard the store - ${(e?.message || String(e)).split('\n')[0]}`);
-    console.error(`  Still reading ${REL_STORE}. Fix that file and the next projects command retries.`);
-    process.exitCode = 1;
-  }
-}
+// NO self-migration since 1.3.0. It read the packed docs/projects/_projects.json and sharded it,
+// and that file is deleted, so there is nothing to migrate from: a root with no entries/ is a
+// root with no projects registered, and the first `register` creates the directory. The
+// per-verb catch that kept a corrupt packed file from making the CLI unusable went with it;
+// readCollection now throws per RECORD instead, so one unparseable file names itself rather
+// than emptying the list. To migrate a still-packed tree, install 1.1.1-1.2.0 once and let it
+// shard, then upgrade. docs/runbooks/git-parity.md has the rollback.
 
 export function main(argv = process.argv.slice(2)) {
   const root = resolveRoot();
-  shardStore(root);
   const [cmd, ...rest] = argv;
   try {
     if (!cmd) return builtins.list(root, []);
