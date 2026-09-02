@@ -2256,6 +2256,24 @@ export default async (ctx) => {
   console.log('ok 63 - --next is read from the body; a body with neither is refused');
 }
 
+// --- 63b. a blank line after the heading is still a section ---
+// sectionOf's lookahead used to end on a bare `$` under the `m` flag, where `$` matches at every
+// line end, so a lazy capture starting at a blank line matched EMPTY. The section then read as
+// absent: the handoff below was refused for "missing --next" with its Next Action right there
+// (it bit a real departure on 2026-09-02, worked around by passing --next by hand), and a Task
+// list the caller wrote itself was read as missing and a second one appended underneath it.
+{
+  const dir = tempRepo();
+  const body = '## Where We Stopped\n\npara\n\n## Next Action\n\nShip the thing.\n\n## Task list\n\n- [x] mine\n';
+  const r = gtg(dir, ['handoff', '--project', 'Blank Lines', '--slug', 'blanks'], { input: body });
+  assert.equal(r.status, 0, `a well-formed body must not be refused for a blank line: ${r.stderr}`);
+  assert.equal(active(dir)[0].next, 'Ship the thing.');
+  const doc = readFileSync(join(dir, active(dir)[0].file), 'utf8');
+  assert.equal(doc.match(/^## Task list$/gm)?.length, 1,
+    'a Task list read as absent gets a second one appended under it');
+  console.log('ok 63b - a section with a blank line after its heading is read, not seen as absent');
+}
+
 {
   // Run from a worktree: worktree + branch inferred, commits and files since the session
   // start appended. Run from the hub: 'repo root', no git sections (a shared checkout).

@@ -341,8 +341,16 @@ function inferWorktree() {
   } catch { return 'repo root'; }
 }
 // Body of one `## <heading>` section, '' when absent.
+//
+// `$(?![\s\S])`, not a bare `$`. The `m` flag is needed for the `^## ` anchor - a heading is
+// almost never at offset 0 - but under `m` a bare `$` also matches at EVERY line end, and the
+// capture is lazy: with `## Next Action\n\nDo the thing` the group tries empty first, the
+// position right after the heading's newline is a line end, `$` matches there, and the section
+// reads as ''. A well-formed handoff was then refused for "missing --next", `Task list` read as
+// absent and got appended twice, and the home after-handoff hook wrote an empty session entry.
+// The negative lookahead makes `$` mean end of STRING while `^` keeps its per-line meaning.
 function sectionOf(body, heading) {
-  const m = body.match(new RegExp(`^## ${heading}[^\\n]*\\n([\\s\\S]*?)(?=\\n## |$)`, 'm'));
+  const m = body.match(new RegExp(`^## ${heading}[^\\n]*\\n([\\s\\S]*?)(?=\\n## |$(?![\\s\\S]))`, 'm'));
   return m ? m[1].trim() : '';
 }
 // The harness's task list, read from disk so the skill neither loads a task tool nor types
