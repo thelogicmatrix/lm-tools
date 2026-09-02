@@ -77,6 +77,11 @@ rewrite the whole file, so two machines editing unrelated projects still collide
 bytes, and a JSON array conflict has no semantic merge. One file per project makes unrelated
 edits disjoint, and a same-project fork conflicts on one small file, which is correct.
 
+The directory also holds a `.gitkeep`. Git cannot track an empty directory, and an emptied store
+has to survive as an *empty* store: without the keeper the directory is simply absent on the
+other machine's checkout, the reader falls back to the packed file, and every row archived here
+comes back there.
+
 `docs/projects/_projects.json` is the packed array it replaced. It is still READ when the
 directory is absent, so the first run on an unsharded tree migrates itself (backing the packed
 file up to `_projects.json.pre-shard` first) and a rollback to an older plugin still finds its
@@ -97,7 +102,10 @@ docs/projects/entries/*.json -text
 
 The `-text` line is correctness, not tidiness. A write is skipped when the file's bytes
 already equal the record's serialisation, so under a `text=auto` rule every record reads as
-changed after a fresh clone on Windows and every command rewrites the whole store.
+changed after a fresh clone on Windows and the **first mutating verb in that checkout** rewrites
+the whole store instead of one file — not every command, because that write lands LF and settles
+the file. One command losing the per-record isolation is enough to lose it: that commit is the
+conflict the sharding exists to prevent.
 
 ## Pairs with
 
