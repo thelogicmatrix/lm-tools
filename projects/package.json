@@ -5,6 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "node test/projects.test.mjs && node test/projects-index-guard.test.mjs && node test/store.test.mjs && node test/migrate.test.mjs"
+    "_test-note": "A GLOB, not a hand-listed set of legs, for the reason gtg's copy of this note gives: the list version silently skips a suite nobody remembered to add, and it BREAKS outright on a suite that is deleted - this script still named test/migrate.test.mjs after 1.3.0 removed it, so npm test died on MODULE_NOT_FOUND while `node --test` over the same directory was green. The glob picks up every test/*.test.mjs, so a suite added or removed needs no edit here. A bare directory argument does NOT work on Node 24 (it is resolved as a module), hence the glob.",
+    "test": "node --test \"test/*.test.mjs\""
   }
 }
