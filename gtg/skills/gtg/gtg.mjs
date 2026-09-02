@@ -103,6 +103,20 @@ function writeStore(rel, data) {
   mkdirSync(dirname(p), { recursive: true });
   writeFileSync(p, JSON.stringify(data, null, 2) + '\n');
 }
+// The one line of a child-process failure that actually says what went wrong. Three traps, each
+// of which has printed a useless message here:
+//   - `e.stderr` under stdio:'pipe' is a BUFFER, and an EMPTY buffer is TRUTHY, so the usual
+//     `e.stderr || e.message` shadows the message entirely - a timeout kill printed a bare dash.
+//   - git leads with "warning: LF will be replaced by CRLF" on a Windows checkout, so the first
+//     line is git's line-ending advice rather than the cause.
+//   - a refused fast-forward leads with nine `hint:` lines.
+// So: coerce, prefer stderr only when it has content, and take the first line that is neither
+// blank nor advice. Falls back to the first line of whatever there is rather than to ''.
+function firstMeaningfulLine(e) {
+  const raw = `${e?.stderr ?? ''}`.trim() || `${e?.message ?? ''}`.trim() || String(e ?? '');
+  const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => !/^(warning|hint):/i.test(l)) || lines[0] || '';
+}
 function commit(paths, message) {
   // An EMPTY path list degrades to exactly the pathspec-less commit the block below exists
   // to prevent: `git commit -- ` with nothing after the `--` takes the whole shared index.
@@ -125,7 +139,7 @@ function commit(paths, message) {
     const out = `${e.stdout || ''}${e.stderr || ''}`;
     if (/nothing to commit|no changes added/i.test(out)) return; // identical content - files already on disk
     // Don't let a real git failure masquerade as success: the files are written, but say so.
-    console.error(`gtg: git commit failed, changes are on disk but uncommitted - ${(e.stderr || e.message || '').toString().trim().split('\n')[0]}`);
+    console.error(`gtg: git commit failed, changes are on disk but uncommitted - ${firstMeaningfulLine(e)}`);
     // NAME THE PATHS, because nothing else ever will. `git add` has already succeeded by the
     // time a commit failure lands here, so these records sit staged in the shared checkout -
     // and writeCollection skips byte-identical files, so a later gtg run recomputes the same
@@ -166,6 +180,38 @@ function saveEntries(which, items) {
   const { written, deleted } = writeCollection(ROOT, dir, items);
   return [...written, ...deleted];
 }
+
+// Fallback sync target, used only when the branch has no upstream - the reasoning lives at
+// syncTarget() below, beside the code that consults it. DECLARED HERE because the resume-path
+// sync a few lines down runs at import time: syncHub is a hoisted function declaration and can be
+// called before its definition, but a `const` still in its temporal dead zone would throw the
+// moment syncTarget reached its fallback.
+const SYNC_REMOTE = 'obelisk-backup'; // fallback only: home's Forgejo mirror on Obelisk
+const SYNC_BRANCH = 'master';         // fallback only: the branch that mirror carries
+// syncHub runs once per process. It is called from the migration block below on the resume path
+// and again from resumeConsume; without the memo a migrating resume pays two fetches and two
+// 5-second timeouts with the hub unreachable. Declared here for the same dead-zone reason.
+let synced = false;
+
+// PULL BEFORE YOU SHARD. The migration below is import-time code: it runs before dispatch, so
+// before resumeConsume's own syncHub(). On the second machine's first command of this version the
+// order was therefore migrate -> commit "gtg: shard ..." -> fetch -> --ff-only REFUSED, because by
+// then both machines held their own shard commit over the same source records. Every subsequent
+// cross-machine handoff then needs a human to resolve a fork - on exactly the two-machine round
+// trip this whole store change exists to make work. Synced first, the shard either arrives already
+// done (and the migration skips) or is computed over the merged tree.
+//
+// Gated twice, both deliberately narrow. On a migration that is actually PENDING, because syncHub
+// is a 5-second-capped network call and every gtg command but `resume` has always been local -
+// after the one migrating run this costs nothing again. And on the resume path (`resume`, or no
+// verb at all), which is where the sync already belongs; a `gtg handoff` that happens to be the
+// migrating command still shards locally, and its commit is a plain commit that post-commit
+// mirrors, so the next resume on either machine reconciles it. syncHub() memoises, so
+// resumeConsume's own call later in this same process is a no-op rather than a second fetch.
+const RESUME_PATH = !process.argv[2] || process.argv[2] === 'resume';
+const MIGRATION_PENDING = Object.values(COLLECTIONS)
+  .some((col) => !existsSync(join(ROOT, col.dir)) && existsSync(join(ROOT, col.legacyRel)));
+if (RESUME_PATH && MIGRATION_PENDING) syncHub();
 
 // Self-migrating: the first gtg command on a packed tree shards it. Guarded on the
 // directory's existence, so this is a no-op on every subsequent run and on a tree that
@@ -543,7 +589,7 @@ Say: "gtg ${a.slug}"
       if (typeof mod.default !== 'function') throw new Error('no default export function');
       await mod.default({ root: ROOT, entry, file: relFile, body: fullBody, worktree, readStore, writeStore, commit });
     } catch (e) {
-      console.error(`gtg: after-handoff hook failed - ${(e.stderr || e.message || String(e)).toString().trim().split('\n')[0]}`);
+      console.error(`gtg: after-handoff hook failed - ${firstMeaningfulLine(e)}`);
       process.exitCode = 1;
     }
   }
@@ -1050,8 +1096,8 @@ function commandFileFor(t) {
 // upstream must never be moved, gtg runs from feature worktrees, and a detached HEAD (mid-rebase,
 // mid-bisect) reports 'HEAD' and skips. Where an upstream DOES exist it is always the right
 // target, so the lookup carries the guard the branch comparison used to.
-const SYNC_REMOTE = 'obelisk-backup'; // fallback only: home's Forgejo mirror on Obelisk
-const SYNC_BRANCH = 'master';         // fallback only: the branch that mirror carries
+// SYNC_REMOTE / SYNC_BRANCH are declared up beside the migration block, which calls syncHub()
+// at import time and would otherwise hit them in their temporal dead zone.
 function syncTarget(git) {
   let branch;
   try { branch = git('rev-parse', '--abbrev-ref', 'HEAD'); } catch { return null; }
@@ -1059,11 +1105,15 @@ function syncTarget(git) {
   try {
     const remote = git('config', '--get', `branch.${branch}.remote`);
     const merge = git('config', '--get', `branch.${branch}.merge`);
-    if (remote && merge) return { remote, branch: merge.replace('refs/heads/', '') };
+    // Anchored: branch.<b>.merge is a full ref, so the prefix is only ever at the START. Unanchored,
+    // a branch legitimately named `x/refs/heads/y` gets mangled into `x/y`.
+    if (remote && merge) return { remote, branch: merge.replace(/^refs\/heads\//, '') };
   } catch { /* --get exits 1 when unset: no upstream, try the fallback below */ }
   return branch === SYNC_BRANCH ? { remote: SYNC_REMOTE, branch: SYNC_BRANCH } : null;
 }
 function syncHub() {
+  if (synced) return; // once per process - see `synced` up by the migration block
+  synced = true;
   // stderr piped, not inherited: execFileSync forwards a child's stderr to ours otherwise,
   // and git narrates a refused fast-forward in nine hint: lines - five of git's own above every
   // line of ours. The after-resume hook piped it for the same reason before this moved here.
@@ -1173,7 +1223,7 @@ async function resumeConsume(argv) {
       if (typeof mod.default !== 'function') throw new Error('no default export function');
       await mod.default({ root: ROOT, entry: match, file: match.file ?? null, body: body ?? '', kept: !!a.keep, readStore, writeStore, commit });
     } catch (e) {
-      console.error(`gtg: after-resume hook failed - ${(e.stderr || e.message || String(e)).toString().trim().split('\n')[0]}`);
+      console.error(`gtg: after-resume hook failed - ${firstMeaningfulLine(e)}`);
       process.exitCode = 1;
     }
   }

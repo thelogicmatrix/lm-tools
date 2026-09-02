@@ -230,6 +230,11 @@ const patchActive = (root, fn) => {
   assert.match(r.stdout, /^docs\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-proj-c\.md$/m, 'handoff success output missing from stdout');
   assert.match(r.stdout, /RESUME: "gtg proj-c"/);
   assert.match(r.stderr, /uncommitted/i, 'genuine git commit failure must be surfaced as a warning, not swallowed');
+  // The cause line, via firstMeaningfulLine: never blank (an empty stderr Buffer is TRUTHY and
+  // used to shadow e.message, printing a bare dash) and never git's own CRLF warning or the first
+  // of nine `hint:` lines, which is what a naive split('\n')[0] hands you on a Windows checkout.
+  assert.match(r.stderr, /git commit failed[^\n]*- (?!(?:warning|hint):)\S/,
+    `the failure line must name the cause, not advice or nothing at all: ${r.stderr}`);
   assert.equal(active(repo).length, 1, 'entry should still be written to disk despite commit failure');
   console.log('ok 3 - commit failure exits non-zero, write still reported');
 }
@@ -2668,6 +2673,62 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   assert.ok(!active(obelisk).some((e) => e.slug === 'later-work'),
     'nothing was pulled onto the feature branch');
   console.log('ok 74 - the sync target comes from the branch upstream, with the named pair as fallback');
+}
+
+// --- 75. the self-migration runs AFTER the sync, so a still-packed tree cannot fork ---
+// The migration is import-time code: it executes before dispatch, so before resumeConsume's own
+// syncHub(). The order on the second machine's first command of this version was therefore
+// migrate -> commit "gtg: shard ..." -> fetch -> --ff-only REFUSED, because by then both machines
+// held their own shard commit over the same source records, and every cross-machine handoff after
+// that needed a human to resolve a fork. On exactly the two-machine round trip this store change
+// exists to make work.
+//
+// Pinned the way case 73 pins its ordering: the record being resumed exists ONLY in the mirror's
+// packed file, so it is resolvable if and only if the fetch ran before the shard commit was made.
+// A sync anywhere after the migration cannot make this pass.
+{
+  const packed = (items) => JSON.stringify({ handoffs: items }, null, 2) + '\n';
+  const rec = (slug, project) => ({
+    project, slug, next: 'do the thing', sessions: 1,
+    created: '2026-09-01', updated: new Date().toISOString(), worktree: 'repo root',
+  });
+
+  const mirror = mkdtempSync(join(tmpdir(), 'gtg-mirror3-'));
+  execSync('git init -q --bare -b master', { cwd: mirror });
+  const url = mirror.split('\\').join('/');
+
+  // The hub, still PACKED: no gtg of this version has ever run here, so there is no shard
+  // directory and the migration below is genuinely pending.
+  const repo = tempRepo();
+  execSync('git checkout -q -b master', { cwd: repo });
+  mkdirSync(join(repo, 'docs/handoffs'), { recursive: true });
+  writeFileSync(join(repo, 'docs/handoffs/_active.json'), packed([rec('local-a', 'Local A')]));
+  execSync('git add docs/handoffs/_active.json', { cwd: repo });
+  execSync('git commit -q -m "packed store"', { cwd: repo });
+  execSync(`git remote add obelisk-backup "${url}"`, { cwd: repo });
+  execSync('git push -q obelisk-backup master', { cwd: repo });
+
+  // The other machine parks a second project while still on the old, packed plugin.
+  const other = mkdtempSync(join(tmpdir(), 'gtg-other3-'));
+  execSync(`git clone -q "${url}" "${other.split('\\').join('/')}"`, { cwd: tmpdir() });
+  execSync('git config user.email test@test', { cwd: other });
+  execSync('git config user.name test', { cwd: other });
+  writeFileSync(join(other, 'docs/handoffs/_active.json'),
+    packed([rec('local-a', 'Local A'), rec('remote-b', 'Remote B')]));
+  execSync('git commit -q -am "packed store: remote-b"', { cwd: other });
+  execSync('git push -q origin master', { cwd: other });
+
+  assert.equal(existsSync(join(repo, ACTIVE[0])), false,
+    'fixture: the hub must still be unsharded, or there is no migration to order against');
+  const r = gtg(repo, ['resume', 'remote-b']);
+  assert.equal(r.status, 0,
+    `the shard commit landed before the fetch, so the mirror could not fast-forward: ${r.stderr}`);
+  assert.match(r.stdout, /RESUME: "Remote B"/);
+  assert.doesNotMatch(r.stderr, /will not fast-forward/,
+    'a divergence here means the migration committed ahead of the sync');
+  assert.ok(existsSync(join(repo, ACTIVE[0])),
+    'and the tree still got sharded - after the pull, over the merged records');
+  console.log('ok 75 - the resume sync runs before the self-migration, so a packed tree cannot fork');
 }
 
 console.log('ALL PASS');

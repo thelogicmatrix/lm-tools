@@ -5,6 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "node test/gtg.test.mjs && node test/issues.test.mjs && node --test test/store.test.mjs && node --test test/migrate.test.mjs"
+    "_test-note": "A GLOB, not a hand-listed set of legs. The list version silently skipped a whole suite once: Task 1's 15 store cases were written, committed and never run because nobody remembered to add them here. `node --test <dir>` picks up every *.test.mjs, so a new suite runs the day it lands. The assert-based suites (gtg, issues) run under it too - a plain script that throws exits non-zero and the runner reports it as a failed file.",
+    "test": "node --test \"test/*.test.mjs\""
   }
 }

@@ -21,6 +21,13 @@ export function migrateCollection(root, dir, legacyRel, legacyKey) {
     throw new Error(`gtg: cannot read ${legacyRel} to migrate it - ${e.message}`);
   }
 
+  // Nothing to move means nothing to do, and in particular NO directory is created. Creating an
+  // empty one here would make the sharded store authoritative (readCollection prefers the
+  // directory) over a packed file this function could not interpret - `{"handoffs": {}}` reads as
+  // zero items and would silently become an empty store, where leaving it alone lets the packed
+  // file be read as it always was. Adopted from projects/skills/projects/lib/migrate.mjs.
+  if (!items.length) return { migrated: 0, skipped: false, paths: [] };
+
   const collision = slugCollision(items);
   if (collision) {
     throw new Error(`gtg: ${legacyRel} has slugs that collide on "${collision}" - fix them before migrating`);

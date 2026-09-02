@@ -99,3 +99,19 @@ test('a re-migrate after a rollback keeps the original backup', () => {
   const bak = JSON.parse(readFileSync(join(root, 'docs/packed.json.pre-shard'), 'utf8'));
   assert.deepEqual(bak.items, [{ slug: 'a' }]);
 });
+
+// Adopted from the projects suite. An empty or uninterpretable `handoffs` key must not create
+// the collection directory: readCollection prefers the directory, so an empty one would make a
+// packed file this function could not read authoritative and silently zero the store.
+test('an empty or non-array packed key migrates nothing and creates no directory', () => {
+  for (const handoffs of [[], {}, null]) {
+    const root = tmp();
+    mkdirSync(join(root, 'docs'), { recursive: true });
+    writeFileSync(join(root, 'docs/packed.json'), JSON.stringify({ handoffs }));
+    const res = migrateCollection(root, 'docs/shard', 'docs/packed.json', 'handoffs');
+    assert.equal(res.migrated, 0);
+    assert.equal(res.skipped, false);
+    assert.equal(existsSync(join(root, 'docs/shard')), false, `${JSON.stringify(handoffs)} created a directory`);
+    assert.equal(existsSync(join(root, 'docs/packed.json.pre-shard')), false, 'and made no backup');
+  }
+});

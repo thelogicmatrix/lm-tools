@@ -83,8 +83,12 @@ export function readStore(root) {
   // other machine deleted. Only when it is absent does the packed file get read, and it is read
   // by parseStore rather than readCollection's own legacy branch, which swallows a parse error
   // and returns empty - exactly the silent-empty read the refusal below exists to catch.
-  const store = existsSync(join(root, REL_ENTRIES))
-    ? { projects: readCollection(root, REL_ENTRIES, REL_STORE, 'projects') }
+  // No legacy arguments on the call: this branch has already proved the directory exists, so
+  // readCollection's packed fallback is unreachable from here. Passing them read as if it could
+  // still fire, which is the opposite of what the comment above says happens.
+  const sharded = existsSync(join(root, REL_ENTRIES));
+  const store = sharded
+    ? { projects: readCollection(root, REL_ENTRIES) }
     : (existsSync(p) ? parseStore(p) : { projects: [] });
   // Refused HERE because every verb reads the store through this one function, so one guard covers
   // all of them and every verb added later. Without it, rows in INDEX.md with none in the store is a
@@ -104,7 +108,11 @@ export function readStore(root) {
   if (!store.projects.length) {
     const rows = indexRowCount(root);
     if (rows) {
-      throw new Error(`projects: ${REL_INDEX} carries ${rows} row(s) and ${REL_STORE
+      // Name the store that was actually READ. With an empty entries/ and a populated INDEX.md
+      // the packed file is never consulted, so naming _projects.json sent the reader to a file
+      // that is not the problem. "Migrate it first" itself stays verbatim: main's exit-code
+      // classifier matches on that phrase, and SKILL.md explains it to the model by name.
+      throw new Error(`projects: ${REL_INDEX} carries ${rows} row(s) and ${sharded ? REL_ENTRIES : REL_STORE
         } has none. Migrate it first. Any verb here would render an empty index over it`);
     }
   }
@@ -499,6 +507,22 @@ export function today() {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 
+// The one line of a child-process failure that actually says what went wrong. Three traps, each
+// of which has printed a useless message here:
+//   - `e.stderr` under stdio:'pipe' is a BUFFER, and an EMPTY buffer is TRUTHY, so the usual
+//     `e.stderr || e.message` shadows the message entirely - a timeout kill printed a bare dash.
+//   - git leads with "warning: LF will be replaced by CRLF" on a Windows checkout, so the first
+//     line is git's line-ending advice rather than the cause.
+//   - a refused fast-forward leads with nine `hint:` lines.
+// So: coerce, prefer stderr only when it has content, and take the first line that is neither
+// blank nor advice. Falls back to the first line of whatever there is rather than to ''.
+// ponytail: the twin of gtg.mjs's firstMeaningfulLine, for the same reason the store is a copy.
+function firstMeaningfulLine(e) {
+  const raw = `${e?.stderr ?? ''}`.trim() || `${e?.message ?? ''}`.trim() || String(e ?? '');
+  const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => !/^(warning|hint):/i.test(l)) || lines[0] || '';
+}
+
 export function commit(root, paths, message) {
   // No paths means nothing was asked for. Falling through would be the exact disaster
   // this function exists to prevent: a bare `git add` exits 0 ("Nothing specified" is a
@@ -523,8 +547,7 @@ export function commit(root, paths, message) {
     // Anchored to line start so a real failure that merely QUOTES one of these phrases
     // (a pre-commit hook echoing `git status`, say) is not swallowed as success.
     if (/^(nothing (added )?to commit|no changes added)/im.test(out)) return true;
-    console.error(`projects: git commit failed, changes are on disk but uncommitted. ${
-      (e.stderr || e.message || '').toString().trim().split('\n')[0]}`);
+    console.error(`projects: git commit failed, changes are on disk but uncommitted. ${firstMeaningfulLine(e)}`);
     // The `false` below is not enough on its own: saveAndRender discards it, and a batch
     // caller reads $? rather than our stderr. On 2026-08-11 a 39-call `projects set`
     // backfill hit a stale index.lock and ran to completion on warnings alone, ending with
