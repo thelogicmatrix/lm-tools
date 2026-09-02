@@ -393,8 +393,14 @@ async function writeHandoff(argv, { which, verb }) {
   if (typeof a.next !== 'string') a.next = sectionOf(body, 'Next Action').split('\n').find((l) => l.trim()) || undefined;
   const missing = ['project', 'slug', 'next'].filter((k) => !a[k]);
   if (missing.length) { console.error(`gtg ${verb}: missing --${missing.join(', --')}${missing.includes('next') ? ' (or a ## Next Action section in the body)' : ''}`); process.exit(2); }
-  // slug becomes a filename and a git-add arg - constrain it so it can't traverse paths or inject shell.
-  if (!/^[A-Za-z0-9_-]+$/.test(a.slug)) { console.error(`gtg ${verb}: --slug must match [A-Za-z0-9_-]`); process.exit(2); }
+  // slug becomes a filename and a git-add arg - constrain it so it can't traverse paths or inject
+  // shell. At least as strict as lib/store.mjs's own SLUG_OK, which requires an alphanumeric FIRST
+  // character: a leading '-' reads as a flag to git and to argv parsing. Refused here rather than
+  // inside the store because writeHandoff writes the .md to disk before it saves the entry, and
+  // that no-orphan-file guarantee only holds while nothing after that write can still refuse -
+  // `--slug _foo` used to pass here, land the markdown, and then throw inside writeCollection,
+  // leaving an untracked .md, no entry, and a body that came from stdin and is therefore gone.
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(a.slug)) { console.error(`gtg ${verb}: --slug must start with a letter or digit and match [A-Za-z0-9_-]`); process.exit(2); }
   if (!body) { console.error(`gtg ${verb}: empty body on stdin`); process.exit(2); }
   // Slug reuse lives HERE, not in a `list <name>` probe the skill runs first (one tool turn per
   // departure, 2026-08-26). A fresh slug for a project that already has an entry mints a

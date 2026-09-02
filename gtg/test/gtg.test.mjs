@@ -144,10 +144,12 @@ const patchActive = (root, fn) => {
   assert.equal(r3.status, 2);
   assert.match(r3.stderr, /empty body/);
   // slug must not traverse paths or inject shell - rejected before any write
-  for (const bad of ['../evil', 'a/b', 'a;rm -rf', 'a b']) {
+  // '_lead' and '.lead' are here because the store's SLUG_OK demands an alphanumeric first
+  // character and this check has to be at least as strict, or the .md lands and the store throws.
+  for (const bad of ['../evil', 'a/b', 'a;rm -rf', 'a b', '_lead', '.lead']) {
     const rb = gtg(repo, HANDOFF_ARGS(bad, 'X'), { input: BODY });
     assert.equal(rb.status, 2, `bad slug '${bad}' should exit 2`);
-    assert.match(rb.stderr, /--slug must match/);
+    assert.match(rb.stderr, /--slug must start with a letter or digit/);
   }
   console.log('ok - error cases');
 }
@@ -2272,6 +2274,23 @@ export default async (ctx) => {
   assert.equal(doc.match(/^## Task list$/gm)?.length, 1,
     'a Task list read as absent gets a second one appended under it');
   console.log('ok 63b - a section with a blank line after its heading is read, not seen as absent');
+}
+
+// --- 63c. a slug the store would refuse is refused BEFORE the markdown is written ---
+// writeHandoff writes the .md to disk and only then saves the entry, so its no-orphan-file
+// guarantee holds only while nothing after that write can still refuse. `--slug _foo` passed the
+// CLI's looser [A-Za-z0-9_-]+ and then threw inside writeCollection, whose SLUG_OK demands an
+// alphanumeric first character: an untracked .md left in docs/handoffs, no entry anywhere, and
+// the body - which came from stdin - simply gone. Same hazard Task 6 closed on the projects side.
+{
+  const dir = tempRepo();
+  const r = gtg(dir, ['handoff', '--project', 'Bad Slug', '--slug', '_foo', '--next', 'x'], { input: BODY });
+  assert.equal(r.status, 2, `a leading underscore must be refused, got: ${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /--slug must start with a letter or digit/);
+  assert.equal(existsSync(join(dir, 'docs/handoffs')), false,
+    'refused BEFORE any write: nothing may be left on disk for the user to find and clean up');
+  assert.deepEqual(active(dir), []);
+  console.log('ok 63c - a slug the store would refuse is refused before the handoff file is written');
 }
 
 {
