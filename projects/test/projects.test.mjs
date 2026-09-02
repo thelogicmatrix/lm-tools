@@ -1,10 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readStore, writeStore, validateStatus, validateSlug, sortProjects, commit, resolveRoot, today, REL_STORE, STATUSES, renderIndex, parseIndex, assertRenderable, THEMES, THEME_ORDER, validateTheme } from '../skills/projects/projects.mjs';
+import { readStore, writeStore, REL_ENTRIES, validateStatus, validateSlug, sortProjects, commit, resolveRoot, today, REL_STORE, STATUSES, renderIndex, parseIndex, assertRenderable, THEMES, THEME_ORDER, validateTheme } from '../skills/projects/projects.mjs';
+
+// Record files only. writeCollection also keeps a .gitkeep in the directory - that is what stops
+// an emptied store from vanishing out of git and being resurrected from the packed file on the
+// other machine - and it is not a project. The store tests own the assertions about it.
+const entryFiles = (root) => (existsSync(join(root, REL_ENTRIES))
+  ? readdirSync(join(root, REL_ENTRIES)).filter((f) => f.endsWith('.json')).sort() : []);
+// One string standing for the whole store's bytes, for the "changed nothing" assertions
+// that used to read _projects.json directly. Names are included, so a rename shows up too.
+const storeBytes = (root) => entryFiles(root)
+  .map((f) => `${f}\n${readFileSync(join(root, REL_ENTRIES, f), 'utf8')}`).join('');
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'projects-test-'));
@@ -25,7 +35,7 @@ function gitFixture() {
 
 test('store round-trips identically', () => {
   const root = fixture();
-  const store = { version: 1, projects: [
+  const store = { projects: [
     { slug: 'price-alerts', name: 'price-alerts', status: 'active', where: ['C:/dev/price-alerts'],
       repo: 'C:/dev/price-alerts', page: 'price-alerts.md', lastTouched: '2026-07-29' },
   ] };
@@ -34,7 +44,7 @@ test('store round-trips identically', () => {
 });
 
 test('readStore returns an empty store when the file is absent', () => {
-  assert.deepEqual(readStore(fixture()), { version: 1, projects: [] });
+  assert.deepEqual(readStore(fixture()), { projects: [] });
 });
 
 test('status accepts the four words and rejects everything else', () => {
@@ -46,7 +56,12 @@ test('status accepts the four words and rejects everything else', () => {
 
 test('slug rejects anything that could escape a path', () => {
   assert.equal(validateSlug('price-alerts'), 'price-alerts');
-  for (const bad of ['../etc', 'a/b', 'a b', '', 'a.md']) {
+  // A slug is a FILENAME now. The leading '_' and '-' are refused HERE, at the one place every
+  // verb validates its argument, rather than five frames later inside writeStore: cmdRegister
+  // writes the page skeleton before it saves the row, and its no-orphan-page guarantee only
+  // holds while nothing downstream of that write can still refuse. '_' also keeps the door shut
+  // on a '_meta.json' that the record reader would otherwise read back as a project.
+  for (const bad of ['../etc', 'a/b', 'a b', '', 'a.md', '_meta', '-n', '.hidden']) {
     assert.throws(() => validateSlug(bad), /invalid slug/);
   }
 });
@@ -620,7 +635,7 @@ test('a page field that escapes docs/projects is never read, and the other rows 
 //   2. Anything that can reach git runs in a gitFixture, whose own .git keeps `git add`
 //      away from the shared index every concurrent session is staging into.
 import { cmdCurrent, cmdStatus, cmdRegister, cmdArchive, findProject, REL_INDEX } from '../skills/projects/projects.mjs';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -819,21 +834,21 @@ mtest('register adopts an existing page rather than clobbering the narrative', (
 test('a duplicate register leaves both the page and the store byte-identical', () => {
   const root = seeded();
   const page = readFileSync(join(root, 'docs/projects/beacon.md'), 'utf8');
-  const store = readFileSync(join(root, REL_STORE), 'utf8');
+  const store = storeBytes(root);
   assert.throws(() => cmdRegister(root, ['beacon', '--name', 'Dup'], { commit: false }),
     /already registered/);
   assert.equal(readFileSync(join(root, 'docs/projects/beacon.md'), 'utf8'), page);
-  assert.equal(readFileSync(join(root, REL_STORE), 'utf8'), store);
+  assert.equal(storeBytes(root), store);
 });
 
 test('an unrenderable name is refused before anything reaches disk', () => {
   // A pipe in a name shifts every column of its row. Caught before the write, because a
   // stored row that no render can emit bricks every later status, current and render call.
   const root = seeded();
-  const store = readFileSync(join(root, REL_STORE), 'utf8');
+  const store = storeBytes(root);
   assert.throws(() => cmdRegister(root, ['pipey', '--name', 'a|b', '--theme', 'tooling'], { commit: false }),
     /pipe or line break/);
-  assert.equal(readFileSync(join(root, REL_STORE), 'utf8'), store);
+  assert.equal(storeBytes(root), store);
   assert.ok(!existsSync(join(root, 'docs/projects/pipey.md')), 'and no orphan skeleton either');
 });
 
@@ -848,7 +863,7 @@ mtest('a mutating verb commits its own paths only, never the shared index', () =
 
   cmdStatus(root, ['beacon', 'paused'], { date: '2026-07-29' }); // commit ON, the real path
   const committed = git('show', '--name-only', '--format=', 'HEAD').toString().trim().split('\n');
-  assert.deepEqual(committed.sort(), [REL_INDEX, REL_STORE].sort());
+  assert.deepEqual(committed.sort(), [REL_INDEX, `${REL_ENTRIES}/beacon.json`].sort());
   assert.equal(git('diff', '--cached', '--name-only').toString().trim(), 'other.md',
     'the staged work of the other session must be left exactly where it was');
 });
@@ -1230,10 +1245,15 @@ test('a forged flag line in a slug cannot force the exit code', () => {
   // is per report rather than per field, so no field can do this.
   // fixture, not gitFixture: this store has no `repo`, so sync makes no git call and the three
   // processes `git init` plus two `git config` cost were paid for nothing.
+  // Hand-written straight into the entry FILE rather than through writeStore, which now refuses
+  // this slug: a filename cannot hold a newline. The record body still can, the record files are
+  // as hand-editable as the packed array was, and sync only reads, so the squash is still the
+  // only thing standing between a hand-edited slug and a forged exit code.
   const root = fixture();
-  writeStore(root, { version: 1, projects: [
+  mkdirSync(join(root, REL_ENTRIES), { recursive: true });
+  writeFileSync(join(root, REL_ENTRIES, 'ok.json'), JSON.stringify(
     { slug: 'ok\nMALFORMED injected: forced exit 1', name: 'OK', status: 'active', where: [],
-      page: 'ok.md', lastTouched: '2026-07-29' }] });
+      page: 'ok.md', lastTouched: '2026-07-29' }, null, 2) + '\n');
   writeFileSync(join(root, 'docs/projects/ok.md'), FLAGGABLE_PAGE);
   const r = runCli(root, ['sync']);
   assert.match(r.stdout, /UNVERIFIED/, 'the row really is flagged, so the slug really is printed');
@@ -1373,7 +1393,7 @@ test('main help prints the usage without touching the store', () => {
     assert.match(r.stdout, /projects sync/, 'a verb that exists has to be advertised');
     assert.doesNotMatch(r.stdout, /[—;]/, 'no em dash and no semicolon in printed output');
   }
-  assert.ok(!existsSync(join(root, REL_STORE)));
+  assert.ok(!existsSync(join(root, REL_ENTRIES)));
 });
 
 // One guard, at the one place every verb reads the store, rather than in each verb. Without it a
@@ -1406,7 +1426,7 @@ test('rows in INDEX.md with an empty store refuse every verb, on either side of 
       assert.equal(r.status, 2, `${shape} / ${args[0] || 'list'} did not refuse: ${r.stdout}${r.stderr}`);
       assert.match(r.stderr, /[Mm]igrate it first/);
       assert.equal(readFileSync(join(root, REL_INDEX), 'utf8'), table, `${shape}: the table was rewritten`);
-      assert.ok(!existsSync(join(root, REL_STORE)));
+      assert.ok(!existsSync(join(root, REL_ENTRIES)));
     }
   }
 });
@@ -1542,7 +1562,7 @@ test('a flag handed another flag as its value is refused, not taken as the value
   // same class as `unknown status`, and every other argv refusal in this CLI exits 2.
   assert.equal(typo.status, 2, typo.stdout);
   assert.match(typo.stderr, /--name was given --status/);
-  assert.ok(!existsSync(join(root, REL_STORE)), 'the row was never written');
+  assert.ok(!existsSync(join(root, REL_ENTRIES)), 'the row was never written');
   assert.ok(!existsSync(join(root, 'docs/projects/demo.md')), 'and no orphan page was left behind');
 });
 
@@ -1582,7 +1602,7 @@ test('register with a valid --theme refuses a trailing --name or --status, and w
   const noStatus = runCli(root, ['register', 'demo', '--theme', 'work', '--status']);
   assert.equal(noStatus.status, 2, noStatus.stderr);
   assert.match(noStatus.stderr, /--status was given no value/);
-  assert.ok(!existsSync(join(root, REL_STORE)), 'no row was ever written');
+  assert.ok(!existsSync(join(root, REL_ENTRIES)), 'no row was ever written');
   assert.ok(!existsSync(join(root, 'docs/projects/demo.md')), 'and no orphan page was left behind');
 });
 
@@ -1652,7 +1672,7 @@ test('rename refuses a taken slug, an unknown one, and itself, and changes nothi
   const { root } = gitFixture();
   runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
   runCli(root, ['register', 'beta', '--name', 'Beta', '--status', 'active', '--theme', 'tooling']);
-  const before = readFileSync(join(root, REL_STORE), 'utf8');
+  const before = storeBytes(root);
 
   // The exit codes split the way the rest of this CLI splits them. 2 is "what you named is not
   // a thing", so an unknown slug is a 2. A taken slug and a no-op rename are well-formed
@@ -1669,7 +1689,7 @@ test('rename refuses a taken slug, an unknown one, and itself, and changes nothi
   assert.equal(itself.status, 1, itself.stderr);
   assert.match(itself.stderr, /already its own slug/);
 
-  assert.equal(readFileSync(join(root, REL_STORE), 'utf8'), before, 'the store is byte-identical');
+  assert.equal(storeBytes(root), before, 'the store is byte-identical');
   assert.ok(existsSync(join(root, 'docs/projects/alpha.md')));
   assert.ok(existsSync(join(root, 'docs/projects/beta.md')));
 });
@@ -1807,7 +1827,7 @@ test('set changes where, repo and name, and clears repo with an empty string', (
 test('set refuses an unknown project, an empty change, and an unrenderable value', () => {
   const { root } = gitFixture();
   runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
-  const before = readFileSync(join(root, REL_STORE), 'utf8');
+  const before = storeBytes(root);
 
   assert.equal(runCli(root, ['set', 'nope', '--repo', 'x']).status, 2, 'unknown project is a 2');
   const empty = runCli(root, ['set', 'alpha']);
@@ -1818,7 +1838,7 @@ test('set refuses an unknown project, an empty change, and an unrenderable value
   const piped = runCli(root, ['set', 'alpha', '--where', 'a | b']);
   assert.equal(piped.status, 1);
   assert.match(piped.stderr, /pipe or line break/);
-  assert.equal(readFileSync(join(root, REL_STORE), 'utf8'), before, 'the store is byte-identical');
+  assert.equal(storeBytes(root), before, 'the store is byte-identical');
 });
 
 test('set does not bump lastTouched', () => {
@@ -2030,4 +2050,142 @@ test('a theme with no rows says so, and a non-theme non-verb still exits 2', () 
   const bogus = runCli(root, ['wrok']);
   assert.equal(bogus.status, 2);
   assert.match(bogus.stderr, /unknown command "wrok"/);
+});
+
+// ── the sharded store ────────────────────────────────────────────────────────────────
+// Every row used to live in one JSON array, so two machines editing UNRELATED projects
+// collided on the same bytes and an array conflict has no semantic merge. One file per
+// project makes unrelated edits disjoint. INDEX.md is still rendered from whatever the
+// store reads as, because it is what makes the list readable on Forgejo and what gtg's
+// inferParent reads to resolve project families.
+test('writeStore writes one file per project and reports the paths it touched', () => {
+  const root = fixture();
+  const touched = writeStore(root, { projects: [
+    { slug: 'alpha', name: 'Alpha' }, { slug: 'beta', name: 'Beta' }] });
+  assert.deepEqual(entryFiles(root), ['alpha.json', 'beta.json']);
+  // .gitkeep is in the touched set on the first write, deliberately: commit() names only the
+  // paths it is handed, so a keeper left out here would exist on this machine and nowhere else.
+  assert.deepEqual([...touched].sort(),
+    [`${REL_ENTRIES}/.gitkeep`, `${REL_ENTRIES}/alpha.json`, `${REL_ENTRIES}/beta.json`]);
+  assert.equal(readFileSync(join(root, REL_ENTRIES, 'alpha.json'), 'utf8'),
+    JSON.stringify({ slug: 'alpha', name: 'Alpha' }, null, 2) + '\n');
+  assert.ok(!existsSync(join(root, REL_STORE)), 'the packed file is not written any more');
+});
+
+test('the directory wins over a stale packed file, and its absence falls back to it', () => {
+  const root = fixture();
+  writeFileSync(join(root, REL_STORE), JSON.stringify({ version: 1, projects: [
+    { slug: 'ghost', name: 'Ghost', status: 'active', where: [], page: 'ghost.md',
+      lastTouched: '2026-01-01' }] }) + '\n');
+  // Expand before contract: nothing deletes the packed file here, so a rollback to the old
+  // plugin still finds its data.
+  assert.deepEqual(readStore(root).projects.map((p) => p.slug), ['ghost'], 'legacy fallback');
+  writeStore(root, { projects: [{ slug: 'real', name: 'Real' }] });
+  assert.deepEqual(readStore(root).projects.map((p) => p.slug), ['real']);
+  assert.ok(existsSync(join(root, REL_STORE)), 'and the packed file is still there');
+});
+
+test('an empty entries directory reads as empty rather than resurrecting the packed rows', () => {
+  const root = fixture();
+  writeFileSync(join(root, REL_STORE), JSON.stringify({ version: 1, projects: [
+    { slug: 'ghost', name: 'Ghost' }] }) + '\n');
+  mkdirSync(join(root, REL_ENTRIES), { recursive: true });
+  assert.deepEqual(readStore(root).projects, []);
+});
+
+test('the store-level version field is gone, not carried into a per-record file', () => {
+  // Nothing ever read it (grep for `.version` in projects.mjs: only parseStore synthesised it
+  // and writeStore echoed it back), so there is no _meta.json either.
+  const root = fixture();
+  writeStore(root, { version: 7, projects: [{ slug: 'alpha', name: 'Alpha' }] });
+  assert.deepEqual(readStore(root), { projects: [{ slug: 'alpha', name: 'Alpha' }] });
+  assert.deepEqual(JSON.parse(readFileSync(join(root, REL_ENTRIES, 'alpha.json'), 'utf8')),
+    { slug: 'alpha', name: 'Alpha' });
+});
+
+mtest('two unrelated rows commit disjoint files, which is the point of the change', () => {
+  const { root, git } = gitFixture();
+  writeStore(root, { projects: [
+    { slug: 'alpha', name: 'Alpha', status: 'active', where: [], page: 'alpha.md', lastTouched: '2026-07-20' },
+    { slug: 'beta', name: 'Beta', status: 'active', where: [], page: 'beta.md', lastTouched: '2026-07-20' }] });
+  cmdStatus(root, ['alpha', 'paused'], { date: '2026-07-29' });
+  const committed = git('show', '--name-only', '--format=', 'HEAD').toString().trim().split('\n').sort();
+  assert.deepEqual(committed, [`${REL_ENTRIES}/alpha.json`, REL_INDEX].sort(),
+    'the file for beta must not appear in a commit that only changed alpha');
+});
+
+mtest('archive commits the deleted entry file, leaving nothing in the working tree', () => {
+  const { root, git } = gitFixture();
+  writeStore(root, { projects: [
+    { slug: 'alpha', name: 'Alpha', status: 'active', where: [], page: 'alpha.md', lastTouched: '2026-07-20' },
+    { slug: 'beta', name: 'Beta', status: 'active', where: [], page: 'beta.md', lastTouched: '2026-07-20' }] });
+  writeFileSync(join(root, 'docs/projects/alpha.md'), '# Alpha\n');
+  git('add', '--', REL_ENTRIES, 'docs/projects/alpha.md');
+  git('commit', '-q', '-m', 'seed', '--', REL_ENTRIES, 'docs/projects/alpha.md');
+  cmdArchive(root, ['alpha'], {});
+  // A deletion missing from the commit path list stays staged and the next session commits it.
+  assert.equal(git('status', '--porcelain').toString().trim(), '');
+  assert.match(git('show', '--name-status', 'HEAD').toString(),
+    new RegExp('^D\\s+' + REL_ENTRIES + '/alpha\\.json', 'm'));
+  assert.deepEqual(entryFiles(root), ['beta.json']);
+});
+
+test('the first run on a packed tree shards it, commits the backup, and does not re-shard', () => {
+  const { root, git } = gitFixture();
+  const packed = { version: 1, projects: [
+    { slug: 'alpha', name: 'Alpha', status: 'active', where: ['C:/dev/alpha'], page: 'alpha.md',
+      theme: 'tooling', lastTouched: '2026-07-20' },
+    { slug: 'beta', name: 'Beta', status: 'paused', where: [], page: 'beta.md',
+      theme: 'work', lastTouched: '2026-07-21' }] };
+  writeFileSync(join(root, REL_STORE), JSON.stringify(packed, null, 2) + '\n');
+  git('add', '--', REL_STORE);
+  git('commit', '-q', '-m', 'seed', '--', REL_STORE);
+
+  const first = runCli(root, []);
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stderr, /sharded 2 project/, 'the one-time notice goes to stderr, not stdout');
+  assert.deepEqual(entryFiles(root), ['alpha.json', 'beta.json']);
+  // Every field survives, and the packed file plus its backup are both left on disk.
+  assert.deepEqual(readStore(root).projects.map((p) => p.slug).sort(), ['alpha', 'beta']);
+  assert.deepEqual(JSON.parse(readFileSync(join(root, REL_ENTRIES, 'alpha.json'), 'utf8')), packed.projects[0]);
+  assert.ok(existsSync(join(root, REL_STORE)), 'contraction is Task 7, not this one');
+  assert.ok(existsSync(join(root, `${REL_STORE}.pre-shard`)));
+  const shardCommit = git('show', '--name-only', '--format=', 'HEAD').toString().trim().split('\n').sort();
+  assert.deepEqual(shardCommit, [`${REL_ENTRIES}/.gitkeep`, `${REL_ENTRIES}/alpha.json`,
+    `${REL_ENTRIES}/beta.json`, `${REL_STORE}.pre-shard`].sort(),
+  'the backup rides along: the other machine skips the migration. So does .gitkeep, or the'
+  + ' directory exists only here and an emptied store falls back to the packed file there');
+  assert.equal(git('status', '--porcelain').toString().trim(), '');
+
+  const second = runCli(root, []);
+  assert.equal(second.status, 0, second.stderr);
+  assert.doesNotMatch(second.stderr, /sharded/, 'a second run is a no-op');
+  assert.deepEqual(entryFiles(root), ['alpha.json', 'beta.json']);
+});
+
+test('a migration that cannot read the packed file warns and keeps reading it', () => {
+  // migrateCollection throws on unparseable JSON and this runs before EVERY verb, `help`
+  // included. Uncaught, one bad file would make the CLI entirely unusable.
+  const { root } = gitFixture();
+  writeFileSync(join(root, REL_STORE), '{ not json');
+  const r = runCli(root, ['help']);
+  assert.equal(r.status, 1, 'the failure is in the exit code, not only on stderr');
+  assert.match(r.stderr, /could not shard/);
+  assert.match(r.stdout, /INDEX\.md is generated/, 'and the verb still ran');
+  assert.equal(existsSync(join(root, REL_ENTRIES)), false, 'nothing half-written');
+});
+
+test('INDEX.md is still rendered from the sharded store and still guards an empty one', () => {
+  const { root } = gitFixture();
+  runCli(root, ['register', 'alpha', '--name', 'Alpha', '--status', 'active', '--theme', 'tooling']);
+  const index = readFileSync(join(root, REL_INDEX), 'utf8');
+  assert.match(index, /\[Alpha\]\(alpha\.md\)/);
+  assert.deepEqual(parseIndex(index).projects.map((p) => p.slug), ['alpha']);
+  // The guard that makes rows-here-and-none-there refuse every verb has to keep working with
+  // the store sharded, because a rendered index is the only human-readable copy of the rows.
+  rmSync(join(root, REL_ENTRIES), { recursive: true });
+  const r = runCli(root, ['render']);
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /[Mm]igrate it first/);
+  assert.equal(readFileSync(join(root, REL_INDEX), 'utf8'), index, 'the table was rewritten');
 });

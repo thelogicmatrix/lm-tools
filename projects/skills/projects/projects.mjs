@@ -1,10 +1,14 @@
 #!/usr/bin/env node
 // projects: zero-model bookkeeping CLI for the projects portfolio skill.
 // Storage root: PROJECTS_ROOT if set, else the current git repo's root.
-// _projects.json is truth for mechanical fields. INDEX.md is RENDERED from it.
+// docs/projects/entries/<slug>.json is truth for mechanical fields, one file per project.
+// INDEX.md is RENDERED from it and committed, because it is what makes the list readable on
+// Forgejo and what gtg's inferParent reads to resolve project families.
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync } from 'node:fs';
 import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
+import { readCollection, writeCollection } from './lib/store.mjs';
+import { migrateCollection } from './lib/migrate.mjs';
 
 export const STATUSES = {
   active: '🟢 active',
@@ -35,9 +39,20 @@ export const THEME_ORDER = Object.keys(THEMES);
 // and with every row themed the section renders on no row and never appears.
 export const UNTHEMED = 'Unthemed';
 export const PROJECTS_DIR = 'docs/projects';
+// The sharded store, one file per project. REL_STORE is the packed file it replaced: still
+// READ as a fallback and still on disk, so a rollback to the pre-shard plugin finds its data.
+// Contraction (deleting it) is a separate step, after a real round-trip between two machines.
+export const REL_ENTRIES = `${PROJECTS_DIR}/entries`;
 export const REL_STORE = `${PROJECTS_DIR}/_projects.json`;
 export const REL_INDEX = `${PROJECTS_DIR}/INDEX.md`;
-const SLUG_RE = /^[A-Za-z0-9_-]+$/;
+// A slug is a FILENAME now (docs/projects/entries/<slug>.json), so this has to be at least as
+// strict as the store layer's own check. Tightened to require an alphanumeric first character:
+// a leading '-' reads as a flag to git and to argv parsing, and a leading '_' could name the
+// `_meta.json`-shaped file the record reader would read straight back as a project. Refused
+// here rather than inside writeStore because cmdRegister writes the page skeleton before it
+// saves the row, and its no-orphan-page guarantee only holds while nothing after that write
+// can still refuse. Every one of the 60 live slugs passes.
+const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 export function resolveRoot() {
   if (process.env.PROJECTS_ROOT) return process.env.PROJECTS_ROOT;
@@ -63,7 +78,18 @@ function indexRowCount(root) {
 // caller left is a hole waiting for an illegitimate one.
 export function readStore(root) {
   const p = join(root, REL_STORE);
-  const store = existsSync(p) ? parseStore(p) : { version: 1, projects: [] };
+  // The DIRECTORY wins whenever it exists, even empty: an empty sharded store is a real state
+  // (everything archived), and falling back to the packed file there would resurrect rows the
+  // other machine deleted. Only when it is absent does the packed file get read, and it is read
+  // by parseStore rather than readCollection's own legacy branch, which swallows a parse error
+  // and returns empty - exactly the silent-empty read the refusal below exists to catch.
+  // No legacy arguments on the call: this branch has already proved the directory exists, so
+  // readCollection's packed fallback is unreachable from here. Passing them read as if it could
+  // still fire, which is the opposite of what the comment above says happens.
+  const sharded = existsSync(join(root, REL_ENTRIES));
+  const store = sharded
+    ? { projects: readCollection(root, REL_ENTRIES) }
+    : (existsSync(p) ? parseStore(p) : { projects: [] });
   // Refused HERE because every verb reads the store through this one function, so one guard covers
   // all of them and every verb added later. Without it, rows in INDEX.md with none in the store is a
   // loaded gun: this returns an empty list, saveAndRender renders a bare header over the table, and
@@ -82,7 +108,11 @@ export function readStore(root) {
   if (!store.projects.length) {
     const rows = indexRowCount(root);
     if (rows) {
-      throw new Error(`projects: ${REL_INDEX} carries ${rows} row(s) and ${REL_STORE
+      // Name the store that was actually READ. With an empty entries/ and a populated INDEX.md
+      // the packed file is never consulted, so naming _projects.json sent the reader to a file
+      // that is not the problem. "Migrate it first" itself stays verbatim: main's exit-code
+      // classifier matches on that phrase, and SKILL.md explains it to the model by name.
+      throw new Error(`projects: ${REL_INDEX} carries ${rows} row(s) and ${sharded ? REL_ENTRIES : REL_STORE
         } has none. Migrate it first. Any verb here would render an empty index over it`);
     }
   }
@@ -92,7 +122,10 @@ export function readStore(root) {
 function parseStore(p) {
   try {
     const d = JSON.parse(readFileSync(p, 'utf8'));
-    return { version: d.version ?? 1, projects: d.projects ?? [] };
+    // `version` is dropped, not moved to a _meta.json. Nothing ever read it: parseStore
+    // synthesised it and writeStore echoed it back, and no branch anywhere compared it.
+    // A per-record layout has nowhere for it to live and no reader to want it there.
+    return { projects: d.projects ?? [] };
   } catch (e) {
     // ponytail: still an exit rather than a throw, unlike the refusal above. Pre-existing Task 1
     // behaviour with no test on it, and resolveRoot does the same. Convert both together if a
@@ -102,10 +135,12 @@ function parseStore(p) {
   }
 }
 
+// Returns the repo-relative paths it touched, INCLUDING deletions, because commit() must name
+// every path on both `git add` and `git commit` or a removal is left in the working tree for
+// whichever session commits next to pick up as its own.
 export function writeStore(root, store) {
-  const p = join(root, REL_STORE);
-  mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, JSON.stringify(store, null, 2) + '\n');
+  const { written, deleted } = writeCollection(root, REL_ENTRIES, store.projects);
+  return [...written, ...deleted];
 }
 
 export function validateStatus(s) {
@@ -129,7 +164,7 @@ export function validateSlug(s) {
   return s;
 }
 
-// _projects.json is hand-editable, so every field here tolerates junk: an unrecognised
+// A record file is hand-editable, so every field here tolerates junk: an unrecognised
 // status ranks last rather than -1 (which would sort a typo AHEAD of active), and a
 // missing lastTouched/slug sorts last rather than throwing on undefined.localeCompare.
 const rank = (s) => (STATUS_ORDER.includes(s) ? STATUS_ORDER.indexOf(s) : STATUS_ORDER.length);
@@ -143,7 +178,7 @@ export function sortProjects(list) {
 
 const INDEX_HEADER = `# Projects: Portfolio Index
 
-*Generated by the \`projects\` CLI from \`_projects.json\`.
+*Generated by the \`projects\` CLI from \`entries/<slug>.json\`.
 Do not hand-edit this file.*
 
 One row per active effort. Each project links to its narrative
@@ -407,7 +442,7 @@ export function currentStateFirstLine(pageText) {
 function listTail(root, p) {
   if (!p.page) return '(no page)';
   try {
-    // pagePath, not a bare join: `page` comes out of hand-editable _projects.json, so
+    // pagePath, not a bare join: `page` comes out of a hand-editable record file, so
     // `page: "../../.ssh/config"` would otherwise make the no-args list READ a file outside
     // docs/projects. Inside the try on purpose, so the refusal degrades this one row to
     // MALFORMED like any other unreadable page and every other row still prints.
@@ -472,6 +507,22 @@ export function today() {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 
+// The one line of a child-process failure that actually says what went wrong. Three traps, each
+// of which has printed a useless message here:
+//   - `e.stderr` under stdio:'pipe' is a BUFFER, and an EMPTY buffer is TRUTHY, so the usual
+//     `e.stderr || e.message` shadows the message entirely - a timeout kill printed a bare dash.
+//   - git leads with "warning: LF will be replaced by CRLF" on a Windows checkout, so the first
+//     line is git's line-ending advice rather than the cause.
+//   - a refused fast-forward leads with nine `hint:` lines.
+// So: coerce, prefer stderr only when it has content, and take the first line that is neither
+// blank nor advice. Falls back to the first line of whatever there is rather than to ''.
+// ponytail: the twin of gtg.mjs's firstMeaningfulLine, for the same reason the store is a copy.
+function firstMeaningfulLine(e) {
+  const raw = `${e?.stderr ?? ''}`.trim() || `${e?.message ?? ''}`.trim() || String(e ?? '');
+  const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => !/^(warning|hint):/i.test(l)) || lines[0] || '';
+}
+
 export function commit(root, paths, message) {
   // No paths means nothing was asked for. Falling through would be the exact disaster
   // this function exists to prevent: a bare `git add` exits 0 ("Nothing specified" is a
@@ -496,8 +547,7 @@ export function commit(root, paths, message) {
     // Anchored to line start so a real failure that merely QUOTES one of these phrases
     // (a pre-commit hook echoing `git status`, say) is not swallowed as success.
     if (/^(nothing (added )?to commit|no changes added)/im.test(out)) return true;
-    console.error(`projects: git commit failed, changes are on disk but uncommitted. ${
-      (e.stderr || e.message || '').toString().trim().split('\n')[0]}`);
+    console.error(`projects: git commit failed, changes are on disk but uncommitted. ${firstMeaningfulLine(e)}`);
     // The `false` below is not enough on its own: saveAndRender discards it, and a batch
     // caller reads $? rather than our stderr. On 2026-08-11 a 39-call `projects set`
     // backfill hit a stale index.lock and ran to completion on warnings alone, ending with
@@ -518,7 +568,7 @@ export function findProject(store, slug) {
   return store.projects.find((p) => p.slug === slug);
 }
 
-// `page` comes out of hand-editable _projects.json, so it is exactly as untrusted as a slug.
+// `page` comes out of a hand-editable record file, so it is exactly as untrusted as a slug.
 // One guard at the single choke point covers every verb: this is the only way any of them
 // names a page file. Without it `page: "../../secrets.md"` lets cmdCurrent overwrite and
 // cmdArchive MOVE a file anywhere in the tree.
@@ -534,10 +584,13 @@ function saveAndRender(root, store, extraPaths, message, opts) {
   // and if the store were written before that throw it would hold a row no render can emit,
   // which fails every later status, current and render call until someone edits the JSON.
   const index = renderIndex(store);
-  writeStore(root, store);
+  // Only the entry files this write actually touched, deletions included. The old single path
+  // named the whole store on every commit; naming all 60 entry files instead would put the
+  // sharding back to where it started, with every commit claiming every project.
+  const touched = writeStore(root, store);
   writeFileSync(join(root, REL_INDEX), index, 'utf8');
   console.log('RENDERED');
-  if (opts.commit !== false) commit(root, [REL_STORE, REL_INDEX, ...extraPaths], message);
+  if (opts.commit !== false) commit(root, [...touched, REL_INDEX, ...extraPaths], message);
 }
 
 export function cmdCurrent(root, args, body, opts = {}) {
@@ -764,7 +817,9 @@ export function cmdLog(root, args, opts = {}) {
   // otherwise validate as one and then be looked up as a project.
   const slug = args[0] && !args[0].startsWith('-') ? validateSlug(args[0]) : null;
   const n = flag(args, '-n', '20');
-  let paths = [REL_STORE, REL_INDEX];
+  // All three: the sharded store, the packed file it replaced, and the index. History spans
+  // both eras, so dropping the packed path would cut the log off at the migration.
+  let paths = [REL_ENTRIES, REL_STORE, REL_INDEX];
   const follow = [];
   if (slug) {
     const p = findProject(readStore(root), slug);
@@ -879,7 +934,7 @@ export function cmdSync(root, _args, opts = {}) {
     // numbers and nobody else's. The read is what throws, so only the read is in here.
     try {
       // pagePath, not a bare join. sync READS every page named in the store, and `page` comes
-      // out of hand-editable _projects.json, so `page: "../../.ssh/config"` would otherwise get
+      // out of a hand-editable record file, so `page: "../../.ssh/config"` would otherwise get
       // that file scanned and quoted back in a flag.
       const path = pagePath(root, p.page);
       if (!existsSync(path)) {
@@ -977,7 +1032,7 @@ export function cmdSync(root, _args, opts = {}) {
   // A repo that has never registered anything has no folder, and readdirSync on a missing
   // directory throws an ENOENT that main would report as a bug in this file.
   for (const f of existsSync(dir) ? readdirSync(dir) : []) {
-    // archive/ and _projects.json are not .md, so the extension test drops both.
+    // archive/, entries/ and _projects.json are not .md, so the extension test drops all three.
     if (!f.endsWith('.md') || f === 'INDEX.md' || f === 'CRITIQUES.md') continue;
     if (!pagesInUse.has(f)) flags.push(`NO-ROW ${f}: a page in ${PROJECTS_DIR} with no row pointing at it`);
   }
@@ -1048,8 +1103,41 @@ INDEX.md is generated. Never hand-edit it.
 // the only two that do not carry the `projects: ` prefix.
 const DELIBERATE = /^(projects: |invalid slug|unknown status|unknown theme)/;
 
+// Self-migrating: the first command on a packed tree shards it. Guarded on the entries
+// directory's existence, so this is a no-op on every later run and on a tree that arrived
+// already-sharded from the other machine.
+//
+// migrateCollection THROWS on a corrupt or slug-colliding packed file, and this runs before
+// EVERY verb, `help` included. Uncaught, one bad file would make the CLI entirely unusable, so:
+// catch, name the problem on stderr, set a failing exit code, and carry on reading the packed
+// file exactly as before. Nothing is destroyed on that path - the `.pre-shard` backup is taken
+// only after the parse succeeds and the packed file is never deleted - and the warning repeats
+// on every invocation until the file is fixed.
+//
+// Called from main() rather than at module load: `root` comes from resolveRoot, and the tests
+// import this module against a dozen fixture roots. A programmatic caller that skips main gets
+// readStore's packed-file fallback, which is why the fallback stays.
+function shardStore(root) {
+  try {
+    const r = migrateCollection(root, REL_ENTRIES, REL_STORE, 'projects');
+    if (!r.migrated) return;
+    // r.paths carries the `.pre-shard` backup as well as the record files, and it is committed
+    // deliberately: the second machine pulls an already-sharded tree and skips the migration,
+    // so a backup that only ever existed locally would leave it no rollback copy.
+    commit(root, r.paths, `projects: shard the store into ${REL_ENTRIES}/ (${r.migrated} projects)`);
+    // stderr, not stdout: the calling skill parses stdout, and a one-time notice must not land
+    // in front of a list or a rendered report.
+    console.error(`projects: sharded ${r.migrated} project(s) into ${REL_ENTRIES}/`);
+  } catch (e) {
+    console.error(`projects: could not shard the store - ${(e?.message || String(e)).split('\n')[0]}`);
+    console.error(`  Still reading ${REL_STORE}. Fix that file and the next projects command retries.`);
+    process.exitCode = 1;
+  }
+}
+
 export function main(argv = process.argv.slice(2)) {
   const root = resolveRoot();
+  shardStore(root);
   const [cmd, ...rest] = argv;
   try {
     if (!cmd) return builtins.list(root, []);

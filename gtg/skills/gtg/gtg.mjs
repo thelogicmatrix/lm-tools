@@ -6,6 +6,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync
 import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
+import { readCollection, writeCollection } from './lib/store.mjs';
+import { migrateCollection } from './lib/migrate.mjs';
 
 // --- storage root -----------------------------------------------------------
 function resolveRoot() {
@@ -19,8 +21,20 @@ function resolveRoot() {
   }
 }
 const ROOT = resolveRoot();
-const REL_ACTIVE = 'docs/handoffs/_active.json';
-const REL_BACKLOG = 'docs/handoffs/_backlog.json';
+const REL_ACTIVE = 'docs/handoffs/_active.json';   // legacy packed store, read-only after Task 2
+const REL_BACKLOG = 'docs/handoffs/_backlog.json'; // legacy packed store, read-only after Task 2
+const DIR_ACTIVE = 'docs/handoffs/active';
+const DIR_BACKLOG = 'docs/handoffs/backlog';
+const COLLECTIONS = {
+  active: { dir: DIR_ACTIVE, legacyRel: REL_ACTIVE, legacyKey: 'handoffs' },
+  backlog: { dir: DIR_BACKLOG, legacyRel: REL_BACKLOG, legacyKey: 'backlog' },
+};
+// Git-history pathspec for the stores: BOTH the legacy packed files and the sharded
+// directories, because `log` and `undo` read HISTORY and history spans the migration.
+// Dropping the packed paths would make every pre-shard commit invisible to `gtg log` and
+// would leave `gtg undo` unable to see its own change (the whole store moved out from
+// under the pathspec it anchors on).
+const STORE_PATHSPEC = [REL_ACTIVE, REL_BACKLOG, DIR_ACTIVE, DIR_BACKLOG];
 // Directory of this CLI file - bundled extensions ship alongside it under extensions/.
 const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -68,6 +82,17 @@ const COLOR = process.stdout.isTTY && !process.env.NO_COLOR;
 const c = (code, s) => (COLOR ? `\x1b[${code}m${s}\x1b[0m` : String(s));
 
 // --- helpers (readStore/writeStore/commit are also the extension ctx) --------
+// readStore is a WHOLE-FILE JSON reader and stays one: it is published on the extension ctx,
+// and a caller indexes the wrapper key itself (`readStore('...')?.handoffs ?? []`), so handing
+// it a bare array would yield [] with no error at all. Nothing inside gtg reads the record
+// stores through it any more - that is `entries(which)` below - and since Task 4 no BUNDLED
+// extension does either: extensions/lib/history.mjs used to, and buildReport now calls
+// readCollection instead, because a whole-file reader cannot see a directory of records.
+// The remaining internal callers read _session.json, which is a genuine single-object file.
+//
+// So the shape contract is real but has no bundled caller left to enforce it. A third-party
+// extension in .gtg/commands/ is now the caller that depends on it, and test/gtg.test.mjs
+// case 72 is what holds it - keep that case if you touch this function.
 function readStore(rel) {
   const p = join(ROOT, rel);
   if (!existsSync(p)) return null;
@@ -78,7 +103,26 @@ function writeStore(rel, data) {
   mkdirSync(dirname(p), { recursive: true });
   writeFileSync(p, JSON.stringify(data, null, 2) + '\n');
 }
+// The one line of a child-process failure that actually says what went wrong. Three traps, each
+// of which has printed a useless message here:
+//   - `e.stderr` under stdio:'pipe' is a BUFFER, and an EMPTY buffer is TRUTHY, so the usual
+//     `e.stderr || e.message` shadows the message entirely - a timeout kill printed a bare dash.
+//   - git leads with "warning: LF will be replaced by CRLF" on a Windows checkout, so the first
+//     line is git's line-ending advice rather than the cause.
+//   - a refused fast-forward leads with nine `hint:` lines.
+// So: coerce, prefer stderr only when it has content, and take the first line that is neither
+// blank nor advice. Falls back to the first line of whatever there is rather than to ''.
+function firstMeaningfulLine(e) {
+  const raw = `${e?.stderr ?? ''}`.trim() || `${e?.message ?? ''}`.trim() || String(e ?? '');
+  const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => !/^(warning|hint):/i.test(l)) || lines[0] || '';
+}
 function commit(paths, message) {
+  // An EMPTY path list degrades to exactly the pathspec-less commit the block below exists
+  // to prevent: `git commit -- ` with nothing after the `--` takes the whole shared index.
+  // Callers now build their paths from what the store actually touched, so "touched nothing"
+  // is reachable, and it is never a reason to commit everything.
+  if (!paths.length) return;
   const opts = { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] };
   try {
     execFileSync('git', ['add', ...paths], opts);
@@ -95,7 +139,24 @@ function commit(paths, message) {
     const out = `${e.stdout || ''}${e.stderr || ''}`;
     if (/nothing to commit|no changes added/i.test(out)) return; // identical content - files already on disk
     // Don't let a real git failure masquerade as success: the files are written, but say so.
-    console.error(`gtg: git commit failed, changes are on disk but uncommitted - ${(e.stderr || e.message || '').toString().trim().split('\n')[0]}`);
+    console.error(`gtg: git commit failed, changes are on disk but uncommitted - ${firstMeaningfulLine(e)}`);
+    // NAME THE PATHS, because nothing else ever will. `git add` has already succeeded by the
+    // time a commit failure lands here, so these records sit staged in the shared checkout -
+    // and writeCollection skips byte-identical files, so a later gtg run recomputes the same
+    // records, reports NO changed paths for them, and never names them again. The packed store
+    // was immune to this by accident: its pathspec was two fixed filenames, so the next commit
+    // re-added whatever was pending.
+    //
+    // Recovery is deliberately MANUAL - the user runs `git commit -- <the paths below>`. The
+    // automatic fix would be to widen the pathspec to the whole keep-set, and that is exactly
+    // what must not happen here: on one shared tree and index there is no way to tell our own
+    // stranded record from another session's in-flight one, so committing the keep-set would
+    // sweep their work into our commit. That is the 2026-07-27 incident with extra steps.
+    // Labelled "uncommitted", not "staged": a stale index.lock (the 2026-08-11 cause) fails
+    // the `git add` too, so on that path nothing is staged at all - verified, the tree shows
+    // an unstaged ` D` and an untracked `??`. `git commit -- <paths>` recovers either way,
+    // which is what the line is for, so the label states the thing that is always true.
+    console.error(`  uncommitted: ${paths.join(' ')}`);
     // ...and say so in the EXIT CODE, not only on stderr. A batch caller reads $?, not our
     // warnings: on 2026-08-11 a 39-call backfill hit a stale index.lock and every call after
     // it warned, exited 0 and kept going, ending with 14 uncommitted rows and files left
@@ -104,11 +165,88 @@ function commit(paths, message) {
     process.exitCode = 1;
   }
 }
-function entries(rel, key) {
-  const d = readStore(rel);
-  return Array.isArray(d?.[key]) ? d[key].filter(Boolean) : [];
+// `which` is 'active' | 'backlog'. Order is NOT stored: sortByProject/displayOrder recompute
+// it at render, so a directory read (alphabetical by slug) renders identically to the packed
+// array it replaces.
+function entries(which) {
+  const { dir, legacyRel, legacyKey } = COLLECTIONS[which];
+  return readCollection(ROOT, dir, legacyRel, legacyKey);
 }
-function saveEntries(rel, key, items) { writeStore(rel, { [key]: items }); }
+// Returns the repo-relative paths touched, INCLUDING deletions, because commit() must name
+// every path on both `git add` and `git commit` or a removal is left for another session to
+// pick up as its own.
+function saveEntries(which, items) {
+  const { dir } = COLLECTIONS[which];
+  const { written, deleted } = writeCollection(ROOT, dir, items);
+  return [...written, ...deleted];
+}
+
+// Fallback sync target, used only when the branch has no upstream - the reasoning lives at
+// syncTarget() below, beside the code that consults it. DECLARED HERE because the resume-path
+// sync a few lines down runs at import time: syncHub is a hoisted function declaration and can be
+// called before its definition, but a `const` still in its temporal dead zone would throw the
+// moment syncTarget reached its fallback.
+const SYNC_REMOTE = 'obelisk-backup'; // fallback only: home's Forgejo mirror on Obelisk
+const SYNC_BRANCH = 'master';         // fallback only: the branch that mirror carries
+// syncHub runs once per process. It is called from the migration block below on the resume path
+// and again from resumeConsume; without the memo a migrating resume pays two fetches and two
+// 5-second timeouts with the hub unreachable. Declared here for the same dead-zone reason.
+let synced = false;
+
+// PULL BEFORE YOU SHARD. The migration below is import-time code: it runs before dispatch, so
+// before resumeConsume's own syncHub(). On the second machine's first command of this version the
+// order was therefore migrate -> commit "gtg: shard ..." -> fetch -> --ff-only REFUSED, because by
+// then both machines held their own shard commit over the same source records. Every subsequent
+// cross-machine handoff then needs a human to resolve a fork - on exactly the two-machine round
+// trip this whole store change exists to make work. Synced first, the shard either arrives already
+// done (and the migration skips) or is computed over the merged tree.
+//
+// Gated twice, both deliberately narrow. On a migration that is actually PENDING, because syncHub
+// is a 5-second-capped network call and every gtg command but `resume` has always been local -
+// after the one migrating run this costs nothing again. And on the resume path (`resume`, or no
+// verb at all), which is where the sync already belongs; a `gtg handoff` that happens to be the
+// migrating command still shards locally, and its commit is a plain commit that post-commit
+// mirrors, so the next resume on either machine reconciles it. syncHub() memoises, so
+// resumeConsume's own call later in this same process is a no-op rather than a second fetch.
+const RESUME_PATH = !process.argv[2] || process.argv[2] === 'resume';
+const MIGRATION_PENDING = Object.values(COLLECTIONS)
+  .some((col) => !existsSync(join(ROOT, col.dir)) && existsSync(join(ROOT, col.legacyRel)));
+if (RESUME_PATH && MIGRATION_PENDING) syncHub();
+
+// Self-migrating: the first gtg command on a packed tree shards it. Guarded on the
+// directory's existence, so this is a no-op on every subsequent run and on a tree that
+// arrived already-migrated from the other machine.
+//
+// migrateCollection THROWS on a corrupt or slug-colliding packed file, and this loop runs
+// before EVERY command, `help` and `log` included. Uncaught, one bad file would make gtg
+// entirely unusable - a hard regression, because readCollection's legacy branch swallows the
+// same parse error and reads as empty. So: catch PER COLLECTION (a corrupt backlog must not
+// take the active list down with it), name the file on stderr, set a failing exit code, and
+// carry on with the pre-shard behaviour. Nothing is destroyed on this path - the .pre-shard
+// backup is made only after the parse succeeds and the packed file is never deleted - and the
+// warning repeats on every invocation until the file is fixed, which is the diagnostic the old
+// silent-empty read never gave.
+//
+// `migrated: 0, skipped: false` is also the shape for "no packed file ever existed" (a fresh
+// hub), so only a real migration is allowed to say anything.
+for (const [name, col] of Object.entries(COLLECTIONS)) {
+  try {
+    const r = migrateCollection(ROOT, col.dir, col.legacyRel, col.legacyKey);
+    if (r.migrated) {
+      // r.paths carries the `<packed>.pre-shard` backup as well as the record files, and it is
+      // committed deliberately: the second machine pulls an already-sharded tree and skips the
+      // migration, so a backup that only ever existed locally would leave it no rollback copy.
+      commit(r.paths, `gtg: shard ${name} store into ${col.dir}/ (${r.migrated} records)`);
+      // stderr, not stdout: the calling skill parses stdout, and a one-time notice must not
+      // land in front of a resume body or a `--dry-run` dump.
+      console.error(`gtg: sharded ${r.migrated} ${name} record(s) into ${col.dir}/`);
+    }
+  } catch (e) {
+    console.error(`gtg: could not shard the ${name} store - ${(e?.message || String(e)).split('\n')[0]}`);
+    console.error(`  Still reading ${col.legacyRel}. Fix that file and the next gtg command retries.`);
+    process.exitCode = 1;
+  }
+}
 // Local UTC-offset suffix e.g. "+08:00" for the given Date - shared by nowIso()
 // and firstHandoffDate() so both emit the same aware-datetime format (a bare
 // vs offset-suffixed stamp otherwise makes Python's fromisoformat raise when
@@ -249,8 +387,16 @@ function inferWorktree() {
   } catch { return 'repo root'; }
 }
 // Body of one `## <heading>` section, '' when absent.
+//
+// `$(?![\s\S])`, not a bare `$`. The `m` flag is needed for the `^## ` anchor - a heading is
+// almost never at offset 0 - but under `m` a bare `$` also matches at EVERY line end, and the
+// capture is lazy: with `## Next Action\n\nDo the thing` the group tries empty first, the
+// position right after the heading's newline is a line end, `$` matches there, and the section
+// reads as ''. A well-formed handoff was then refused for "missing --next", `Task list` read as
+// absent and got appended twice, and the home after-handoff hook wrote an empty session entry.
+// The negative lookahead makes `$` mean end of STRING while `^` keeps its per-line meaning.
 function sectionOf(body, heading) {
-  const m = body.match(new RegExp(`^## ${heading}[^\\n]*\\n([\\s\\S]*?)(?=\\n## |$)`, 'm'));
+  const m = body.match(new RegExp(`^## ${heading}[^\\n]*\\n([\\s\\S]*?)(?=\\n## |$(?![\\s\\S]))`, 'm'));
   return m ? m[1].trim() : '';
 }
 // The harness's task list, read from disk so the skill neither loads a task tool nor types
@@ -285,7 +431,7 @@ function gitSince(dir, sinceIso) {
 }
 
 // --- handoff / backlog park ---------------------------------------------------
-async function writeHandoff(argv, { storeRel, key, verb }) {
+async function writeHandoff(argv, { which, verb }) {
   const a = parseFlags(argv);
   const body = readFileSync(0, 'utf8').trim(); // stdin
   // --next used to be typed twice, once as a flag and once as the body's Next Action section.
@@ -293,8 +439,14 @@ async function writeHandoff(argv, { storeRel, key, verb }) {
   if (typeof a.next !== 'string') a.next = sectionOf(body, 'Next Action').split('\n').find((l) => l.trim()) || undefined;
   const missing = ['project', 'slug', 'next'].filter((k) => !a[k]);
   if (missing.length) { console.error(`gtg ${verb}: missing --${missing.join(', --')}${missing.includes('next') ? ' (or a ## Next Action section in the body)' : ''}`); process.exit(2); }
-  // slug becomes a filename and a git-add arg - constrain it so it can't traverse paths or inject shell.
-  if (!/^[A-Za-z0-9_-]+$/.test(a.slug)) { console.error(`gtg ${verb}: --slug must match [A-Za-z0-9_-]`); process.exit(2); }
+  // slug becomes a filename and a git-add arg - constrain it so it can't traverse paths or inject
+  // shell. At least as strict as lib/store.mjs's own SLUG_OK, which requires an alphanumeric FIRST
+  // character: a leading '-' reads as a flag to git and to argv parsing. Refused here rather than
+  // inside the store because writeHandoff writes the .md to disk before it saves the entry, and
+  // that no-orphan-file guarantee only holds while nothing after that write can still refuse -
+  // `--slug _foo` used to pass here, land the markdown, and then throw inside writeCollection,
+  // leaving an untracked .md, no entry, and a body that came from stdin and is therefore gone.
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(a.slug)) { console.error(`gtg ${verb}: --slug must start with a letter or digit and match [A-Za-z0-9_-]`); process.exit(2); }
   if (!body) { console.error(`gtg ${verb}: empty body on stdin`); process.exit(2); }
   // Slug reuse lives HERE, not in a `list <name>` probe the skill runs first (one tool turn per
   // departure, 2026-08-26). A fresh slug for a project that already has an entry mints a
@@ -302,7 +454,7 @@ async function writeHandoff(argv, { storeRel, key, verb }) {
   // project name contains --project (case-insensitive, the same predicate `list <filter>`
   // uses) lends its slug. Two or more matches: ambiguous, keep the given slug. --exact opts
   // out, for the `gtg [project]` override where the caller means the slug literally.
-  const everything = [...entries(REL_ACTIVE, 'handoffs'), ...entries(REL_BACKLOG, 'backlog')];
+  const everything = [...entries('active'), ...entries('backlog')];
   if (!a.exact && !everything.some((e) => e.slug === a.slug)) {
     const name = String(a.project).toLowerCase();
     const near = everything.filter((e) => String(e.project).toLowerCase().includes(name));
@@ -394,27 +546,25 @@ Say: "gtg ${a.slug}"
   };
   if (a['dry-run']) {
     console.log(`--- DRY RUN: would write ${relFile} ---\n${doc}`);
-    console.log(`--- ${storeRel} entry ---\n${JSON.stringify(entry, null, 2)}`);
+    console.log(`--- ${COLLECTIONS[which].dir}/${a.slug}.json entry ---\n${JSON.stringify(entry, null, 2)}`);
     return;
   }
   mkdirSync(join(ROOT, 'docs/handoffs'), { recursive: true });
   writeFileSync(join(ROOT, relFile), doc);
-  const items = entries(storeRel, key).filter((e) => e.slug !== a.slug); // dedupe by slug
+  const items = entries(which).filter((e) => e.slug !== a.slug); // dedupe by slug
   items.push(entry);
-  saveEntries(storeRel, key, items);
+  const paths = saveEntries(which, items);
   // The two stores PARTITION the work, in flight against shelved, which is what every other
   // mover already assumes: back, active, resume and autoShelf all MOVE an entry rather than
   // copy it. Deduping against only the store being written left the other copy sitting there,
   // and the two drive different renderers, so one project read as active or shelved depending
   // on which command you happened to run. `prior` above already spans both stores; the write
   // now does too, so writing a handoff for a shelved slug unparks it instead of forking it.
-  const [otherRel, otherKey] = storeRel === REL_ACTIVE
-    ? [REL_BACKLOG, 'backlog']
-    : [REL_ACTIVE, 'handoffs'];
-  const others = entries(otherRel, otherKey);
+  const other = which === 'active' ? 'backlog' : 'active';
+  const others = entries(other);
   const kept = others.filter((e) => e.slug !== a.slug);
   const unparked = kept.length !== others.length;
-  if (unparked) saveEntries(otherRel, otherKey, kept);
+  if (unparked) paths.push(...saveEntries(other, kept));
   // 'backlog' here means "park a NEW idea" (writeHandoff's other caller) - distinct
   // from `back` (below), which SHELVES an already-active entry and keeps its own
   // 'gtg backlog: park <project>' subject unchanged; historical commits use that
@@ -422,7 +572,10 @@ Say: "gtg ${a.slug}"
   const subject = verb === 'backlog'
     ? `gtg backlog: new ${a.project} - session ${sessions}`
     : `${verb}: ${a.project} - session ${sessions}`;
-  commit(unparked ? [relFile, storeRel, otherRel] : [relFile, storeRel], subject);
+  // relFile plus every record file the two saves touched, deletions included - the unpark
+  // above REMOVES the slug's file from the other store, and an unnamed deletion stays in the
+  // working tree for whichever session commits next.
+  commit([relFile, ...paths], subject);
   console.log(relFile);
   // After-handoff hook: <root>/.gtg/after-handoff.mjs, default export fn(ctx), runs once the
   // handoff is committed. This is where the ceremony that used to be prose steps for the model
@@ -436,7 +589,7 @@ Say: "gtg ${a.slug}"
       if (typeof mod.default !== 'function') throw new Error('no default export function');
       await mod.default({ root: ROOT, entry, file: relFile, body: fullBody, worktree, readStore, writeStore, commit });
     } catch (e) {
-      console.error(`gtg: after-handoff hook failed - ${(e.stderr || e.message || String(e)).toString().trim().split('\n')[0]}`);
+      console.error(`gtg: after-handoff hook failed - ${firstMeaningfulLine(e)}`);
       process.exitCode = 1;
     }
   }
@@ -444,30 +597,29 @@ Say: "gtg ${a.slug}"
     ? `PARKED on backlog: "${a.project}" - reactivate with 'gtg active <n>' or "gtg ${a.slug}"`
     : `RESUME: "gtg ${a.slug}"`);
 }
-const handoff = (argv) => writeHandoff(argv, { storeRel: REL_ACTIVE, key: 'handoffs', verb: 'handoff' });
+const handoff = (argv) => writeHandoff(argv, { which: 'active', verb: 'handoff' });
 
 // backlog: with --project it parks a new entry; bare it lists the shelf (Task 3)
 function backlog(argv) {
-  if (parseFlags(argv).project) return writeHandoff(argv, { storeRel: REL_BACKLOG, key: 'backlog', verb: 'backlog' });
+  if (parseFlags(argv).project) return writeHandoff(argv, { which: 'backlog', verb: 'backlog' });
   return backlogList();
 }
 // Active entries idle >7d silently move to the backlog when `list` runs.
 // 'updated' is refreshed on every handoff/back/active, so only genuinely idle entries qualify.
 function autoShelf() {
-  const act = entries(REL_ACTIVE, 'handoffs');
+  const act = entries('active');
   const cutoff = Date.now() - 7 * 86400000;
   const stale = act.filter((e) => e.updated && Date.parse(e.updated) <= cutoff);
   if (!stale.length) return;
   const fresh = act.filter((e) => !stale.includes(e));
-  let bl = entries(REL_BACKLOG, 'backlog');
+  let bl = entries('backlog');
   for (const s of stale) {
     s.updated = nowIso(); // restamp = shelf date
     bl = bl.filter((e) => e.slug !== s.slug);
     bl.push(s);
   }
-  saveEntries(REL_ACTIVE, 'handoffs', fresh);
-  saveEntries(REL_BACKLOG, 'backlog', bl);
-  commit([REL_ACTIVE, REL_BACKLOG], `gtg backlog: auto-park ${stale.length} stale (>7d): ${stale.map((s) => s.project).join(', ')}`);
+  const paths = [...saveEntries('active', fresh), ...saveEntries('backlog', bl)];
+  commit(paths, `gtg backlog: auto-park ${stale.length} stale (>7d): ${stale.map((s) => s.project).join(', ')}`);
   console.log(`Auto-shelved ${stale.length} project(s) idle >7d to backlog: ${stale.map((s) => s.project).join(', ')}`);
 }
 
@@ -502,10 +654,10 @@ function renderList(argv) {
   // displayOrder, not sortByProject: numbering must run 1..N top-to-bottom in the
   // order rows actually appear (see displayOrder), and `gtg back <n>` resolves
   // against this same order.
-  const act = entries(REL_ACTIVE, 'handoffs');
+  const act = entries('active');
   const allAct = displayOrder(act);
   // userVisible, so the "+N backlogged" pointer counts the rows `gtg backlog` will show.
-  const blCount = userVisible(entries(REL_BACKLOG, 'backlog')).length;
+  const blCount = userVisible(entries('backlog')).length;
   // Decluttering is not lookup. The BARE listing hides extension entries, which is the whole
   // point, but an explicit query is the user naming the thing they want, so it searches every
   // entry (`act`, not `allAct`). SKILL.md's exit procedure probes with `list <candidate>` before
@@ -526,7 +678,7 @@ function renderList(argv) {
   // but that predates the extension model and `list` is documented as never showing backlog
   // items, so widening it is a design call, not a fix. See README "Decluttering is not lookup".
   const shelvedHits = filter
-    ? entries(REL_BACKLOG, 'backlog').filter((e) => isExtensionEntry(e) && matches(e))
+    ? entries('backlog').filter((e) => isExtensionEntry(e) && matches(e))
     : [];
   const printShelved = () => {
     for (const e of shelvedHits) {
@@ -630,7 +782,7 @@ function renderList(argv) {
 function backlogList() {
   // Excluded up front, not just in the sortByProject call below, so the header count and the
   // empty-shelf message describe the rows actually rendered.
-  const bl = userVisible(entries(REL_BACKLOG, 'backlog'));
+  const bl = userVisible(entries('backlog'));
   if (!bl.length) {
     console.log("Backlog is empty. Shelf an active entry with 'gtg back <n>', or park an idea with 'gtg backlog --project ...'.");
     return;
@@ -659,8 +811,10 @@ function help() {
   gtg active <n|slug>          reactivate a backlog entry
   gtg remove <n|slug>          drop an entry (active first, then backlog)
   gtg resume [n|slug|name] [--keep]
-                               the whole pick-up: prints the handoff, consumes the entry (NOT a
-                               ship), runs <root>/.gtg/after-resume.mjs if present. Bare = the
+                               the whole pick-up: fast-forwards the hub from its upstream
+                               (silent when offline or already current), prints the handoff,
+                               consumes the entry (NOT a ship), runs
+                               <root>/.gtg/after-resume.mjs if present. Bare = the
                                only active project, else the list. --keep reads without consuming
                                (issue packages). Exit 1 = choose from the candidates printed
   gtg supersede <n|slug> [--into <n|slug>]
@@ -684,15 +838,15 @@ which overrides a bundled one of the same name - see README "Extending gtg".`);
 function back(argv) {
   const t = argv[0];
   if (!t) { console.error("Usage: gtg back <number|slug>  (see 'gtg list')"); process.exit(2); }
-  const act = entries(REL_ACTIVE, 'handoffs');
+  const act = entries('active');
   const match = resolveEntry(act, t, displayOrder);
   if (!match) { console.error(`No active project matching '${t}'. Try 'gtg list'.`); process.exit(2); }
   match.updated = nowIso(); // restamp = parked-at
-  const bl = entries(REL_BACKLOG, 'backlog').filter((e) => e.slug !== match.slug);
+  const bl = entries('backlog').filter((e) => e.slug !== match.slug);
   bl.push(match);
-  saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
-  saveEntries(REL_BACKLOG, 'backlog', bl);
-  commit([REL_ACTIVE, REL_BACKLOG], `gtg backlog: park ${match.project}`);
+  const paths = [...saveEntries('active', act.filter((e) => e !== match)),
+                 ...saveEntries('backlog', bl)];
+  commit(paths, `gtg backlog: park ${match.project}`);
   // `|| match.slug` for the same reason printEntry substitutes a slug label: an extension entry
   // has no position in the listing these numbers index, so indexOf is -1 and the hint would read
   // 'gtg active 0', which resolveEntry turns into arr[-1] and exits 2. Print what actually works.
@@ -704,16 +858,16 @@ function activate(argv) {
   const t0 = argv[0];
   if (!t0) { console.error("Usage: gtg active <number|slug>  (see 'gtg backlog')"); process.exit(2); }
   const t = t0.replace(/^[bB](?=\d+$)/, ''); // accept the b<n> numbering `gtg backlog` shows
-  const bl = entries(REL_BACKLOG, 'backlog');
+  const bl = entries('backlog');
   if (!bl.length) { console.error('Backlog is empty - nothing to activate.'); process.exit(2); }
   const match = resolveEntry(bl, t);
   if (!match) { console.error(`No backlog project matching '${t0}'. Try 'gtg backlog'.`); process.exit(2); }
   match.updated = nowIso();
-  const act = entries(REL_ACTIVE, 'handoffs').filter((e) => e.slug !== match.slug);
+  const act = entries('active').filter((e) => e.slug !== match.slug);
   act.push(match);
-  saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== match));
-  saveEntries(REL_ACTIVE, 'handoffs', act);
-  commit([REL_ACTIVE, REL_BACKLOG], `gtg activate: ${match.project}`);
+  const paths = [...saveEntries('backlog', bl.filter((e) => e !== match)),
+                 ...saveEntries('active', act)];
+  commit(paths, `gtg activate: ${match.project}`);
   // active list is display-ordered. `|| match.slug` is the mirror of the one in back(), and for
   // the same reason: an extension entry has no numbered row, so 'gtg back 0' would exit 2.
   const hint = displayOrder(act).indexOf(match) + 1 || match.slug;
@@ -735,8 +889,8 @@ function rename(argv) {
   if (!/^[A-Za-z0-9_-]+$/.test(to)) {
     console.error('gtg rename: <new-slug> must match [A-Za-z0-9_-]'); process.exit(2);
   }
-  const act = entries(REL_ACTIVE, 'handoffs');
-  const bl = entries(REL_BACKLOG, 'backlog');
+  const act = entries('active');
+  const bl = entries('backlog');
   // Active wins a collision, the same precedence resume uses.
   const match = resolveEntry(act, from, displayOrder) ?? resolveEntry(bl, from);
   if (!match) {
@@ -753,9 +907,8 @@ function rename(argv) {
       process.exit(2);
     }
     for (const e of kids) e.parent = to;
-    saveEntries(REL_ACTIVE, 'handoffs', act);
-    saveEntries(REL_BACKLOG, 'backlog', bl);
-    commit([REL_ACTIVE, REL_BACKLOG], `gtg rename: parent ${from} to ${to}`);
+    const paths = [...saveEntries('active', act), ...saveEntries('backlog', bl)];
+    commit(paths, `gtg rename: parent ${from} to ${to}`);
     console.log(`Re-pointed ${kids.length} entr${kids.length === 1 ? 'y' : 'ies'} from parent '${
       from}' to '${to}'. Nothing here carries '${from}' as its own slug.`);
     return;
@@ -769,9 +922,10 @@ function rename(argv) {
   let kids = 0;
   for (const e of [...act, ...bl]) if (e.parent === old) { e.parent = to; kids++; }
   // Both stores every time. The entry sits on one shelf but a child can sit on the other.
-  saveEntries(REL_ACTIVE, 'handoffs', act);
-  saveEntries(REL_BACKLOG, 'backlog', bl);
-  commit([REL_ACTIVE, REL_BACKLOG], `gtg rename: ${old} to ${to}`);
+  // The renamed entry's file MOVES (old.json -> to.json), so `deleted` carries the old name
+  // and the commit has to name it or the removal is left staged for another session.
+  const paths = [...saveEntries('active', act), ...saveEntries('backlog', bl)];
+  commit(paths, `gtg rename: ${old} to ${to}`);
   console.log(`Renamed: ${match.project} (${old} -> ${to})${
     kids ? `, re-pointed ${kids} sub-project(s)` : ''}`);
   console.log(`The portfolio slug is separate. Match it with: projects rename ${old} ${to}`);
@@ -791,8 +945,8 @@ function rename(argv) {
 function unparent(argv) {
   const t = argv[0];
   if (!t) { console.error("Usage: gtg unparent <number|slug>  (see 'gtg list')"); process.exit(2); }
-  const act = entries(REL_ACTIVE, 'handoffs');
-  const bl = entries(REL_BACKLOG, 'backlog');
+  const act = entries('active');
+  const bl = entries('backlog');
   // Active wins a collision, the same precedence rename and resume use.
   const match = resolveEntry(act, t, displayOrder) ?? resolveEntry(bl, t);
   if (!match) { console.error(`No project matching '${t}'. Try 'gtg list'.`); process.exit(2); }
@@ -808,9 +962,8 @@ function unparent(argv) {
   delete match.parent;
   // `updated` is NOT restamped. Bookkeeping is not work, the same rule rename follows, and
   // restamping would restart the 7-day idle clock `list` auto-shelves on.
-  saveEntries(REL_ACTIVE, 'handoffs', act);
-  saveEntries(REL_BACKLOG, 'backlog', bl);
-  commit([REL_ACTIVE, REL_BACKLOG], `gtg unparent: ${match.project}`);
+  const paths = [...saveEntries('active', act), ...saveEntries('backlog', bl)];
+  commit(paths, `gtg unparent: ${match.project}`);
   console.log(`Cleared parent '${had}' from ${match.project}. It now lists as standalone.`);
 }
 
@@ -823,8 +976,8 @@ function log(argv) {
   const n = i === -1 ? '20' : (argv[i + 1] ?? '20');
   const filter = [];
   if (t) {
-    const match = resolveEntry(entries(REL_ACTIVE, 'handoffs'), t, displayOrder)
-      ?? resolveEntry(entries(REL_BACKLOG, 'backlog'), t);
+    const match = resolveEntry(entries('active'), t, displayOrder)
+      ?? resolveEntry(entries('backlog'), t);
     if (!match) { console.error(`No project matching '${t}'. Try 'gtg list'.`); process.exit(2); }
     // --fixed-strings: a project name is free text and can hold regex metacharacters.
     filter.push('--fixed-strings', '--grep', match.project);
@@ -832,7 +985,7 @@ function log(argv) {
   let out = '';
   try {
     out = execFileSync('git', ['log', `-n${n}`, '--date=short', '--format=%h %ad %s',
-      ...filter, '--', REL_ACTIVE, REL_BACKLOG],
+      ...filter, '--', ...STORE_PATHSPEC],
     { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] }).toString();
   } catch {
     console.error('gtg log: no git history here'); process.exit(1);
@@ -843,20 +996,20 @@ function log(argv) {
 function remove(argv) {
   const t = argv[0];
   if (!t) { console.error("Usage: gtg remove <number|slug>  (see 'gtg list')"); process.exit(2); }
-  const act = entries(REL_ACTIVE, 'handoffs');
+  const act = entries('active');
   const match = resolveEntry(act, t, displayOrder);
   if (match) {
-    saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
-    commit([REL_ACTIVE], `gtg prune: remove ${match.project} - confirmed done`);
+    commit(saveEntries('active', act.filter((e) => e !== match)),
+      `gtg prune: remove ${match.project} - confirmed done`);
     console.log(`Removed: ${match.project}`);
     return;
   }
   // not in active - try the backlog (lets resume-consume clear a pulled backlog item)
-  const bl = entries(REL_BACKLOG, 'backlog');
+  const bl = entries('backlog');
   const blMatch = resolveEntry(bl, t.replace(/^[bB](?=\d+$)/, ''));
   if (blMatch) {
-    saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== blMatch));
-    commit([REL_BACKLOG], `gtg prune: remove ${blMatch.project} from backlog - confirmed done`);
+    commit(saveEntries('backlog', bl.filter((e) => e !== blMatch)),
+      `gtg prune: remove ${blMatch.project} from backlog - confirmed done`);
     console.log(`Removed from backlog: ${blMatch.project}`);
     return;
   }
@@ -878,8 +1031,8 @@ function supersede(argv) {
   if (i !== -1 && !rest[i + 1]) { console.error('gtg supersede: --into needs a target'); process.exit(2); }
   const intoArg = i === -1 ? null : rest[i + 1];
 
-  const act = entries(REL_ACTIVE, 'handoffs');
-  const bl = entries(REL_BACKLOG, 'backlog');
+  const act = entries('active');
+  const bl = entries('backlog');
   const stripB = (s) => s.replace(/^[bB](?=\d+$)/, '');
   // Active wins a collision, the same precedence resume and rename use.
   const match = resolveEntry(act, t, displayOrder) ?? resolveEntry(bl, stripB(t));
@@ -895,9 +1048,9 @@ function supersede(argv) {
     into = target ? target.project : intoArg;
   }
 
-  saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
-  saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== match));
-  commit([REL_ACTIVE, REL_BACKLOG], `gtg supersede: ${match.project}${into ? ` into ${into}` : ''}`);
+  const paths = [...saveEntries('active', act.filter((e) => e !== match)),
+                 ...saveEntries('backlog', bl.filter((e) => e !== match))];
+  commit(paths, `gtg supersede: ${match.project}${into ? ` into ${into}` : ''}`);
   console.log(`Superseded: ${match.project}${into ? ` -> ${into}` : ' (created in error)'}`);
 }
 
@@ -916,11 +1069,93 @@ function commandFileFor(t) {
   return existsSync(join(ROOT, '.gtg', 'commands', `${t}.mjs`))
     || existsSync(join(CLI_DIR, 'extensions', 'commands', `${t}.mjs`));
 }
+
+// Fast-forward the hub from whatever it tracks before anything reads the store. POSITION IS THE WHOLE
+// POINT (2026-09-01): this shipped first inside .gtg/after-resume.mjs, which runs AFTER
+// entries() has read, the handoff has printed and the consume has committed - so home was
+// always one commit ahead and --ff-only aborted in exactly the case the sync exists for, a
+// mirror carrying the other machine's work. A fetch after the read cannot change what the
+// read returned. Handing entries between Obelisk and reborn is why this store is git at all.
+// Background: docs/runbooks/git-parity.md.
+//
+// A convenience, NEVER a gate. Every git failure is swallowed and each call capped at 5s, so
+// a resume offline, off Tailscale, in a repo with no such remote, or mid-rebase behaves
+// exactly as it did before this existed. And stdout speaks only on a real fast-forward: a
+// line on every resume is noise, and noise on the hot path is how a real one goes unread.
+// WHERE to sync from is resolved per branch, not named (2026-09-01 fix round). The first cut
+// hardcoded obelisk-backup/master, which made the feature one-directional: Obelisk's clone calls
+// the same repo `origin` and may sit on `main`, so its every resume fetched nothing and said
+// nothing - half of the two-machine handoff this plan exists for was simply not implemented.
+//
+// branch.<b>.remote + branch.<b>.merge rather than `rev-parse @{u}`: @{u} answers with
+// "<remote>/<branch>" as ONE string, and either half may itself contain a slash, so splitting it
+// guesses. The config keys hold the two halves already separated.
+//
+// No upstream falls back to the named pair, which is home's own situation today (nothing there
+// sets branch.*.remote) - and only on the branch that mirror carries. A feature branch with no
+// upstream must never be moved, gtg runs from feature worktrees, and a detached HEAD (mid-rebase,
+// mid-bisect) reports 'HEAD' and skips. Where an upstream DOES exist it is always the right
+// target, so the lookup carries the guard the branch comparison used to.
+// SYNC_REMOTE / SYNC_BRANCH are declared up beside the migration block, which calls syncHub()
+// at import time and would otherwise hit them in their temporal dead zone.
+function syncTarget(git) {
+  let branch;
+  try { branch = git('rev-parse', '--abbrev-ref', 'HEAD'); } catch { return null; }
+  if (!branch || branch === 'HEAD') return null;
+  try {
+    const remote = git('config', '--get', `branch.${branch}.remote`);
+    const merge = git('config', '--get', `branch.${branch}.merge`);
+    // Anchored: branch.<b>.merge is a full ref, so the prefix is only ever at the START. Unanchored,
+    // a branch legitimately named `x/refs/heads/y` gets mangled into `x/y`.
+    if (remote && merge) return { remote, branch: merge.replace(/^refs\/heads\//, '') };
+  } catch { /* --get exits 1 when unset: no upstream, try the fallback below */ }
+  return branch === SYNC_BRANCH ? { remote: SYNC_REMOTE, branch: SYNC_BRANCH } : null;
+}
+function syncHub() {
+  if (synced) return; // once per process - see `synced` up by the migration block
+  synced = true;
+  // stderr piped, not inherited: execFileSync forwards a child's stderr to ours otherwise,
+  // and git narrates a refused fast-forward in nine hint: lines - five of git's own above every
+  // line of ours. The after-resume hook piped it for the same reason before this moved here.
+  const git = (...args) => execFileSync('git', args,
+    { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 }).toString().trim();
+  const target = syncTarget(git);
+  if (!target) return; // detached, or a branch with neither an upstream nor the fallback's name
+  const name = `${target.remote}/${target.branch}`;
+  let before;
+  try {
+    before = git('rev-parse', 'HEAD');
+    git('fetch', '--quiet', target.remote, target.branch);
+  } catch { return; } // no remote, host down, offline, not a repo: local state stands, silently
+  try {
+    // FETCH_HEAD, not <remote>/<branch>: the fetch above just set it to exactly what came down,
+    // so nothing here rests on the remote's refspec having updated a tracking ref - and a
+    // branch.<b>.remote holding a URL rather than a name has no tracking ref at all.
+    git('merge', '--ff-only', '--quiet', 'FETCH_HEAD');
+  } catch {
+    // The fetch landed and the fast-forward was refused. Home being AHEAD of the mirror is the
+    // normal state and says nothing. The mirror holding commits home does not have means a
+    // genuine fork or a dirty tree in the way, and resolving either is Nathan's call, not a
+    // resume's - auto-merging a divergence is what caused the 2026-08-02 fork. On stderr, so
+    // "stdout speaks only on a real fast-forward" still holds.
+    try { git('merge-base', '--is-ancestor', 'FETCH_HEAD', 'HEAD'); } catch {
+      console.error(`gtg: ${name} will not fast-forward (diverged, or local changes in the way) - resuming from local state`);
+    }
+    return;
+  }
+  try {
+    const after = git('rev-parse', 'HEAD');
+    if (after !== before) console.log(`Synced ${name}: fast-forwarded to ${after.slice(0, 7)}`);
+  } catch { /* the merge already succeeded; failing to name it is not worth a word */ }
+}
+
 async function resumeConsume(argv) {
   const a = parseFlags(argv);
   const t = argv.find((x) => !x.startsWith('--'));
-  const act = entries(REL_ACTIVE, 'handoffs');
-  const bl = entries(REL_BACKLOG, 'backlog');
+  // Before the two reads below, deliberately. See syncHub: after them it is decoration.
+  syncHub();
+  const act = entries('active');
+  const bl = entries('backlog');
   let match = null;
   let fromBacklog = false;
   if (!t) {
@@ -971,12 +1206,12 @@ async function resumeConsume(argv) {
   if (a.keep) {
     console.log(`Kept: ${match.project} (not consumed)`);
   } else if (fromBacklog) {
-    saveEntries(REL_BACKLOG, 'backlog', bl.filter((e) => e !== match));
-    commit([REL_BACKLOG], `gtg resume: ${match.project} - backlog handoff consumed`);
+    commit(saveEntries('backlog', bl.filter((e) => e !== match)),
+      `gtg resume: ${match.project} - backlog handoff consumed`);
     console.log(`Consumed from backlog: ${match.project}`);
   } else {
-    saveEntries(REL_ACTIVE, 'handoffs', act.filter((e) => e !== match));
-    commit([REL_ACTIVE], `gtg resume: ${match.project} - handoff consumed`);
+    commit(saveEntries('active', act.filter((e) => e !== match)),
+      `gtg resume: ${match.project} - handoff consumed`);
     console.log(`Consumed: ${match.project}`);
   }
   // After-resume hook: <root>/.gtg/after-resume.mjs, the resume-side twin of after-handoff.
@@ -988,7 +1223,7 @@ async function resumeConsume(argv) {
       if (typeof mod.default !== 'function') throw new Error('no default export function');
       await mod.default({ root: ROOT, entry: match, file: match.file ?? null, body: body ?? '', kept: !!a.keep, readStore, writeStore, commit });
     } catch (e) {
-      console.error(`gtg: after-resume hook failed - ${(e.stderr || e.message || String(e)).toString().trim().split('\n')[0]}`);
+      console.error(`gtg: after-resume hook failed - ${firstMeaningfulLine(e)}`);
       process.exitCode = 1;
     }
   }
@@ -999,18 +1234,23 @@ async function resumeConsume(argv) {
 // both of them loud: no change of ours to undo, and our change no longer being the
 // tip. Before 2026-08-04 undo took whatever commit was last and reverted it.
 //
-// Finding C1: the anchor commit used to be picked from _active.json alone. Two
-// mutations write _backlog.json ONLY (`gtg backlog --project ...` parking a new
-// idea, and `gtg resume <backlog-slug>`) - anchoring on _active.json skips right
-// past those, lands on an unrelated older active-list commit, reverts THAT
-// instead, and (since the restore code still ran against a mismatched parent)
-// silently deleted the backlog. Fix: the anchor considers both paths, and each
-// store is restored independently against ITS OWN state at `last^`, tolerating
-// "didn't exist at last^" per file rather than assuming both existed.
+// Finding C1, and the rule it left behind: the anchor must span BOTH collections.
+// It was once picked from the active store alone, but two mutations touch the
+// backlog ONLY (`gtg backlog --project ...` parking a new idea, and
+// `gtg resume <backlog-slug>`), so an active-only anchor skipped right past those,
+// landed on an unrelated older active-list commit, reverted THAT instead, and
+// silently deleted the backlog. STORE_PATHSPEC is what keeps that fixed now: it
+// names both sharded directories, so a backlog-only commit is still the anchor,
+// and it keeps the legacy packed files too so undoing a pre-shard commit works.
+//
+// The restore below is per PATH rather than per store. A sharded collection is
+// many files and a commit usually touches one or two of them, so rewinding a
+// whole directory would discard records the commit never mentioned - the same
+// class of over-reach C1 was about, one level down.
 function undo() {
   const storeLog = (extra = []) => {
     try {
-      return execFileSync('git', ['log', '-1', '--format=%H%x1f%s%x1f%ar', ...extra, '--', REL_ACTIVE, REL_BACKLOG],
+      return execFileSync('git', ['log', '-1', '--format=%H%x1f%s%x1f%ar', ...extra, '--', ...STORE_PATHSPEC],
         { cwd: ROOT }).toString().trim();
     } catch { return ''; }
   };
@@ -1050,34 +1290,42 @@ function undo() {
   const last = mine.sha;
   const subject = mine.subject;
 
-  // Restore one store from `${last}^`. Returns whether it changed anything.
-  // If the file didn't exist at last^ but exists now, this commit created it -
-  // undoing means removing it. (Undoing the very first-ever handoff commit is
-  // exactly this case: _active.json had no `last^` at all, so it goes away
-  // entirely - correct, not an error.)
-  const restoreOne = (rel) => {
-    const path = join(ROOT, rel);
-    const existedBefore = existsSync(path);
+  // Rewind every path the anchor commit touched to its state at `${last}^`. The packed store
+  // made this two whole files; a sharded store is many, so the unit is now "the paths this
+  // commit changed" and git names them for us. STORE_PATHSPEC covers the packed files too, so
+  // an undo of a pre-shard commit still works exactly as it used to. `--root` keeps the
+  // very-first-commit case working (no parent to diff against).
+  //
+  // A path absent at `last^` was CREATED by this commit, so undoing it means removing it -
+  // the same rule the packed version followed, and the reason a deletion has to be in the
+  // commit path list below rather than left in the working tree.
+  let changed = [];
+  try {
+    changed = execFileSync('git', ['diff-tree', '-r', '--root', '--no-commit-id', '--name-only',
+      last, '--', ...STORE_PATHSPEC], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().split('\n').map((s) => s.trim()).filter(Boolean);
+  } catch { /* the empty check below reports it */ }
+
+  const paths = [];
+  for (const rel of changed) {
+    const abs = join(ROOT, rel);
     let prev = null;
     try { prev = execFileSync('git', ['show', `${last}^:${rel}`], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString(); }
-    catch { /* absent at last^ - never existed yet at that point in history */ }
-    if (prev !== null) { writeFileSync(path, prev); return true; }
-    if (existedBefore) { rmSync(path); return true; }
-    return false;
-  };
-  const activeTouched = restoreOne(REL_ACTIVE);
-  const backlogTouched = restoreOne(REL_BACKLOG);
-  if (!activeTouched && !backlogTouched) {
+    catch { /* absent at last^ - this commit created it */ }
+    if (prev !== null) { mkdirSync(dirname(abs), { recursive: true }); writeFileSync(abs, prev); }
+    else if (existsSync(abs)) rmSync(abs);
+    else continue; // created by the commit and already gone - nothing to undo for this path
+    paths.push(rel);
+  }
+  if (!paths.length) {
     console.error(`Nothing before '${subject}' - can't undo further.`);
     process.exit(2);
   }
 
-  const paths = [...(activeTouched ? [REL_ACTIVE] : []), ...(backlogTouched ? [REL_BACKLOG] : [])];
   commit(paths, `gtg undo: revert '${subject}'`);
   // Report what came back without re-running list() - list() calls autoShelf(),
   // which would immediately re-park a still-stale restored entry (and commit again).
-  const restored = readStore(REL_ACTIVE) ?? {};
-  const names = Array.isArray(restored.handoffs) ? restored.handoffs.map((e) => e.project) : [];
+  const names = entries('active').map((e) => e.project);
   console.log(`Undone: ${subject}`);
   console.log(`Active entries now (${names.length}): ${names.join(', ') || '(none)'}`);
 }
@@ -1127,17 +1375,13 @@ else {
       const ownParent = EXTENSIONS[cmd] ?? null;
       // Both stores, always. An entry idle over 7 days is auto-shelved onto the backlog by
       // `list`, so an active-only read reports a live package as missing.
+      //
+      // Through `entries`, NOT `readStore`: readStore keeps its packed shape for the published
+      // extension context, so reading the store through it here would serve issues.mjs and
+      // learn.mjs the frozen pre-shard file and report every entry written since as missing.
       const ownEntries = () => {
-        const grab = (rel, key) => {
-          if (!ownParent) return [];
-          const store = readStore(rel);
-          const all = Array.isArray(store?.[key]) ? store[key].filter(Boolean) : [];
-          return all.filter((e) => e.parent === ownParent);
-        };
-        return {
-          active: grab(REL_ACTIVE, 'handoffs'),
-          shelved: grab(REL_BACKLOG, 'backlog'),
-        };
+        const grab = (which) => (ownParent ? entries(which).filter((e) => e.parent === ownParent) : []);
+        return { active: grab('active'), shelved: grab('backlog') };
       };
       // ownParent rides the ctx as well as being closed over by ownEntries: an extension that
       // WRITES an entry needs the same namespace its reader filters on, and deriving it a

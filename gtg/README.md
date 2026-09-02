@@ -40,7 +40,7 @@ Requires Node.js ≥ 18 and git on PATH.
 | You say | What happens |
 |---|---|
 | "gtg" (or any departure phrase) | Handoff written to `docs/handoffs/`, entry pinned, both committed. One CLI call, run from the worktree: `--wip` checkpoints it first, an existing entry's slug is reused when the project name matches it (`--exact` to opt out), the next action is read from the body's `## Next Action`, the worktree from where you ran it, the task list and this session's commits from disk, and the writing harness is recorded (`--harness` to override) |
-| "gtg <project>" at session start | One CLI call (`gtg resume <project>`) prints the handoff, consumes the entry and runs `.gtg/after-resume.mjs`; the session continues from the Next Action. Bare "gtg" with one active project does the same without naming it. A name that fits several projects, or a project sharing its name with a command, prints the candidates instead (exit 1) |
+| "gtg <project>" at session start | One CLI call (`gtg resume <project>`) fast-forwards the hub from the current branch's upstream before reading anything - `branch.<b>.remote`/`branch.<b>.merge`, falling back to `obelisk-backup/master` when no upstream is set, and skipping a branch with neither (`--ff-only`, 5s, silent unless it actually moved; a divergence says so on stderr and the resume carries on locally), prints the handoff, consumes the entry and runs `.gtg/after-resume.mjs`; the session continues from the Next Action. Bare "gtg" with one active project does the same without naming it. A name that fits several projects, or a project sharing its name with a command, prints the candidates instead (exit 1) |
 | "gtg resume <n\|slug>" | The same, by hand. Consuming is a pick-up, **not** a ship. `--keep` reads without consuming |
 | "gtg <project>" as the first thing you say | Resumes that project. At session start a project name outranks an *extension* verb; if both exist (a project called `issues` **and** your own `gtg issues` command) you get a numbered pick list instead of a guess. Mid-session the verb wins, and core verbs (`list`, `report`, `stats`, …) are always commands |
 | "gtg stats" | A terminal snapshot: streak, shipped count, deepest project, effort, velocity |
@@ -79,11 +79,19 @@ Two extension points:
 
 ```js
 // .gtg/commands/hello.mjs
-export default async ({ root, args, readStore, writeStore, commit, countHandoffFiles }) => {
-  const data = readStore('docs/handoffs/_active.json'); // parsed JSON or null
-  console.log(`hello from ${root}, ${data?.handoffs?.length ?? 0} active, args: ${args.join(' ')}`);
+export default async ({ root, args, ownEntries, readStore, writeStore, commit }) => {
+  const { active, shelved } = ownEntries();                 // this command's own entries
+  const session = readStore('docs/handoffs/_session.json'); // parsed JSON or null
+  console.log(`hello from ${root}, ${active.length} active, args: ${args.join(' ')}`);
 };
 ```
+
+**Don't read the records through `readStore`.** It is a whole-file JSON reader and the records
+live one per file since 3.1.0 (see *Storage format*). `readStore('docs/handoffs/_active.json')`
+still returns something, because the packed file is still on disk — but it is **frozen at the
+moment of the migration**, so a command reading it serves the entries as they were then and
+reports everything written since as missing, with no error anywhere. `ownEntries()` reads the
+sharded store; `readStore` is for genuine single-object files like `_session.json`.
 
 `ctx` = `{ root, args, readStore(path), writeStore(path, data), commit(paths, message), countHandoffFiles(slug), ownEntries() }`.
 `countHandoffFiles(slug)` returns how many `docs/handoffs/*.md` files exist for that slug — the
@@ -101,7 +109,8 @@ consume step and hooks included, instead of reimplementing it. Both bundled exte
 skill's Resume Procedure.
 
 `ownEntries()` returns `{ active, shelved }`, this command's own handoff entries, read from
-`_active.json` and `_backlog.json` and filtered to the `parent` namespace it owns. Both shelves
+`docs/handoffs/active/` and `docs/handoffs/backlog/` and filtered to the `parent` namespace it
+owns — through the same reader the CLI uses, so it never sees the frozen packed file. Both shelves
 every time, because `gtg list` auto-shelves anything idle over 7 days and an active-only read
 would report a live package as missing. A command that owns no namespace gets two empty arrays.
 
@@ -173,8 +182,42 @@ grows within a major version; a breaking change is a major version bump.
 
 ## Storage format
 
-`docs/handoffs/_active.json` — `{"handoffs":[{...}]}`; `_backlog.json` the same
-with key `backlog`. Handoff docs are plain markdown next to them.
+**One file per entry, since 3.1.0.** `docs/handoffs/active/<slug>.json` and
+`docs/handoffs/backlog/<slug>.json` each hold a single entry object, serialised
+`JSON.stringify(entry, null, 2) + '\n'` with no wrapper key. Handoff docs are plain markdown in
+`docs/handoffs/` itself, as before.
+
+A packed array made every write rewrite the whole file, so two machines editing unrelated
+projects still collided on the same bytes, and a JSON array conflict has no semantic merge. One
+file per entry makes unrelated edits disjoint, and a same-project fork conflicts on one small
+file, which is correct.
+
+Each directory also holds a `.gitkeep`. Git cannot track an empty directory, and an emptied
+collection — the last active entry consumed, or everything parked — has to survive as an *empty*
+collection: without the keeper the directory is simply absent on the other machine's checkout,
+the reader falls back to the packed file, and every entry deleted here comes back there.
+
+`docs/handoffs/_active.json` (`{"handoffs":[...]}`) and `_backlog.json` (key `backlog`) are the
+packed files this replaced. They are still READ when the matching directory is absent, so the
+first run on an unsharded tree migrates itself — backing each one up to `<name>.pre-shard` first
+— and a rollback to an older plugin still finds its data. That data is the snapshot taken at
+the shard: anything written after it lives only in the directory, so a rollback shows the
+pre-shard state and the later records stay in git history under `docs/handoffs/active/`
+until you re-shard. Deleting the packed files is a later, separate step. **The directory
+wins whenever it exists, even when empty**, precisely so a stale packed file cannot resurrect
+deleted entries.
+
+Pin the record files as-is in `.gitattributes`:
+
+```
+docs/handoffs/active/*.json   -text
+docs/handoffs/backlog/*.json  -text
+```
+
+The `-text` line is correctness, not tidiness. A write is skipped when the file's bytes already
+equal the record's serialisation, so under a `text=auto` rule every record reads as changed after
+a fresh clone on Windows and every command rewrites the whole store — losing exactly the
+per-record isolation the sharding exists to deliver.
 
 ## Report JSON (`gtg report`)
 
@@ -202,7 +245,7 @@ higher than the number of rows `gtg list` shows.
 
 ### Entry fields
 
-Each entry in `docs/handoffs/_active.json` / `_backlog.json`:
+Each entry in `docs/handoffs/active/<slug>.json` / `docs/handoffs/backlog/<slug>.json`:
 
 | Field | Set by | Meaning |
 |---|---|---|

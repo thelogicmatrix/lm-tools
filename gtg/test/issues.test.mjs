@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { readCollection, writeCollection } from '../skills/gtg/lib/store.mjs';
 import issues, { field } from '../skills/gtg/extensions/commands/issues.mjs';
 
 const setup = (files, active = [], backlog = []) => {
@@ -15,8 +16,11 @@ const setup = (files, active = [], backlog = []) => {
   for (const [name, body] of Object.entries(files)) {
     writeFileSync(join(root, 'docs/issues', name), body);
   }
-  writeFileSync(join(root, 'docs/handoffs/_active.json'), JSON.stringify({ handoffs: active }));
-  writeFileSync(join(root, 'docs/handoffs/_backlog.json'), JSON.stringify({ backlog }));
+  // Sharded, one file per record, the way gtg writes them - so the ownEntries stub below
+  // reads what the real one reads. Seeding the packed file here would leave the stub passing
+  // against a shape no live store has had since the migration.
+  writeCollection(root, 'docs/handoffs/active', active);
+  writeCollection(root, 'docs/handoffs/backlog', backlog);
   return root;
 };
 
@@ -63,16 +67,11 @@ const run = (root, args = []) => {
       // Mirrors gtg.mjs: both stores, already filtered to this command's own parent
       // namespace, so the command never sees the namespace string itself.
       ownEntries: () => {
-        const grab = (rel, key) => {
-          try {
-            const store = JSON.parse(readFileSync(join(root, rel), 'utf8'));
-            const all = Array.isArray(store?.[key]) ? store[key].filter(Boolean) : [];
-            return all.filter((e) => e.parent === 'issues');
-          } catch { return []; }
-        };
+        const grab = (dir, legacyRel, legacyKey) =>
+          readCollection(root, dir, legacyRel, legacyKey).filter((e) => e.parent === 'issues');
         return {
-          active: grab('docs/handoffs/_active.json', 'handoffs'),
-          shelved: grab('docs/handoffs/_backlog.json', 'backlog'),
+          active: grab('docs/handoffs/active', 'docs/handoffs/_active.json', 'handoffs'),
+          shelved: grab('docs/handoffs/backlog', 'docs/handoffs/_backlog.json', 'backlog'),
         };
       },
       writeStore: () => { throw new Error('writeStore must not be used'); },
