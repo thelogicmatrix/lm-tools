@@ -5,7 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "_test-note": "A GLOB, not a hand-listed set of legs. The list version silently skipped a whole suite once: Task 1's 15 store cases were written, committed and never run because nobody remembered to add them here. `node --test <dir>` picks up every *.test.mjs, so a new suite runs the day it lands. The assert-based suites (gtg, issues) run under it too - a plain script that throws exits non-zero and the runner reports it as a failed file.",
-    "test": "node --test \"test/*.test.mjs\""
+    "_test-note": "A GLOB, not a hand-listed set of legs. The list version silently skipped a whole suite once: Task 1's 15 store cases were written, committed and never run because nobody remembered to add them here. The glob picks up every test/*.test.mjs, so a new suite runs the day it lands. The assert-based suites (gtg, issues) run under it too - a plain script that throws exits non-zero and the runner reports it as a failed file. A bare directory argument does NOT work on Node 24 (it is resolved as a module), hence the glob. --test-concurrency=1 because gtg.test.mjs spawns the CLI against ~70 throwaway git repos and running it beside the others tripled the wall clock.",
+    "test": "node --test --test-concurrency=1 \"test/*.test.mjs\""
   }
 }
