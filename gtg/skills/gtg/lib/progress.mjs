@@ -60,6 +60,10 @@ export function progressPath(root, slug) {
 export function parseTaskDefinitions(text) {
   let input;
   try { input = JSON.parse(text); } catch (e) { throw new Error(`task definitions are not valid JSON - ${e.message}`); }
+  return normalizeTaskDefinitions(input);
+}
+
+function normalizeTaskDefinitions(input) {
   if (!Array.isArray(input)) throw new Error('task definitions must be a JSON array');
 
   const seen = new Set();
@@ -178,6 +182,12 @@ export function validateProgressRecord(raw, expectedSlug) {
       if (seen.has(identity)) throw new Error(`duplicate task id ${JSON.stringify(id)} (task IDs are case-insensitive)`);
       seen.add(identity);
       if (!PROGRESS_STATES.includes(task.status)) throw new Error(`task ${id} has unknown status ${JSON.stringify(task.status)}`);
+      const evidence = nullableText(task.evidence, `task ${id} evidence`);
+      const note = nullableText(task.note, `task ${id} note`);
+      if (task.status === 'done' && !evidence) throw new Error(`task ${id} status done requires evidence`);
+      if ((task.status === 'blocked' || task.status === 'skipped') && !note) {
+        throw new Error(`task ${id} status ${task.status} requires a note`);
+      }
       return {
         id,
         purpose: requiredText(task.purpose, `task ${id} purpose`),
@@ -186,8 +196,8 @@ export function validateProgressRecord(raw, expectedSlug) {
         role: nullableText(task.role, `task ${id} role`),
         model: nullableText(task.model, `task ${id} model`),
         effort: nullableText(task.effort, `task ${id} effort`),
-        evidence: nullableText(task.evidence, `task ${id} evidence`),
-        note: nullableText(task.note, `task ${id} note`),
+        evidence,
+        note,
         updatedAt: validTimestamp(task.updatedAt, `task ${id} updatedAt`),
       };
     });
@@ -232,7 +242,9 @@ export function listProgress(root) {
 
 export function initializeProgress(root, { slug, project, plan, stage = 'planned', nextAction = '', tasks }) {
   validateProgressSlug(slug);
-  const cleanTasks = Array.isArray(tasks) ? tasks : parseTaskDefinitions(String(tasks ?? ''));
+  const cleanTasks = Array.isArray(tasks)
+    ? normalizeTaskDefinitions(tasks)
+    : parseTaskDefinitions(String(tasks ?? ''));
   const projectName = requiredText(project, 'project');
   const planPath = requiredText(plan, 'plan');
   const stageName = requiredText(stage, 'stage');
@@ -325,16 +337,17 @@ export function updateProgress(root, slug, expectedRevision, changes) {
 export function addProgressTasks(root, slug, expectedRevision, definitions) {
   validateProgressSlug(slug);
   requireExpectedRevision(expectedRevision);
+  const cleanDefinitions = normalizeTaskDefinitions(definitions);
   return withProgressLock(root, slug, (file) => {
     const record = readProgress(root, slug);
     checkRevision(record, expectedRevision);
     const existing = new Set(record.tasks.map((task) => task.id.toLowerCase()));
-    for (const definition of definitions) {
+    for (const definition of cleanDefinitions) {
       if (existing.has(definition.id.toLowerCase())) throw new Error(`task id ${JSON.stringify(definition.id)} already exists`);
       existing.add(definition.id.toLowerCase());
     }
     const timestamp = new Date().toISOString();
-    record.tasks.push(...definitions.map((definition) => taskFromDefinition(definition, timestamp)));
+    record.tasks.push(...cleanDefinitions.map((definition) => taskFromDefinition(definition, timestamp)));
     record.revision += 1;
     record.updatedAt = timestamp;
     writeAtomic(file, record);

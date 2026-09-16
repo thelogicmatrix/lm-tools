@@ -5,6 +5,11 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, readdi
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  addProgressTasks,
+  initializeProgress,
+  validateProgressRecord,
+} from '../skills/gtg/lib/progress.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'gtg', 'gtg.mjs');
 const TASKS = [
@@ -94,6 +99,62 @@ test('progress init creates a validated versioned record without deriving task I
   ]);
   assert.ok(record.createdAt && record.updatedAt);
   assert.match(r.stdout, /Initialized Alpha progress at revision 1/);
+});
+
+test('persisted terminal and blocked states must retain their required evidence or reason', () => {
+  const root = tempHub();
+  assert.equal(init(root, [TASKS[0]]).status, 0);
+  const valid = readRecord(root);
+  for (const [status, field, message] of [
+    ['done', 'evidence', /done.*evidence/],
+    ['blocked', 'note', /blocked.*note/],
+    ['skipped', 'note', /skipped.*note/],
+  ]) {
+    const record = structuredClone(valid);
+    record.tasks[0].status = status;
+    record.tasks[0][field] = null;
+    assert.throws(() => validateProgressRecord(record, 'alpha'), message);
+  }
+});
+
+test('exported task mutation APIs validate and canonicalize array definitions themselves', () => {
+  const invalidBatches = [
+    [{ id: '../unsafe', purpose: 'x' }],
+    [{ id: 'task-1', purpose: 'x' }, { id: 'TASK-1', purpose: 'case duplicate' }],
+    [{ id: 'task-1' }],
+    [{ id: 'task-1', purpose: 'x', extra: true }],
+  ];
+  for (const definitions of invalidBatches) {
+    const initRoot = tempHub();
+    assert.throws(() => initializeProgress(initRoot, {
+      slug: 'alpha', project: 'Alpha', plan: 'plan.md', tasks: definitions,
+    }));
+    assert.equal(existsSync(recordPath(initRoot)), false);
+
+    const addRoot = tempHub();
+    initializeProgress(addRoot, {
+      slug: 'alpha', project: 'Alpha', plan: 'plan.md', tasks: [],
+    });
+    const before = readFileSync(recordPath(addRoot), 'utf8');
+    assert.throws(() => addProgressTasks(addRoot, 'alpha', 1, definitions));
+    assert.equal(readFileSync(recordPath(addRoot), 'utf8'), before);
+  }
+
+  const root = tempHub();
+  initializeProgress(root, {
+    slug: 'alpha', project: 'Alpha', plan: 'plan.md',
+    tasks: [{ id: ' task-1 ', purpose: ' First task ' }],
+  });
+  let record = readRecord(root);
+  assert.deepEqual(record.tasks.map(({ id, purpose }) => ({ id, purpose })), [
+    { id: 'task-1', purpose: 'First task' },
+  ]);
+  addProgressTasks(root, 'alpha', 1, [{ id: ' task-2 ', purpose: ' Second task ' }]);
+  record = readRecord(root);
+  assert.deepEqual(record.tasks.map(({ id, purpose }) => ({ id, purpose })), [
+    { id: 'task-1', purpose: 'First task' },
+    { id: 'task-2', purpose: 'Second task' },
+  ]);
 });
 
 test('progress init accepts zero tasks and refuses unsafe, duplicate, malformed, or existing state without overwriting', () => {
