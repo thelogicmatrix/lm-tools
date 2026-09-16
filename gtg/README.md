@@ -13,8 +13,8 @@ Why this one, when several handoff skills exist:
    zero-model CLI commands — bookkeeping costs no tokens and no agent turns.
 2. **A framework, not a fixed format.** Drop `.gtg/commands/<name>.mjs` into your
    repo and it becomes a real subcommand of the installed CLI — no fork.
-3. **Self-cleaning.** Resuming consumes the entry; entries idle 7+ days auto-shelf
-   to a backlog. The active list only ever contains what's genuinely open.
+3. **Persistent continuity.** Each work line keeps one current handoff. Resume retains it;
+   checkpoints update it, and completion or shelving is explicit.
 
 ## Install
 
@@ -40,21 +40,32 @@ Requires Node.js ≥ 18 and git on PATH.
 | You say | What happens |
 |---|---|
 | "gtg" (or any departure phrase) | Handoff written to `docs/handoffs/`, entry pinned, both committed. One CLI call, run from the worktree: `--wip` checkpoints it first, an existing entry's slug is reused when the project name matches it (`--exact` to opt out), the next action is read from the body's `## Next Action`, the worktree from where you ran it, the task list and this session's commits from disk, and the writing harness is recorded (`--harness` to override) |
-| "gtg <project>" at session start | One CLI call (`gtg resume <project>`) fast-forwards the hub from the current branch's upstream before reading anything - `branch.<b>.remote`/`branch.<b>.merge`, falling back to `obelisk-backup/master` when no upstream is set, and skipping a branch with neither (`--ff-only`, 5s, silent unless it actually moved; a divergence says so on stderr and the resume carries on locally), prints the handoff, consumes the entry and runs `.gtg/after-resume.mjs`; the session continues from the Next Action. Bare "gtg" with one active project does the same without naming it. A name that fits several projects, or a project sharing its name with a command, prints the candidates instead (exit 1) |
-| "gtg resume <n\|slug>" | The same, by hand. Consuming is a pick-up, **not** a ship. `--keep` reads without consuming |
+| "gtg <project>" at session start | One CLI call (`gtg resume <project>`) fast-forwards the hub from the current branch's upstream before reading anything - `branch.<b>.remote`/`branch.<b>.merge`, falling back to `obelisk-backup/master` when no upstream is set, and skipping a branch with neither (`--ff-only`, 5s, silent unless it actually moved; a divergence says so on stderr and the resume carries on locally), prints the handoff, retains the entry and runs `.gtg/after-resume.mjs`; the session continues from the Next Action. Bare "gtg" with one active project does the same without naming it. A name that fits several projects, or a project sharing its name with a command, prints the candidates instead (exit 1) |
+| "gtg resume <n\|slug>" | The same, by hand. Resume retains the current entry. `--keep` remains a compatibility alias |
 | "gtg <project>" as the first thing you say | Resumes that project. At session start a project name outranks an *extension* verb; if both exist (a project called `issues` **and** your own `gtg issues` command) you get a numbered pick list instead of a guess. Mid-session the verb wins, and core verbs (`list`, `report`, `stats`, …) are always commands |
 | "gtg stats" | A terminal snapshot: streak, shipped count, deepest project, effort, velocity |
 | "gtg report" | Writes `docs/handoffs/_report.json`, then `/reporter` builds an HTML habit-grid report from it |
-| "gtg list" | Active handoffs (idle >7d auto-shelf to the backlog) |
+| "gtg list" | Active handoffs; read-only, with no automatic shelving |
 | "gtg backlog <idea>" | Park a long-horizon idea on the shelf |
 | "gtg back <n\|slug>" / "gtg active <n\|slug>" | Shelf / reactivate an entry |
-| "gtg remove <n>" / undo via "gtg undo" | Prune; git history is the undo stack, scoped to your own session |
+| "gtg complete <n\\|slug>" / legacy "gtg remove" or "gtg prune" | Explicit completion; git history is the undo stack, scoped to your own session |
 | "gtg supersede <n\|slug> [--into <n\|slug>]" | Rolled up into another entry, or filed in error — neither a ship nor an abandonment |
 | "gtg rename <n\|slug> <new>" | Change a slug, re-pointing any sub-projects that named it as their parent. Given a slug no entry carries, it repairs a stale `parent` reference instead, which is what a rename on the portfolio side leaves behind |
 | "gtg unparent <n\|slug>" | Clear one entry's `parent`, so it lists as standalone. `rename` re-**points** a parent, this **removes** one — re-pointing a dangling parent at the entry's own slug would only make it a self-parent |
 | "gtg log [n\|slug]" | What happened, read from git rather than a ledger |
 
 Handoffs live in *your repo* (`<repo>/docs/handoffs/`), committed to *your* history.
+
+## Persistent handoffs (4.0)
+
+Resume now retains the current handoff and its entry. A later checkpoint updates the
+same current document; git retains earlier versions. Legacy dated documents are kept.
+Use `gtg complete <slug>` when work is finished, `gtg back <slug>` to shelve it, and
+`gtg active <slug>` to reactivate it. `list` never shelves work automatically.
+`--keep` is accepted for compatibility and preserves non-pickup intent for hooks.
+Normal resume passes `kept: true, resumed: true`; explicit `--keep` passes `resumed: false`.
+Use `handoff --checkpoint` for an in-progress update; hooks receive `checkpoint: true`
+so personal integrations can skip departure ceremony. Existing `remove`/`prune` completion aliases remain.
 
 ## Persistent task progress
 
@@ -63,7 +74,7 @@ review states, evidence, blockers, and the next action. Counts come from validat
 state: only `done` tasks count as completed; skipped tasks are separate. Stored
 worker assignments do not prove a worker is currently running.
 
-Progress survives handoff consumption. Resume prints current progress before the
+Progress and the current handoff both survive resume. Resume prints current progress before the
 older snapshot, and handoff preserves an explicit user-written Task list.
 See [the progress command reference](skills/gtg/references/progress.md) for stdin
 format, revision checks, and controller ownership. These CLI operations use no model.
@@ -116,14 +127,14 @@ the skill follows the instruction on that line instead. That lets a custom comma
 back to a skill procedure rather than just printing, e.g.
 `console.log('GTG-DIRECTIVE: run gtg.mjs resume my-project and follow SKILL.md\'s Resume Procedure.')`
 makes `gtg <yourverb> <arg>` resolve an argument to a slug and then run the real Resume Procedure,
-consume step and hooks included, instead of reimplementing it. Both bundled extensions use it:
+retained-entry behaviour and hooks included, instead of reimplementing it. Both bundled extensions use it:
 `gtg issues <name>` and `gtg learn <topic>` resolve their argument and then hand off to the
 skill's Resume Procedure.
 
 `ownEntries()` returns `{ active, shelved }`, this command's own handoff entries, read from
 `docs/handoffs/active/` and `docs/handoffs/backlog/` and filtered to the `parent` namespace it
 owns — through the same reader the CLI uses, so it never sees the frozen packed file. Both shelves
-every time, because `gtg list` auto-shelves anything idle over 7 days and an active-only read
+every time, because explicit shelving can move entries to backlog and an active-only read
 would report a live package as missing. A command that owns no namespace gets two empty arrays.
 
 **Extensions vs mods.** An *extension* owns entries in the handoff store and renders its own
@@ -155,7 +166,7 @@ these entries for the same reason.
 A targeted query also reaches a **shelved** extension entry, printed as its own `shelved:` line
 rather than as a numbered row, since it is not active work, and printed whether or not the same
 query also matched active work. That case is not an edge: an issue
-package sits idle between fix sessions, so the 7-day auto-shelf catches it routinely, and without
+package may be explicitly shelved between fix sessions, and without
 this the exit procedure's reuse probe would go blind again the moment a package was parked. This is
 deliberately narrower than the general rule that `gtg list` never shows backlog items: a shelved
 *normal* project is still invisible to a query, because widening that is a behaviour change rather
@@ -165,7 +176,7 @@ than a fix.
 
 ```
 .gtg/after-handoff.mjs    # default export fn(ctx), runs after `gtg handoff` has committed
-.gtg/after-resume.mjs     # default export fn(ctx), runs after `gtg resume` has printed + consumed
+.gtg/after-resume.mjs     # default export fn(ctx), runs after `gtg resume` has printed + retained
 ```
 
 There are no markdown hooks any more (2.0.0 removed `.gtg/skill/on-exit.md`, 3.0.0 removed
@@ -205,7 +216,7 @@ file per entry makes unrelated edits disjoint, and a same-project fork conflicts
 file, which is correct.
 
 Each directory also holds a `.gitkeep`. Git cannot track an empty directory, and an emptied
-collection — the last active entry consumed, or everything parked — has to survive as an *empty*
+collection — the last active entry completed, or everything parked — has to survive as an *empty*
 collection: without the keeper the directory is simply absent on the other machine's checkout,
 which reads as a store that was never created rather than one deliberately emptied.
 
@@ -272,15 +283,15 @@ Each entry in `docs/handoffs/active/<slug>.json` / `docs/handoffs/backlog/<slug>
 | `eta` | `--eta` | rough time remaining on the next action |
 | `next` | `--next` | the one concrete next action |
 | `file` | auto | path to the handoff document |
-| `updated` | auto | last touch; drives the 7-day auto-shelf |
+| `updated` | auto | last checkpoint timestamp; never triggers automatic shelving |
 
 **`phase` was removed in 1.3.0.** Entries written by older versions keep the key;
 it is ignored on read and never rewritten. `sessions` and `created` backfill from
 the handoff files already on disk, so no migration is needed.
 
 **`gtg resume <n|slug>` vs `gtg remove <n|slug>` vs `gtg supersede <n|slug>`** —
-`resume` consumes a handoff when you pick a project back up, `remove` (alias
-`prune`) means it shipped, and `supersede` means it was rolled up into another
+`resume` retains a handoff when you pick a project back up; `complete` (legacy aliases
+`remove`, `prune`) means it shipped, and `supersede` means it was rolled up into another
 entry or filed in error. They commit different subjects, which is what makes the
 git log a usable history. Borrowing the wrong one writes a phantom ship or a
 phantom abandonment, and the stats read straight off those subjects.

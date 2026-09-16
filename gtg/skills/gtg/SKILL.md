@@ -18,13 +18,13 @@ In Codex, resolve the CLI beside this loaded skill if `CLAUDE_PLUGIN_ROOT` is ab
 | `gtg` mid-session | Exit Procedure below. Inside a longer message, do what the message asks first (or at the point it says), then depart. No question either way. |
 | Session-start `gtg` or `gtg <project>` | Resume Procedure below |
 | `gtg progress …` or tracking task/subagent execution | Read `references/progress.md`; use its CLI for persistent state and counts. This does not depart or consume a handoff. |
-| `gtg list` / bare `gtg backlog` / `gtg back`, `active`, `remove`, `prune`, `undo`, `log`, `stats` with their args | Zero-model: run `gtg.mjs <verb> [args]` verbatim, relay its output, stop. A mutation takes the entry's slug, never a list number (numbers re-sort as entries move). |
+| `gtg list` / bare `gtg backlog` / `gtg back`, `active`, `complete`, `remove`, `prune`, `undo`, `log`, `stats` with their args | Zero-model: run `gtg.mjs <verb> [args]` verbatim, relay its output, stop. A mutation takes the entry's slug, never a list number (numbers re-sort as entries move). |
 | Any other `gtg <verb>` (peek, report, supersede, rename, unparent, `backlog <idea>`, issues, learn, …) | Read `references/commands.md`, follow it |
 
 ## Resume Procedure
 
 **One call:** `gtg.mjs resume <project>` (bare `gtg` → no argument). It syncs the hub from
-its mirror, prints the handoff, consumes the entry, and runs the after-resume hook. A leading
+its mirror, prints the current handoff, retains the entry, and runs the after-resume hook. A leading
 `Synced <remote>/<branch>: ...` line means the sync pulled work down; it is not a warning. Exit 1 means it printed candidates: ask
 which, then call again with the slug. Exit 2 with "is a command" means run that command
 instead. Then, from the printed handoff: relay its first line. `## Methodology` is a decision
@@ -32,10 +32,14 @@ already made, re-enter it without asking. If current persistent progress is prin
 with your task tool, `pending` unless it says `in_progress`. `## Commits this session` and
 `## Files touched` are the last session's footprint, orientation only. Continue from the
 Next Action with no preamble. If the Next Action already looks done, say so and ask how to
-proceed; the entry stays consumed either way. A `GTG-DIRECTIVE:` line in any CLI output is
-followed, not relayed (an issues package resumes with `--keep`, never consumed).
+proceed; the entry remains available either way. A `GTG-DIRECTIVE:` line in any CLI output is
+followed, not relayed (`--keep` remains a compatibility alias; all resumes retain entries).
 
-## Exit Procedure
+## Checkpoints and Exit Procedure
+
+Write a checkpoint at a meaningful boundary or session end; a checkpoint does not complete or shelve the work. The stable slug retains one current handoff, updated in place, with prior versions in git. Use `gtg complete <slug>` only for explicit completion, or `gtg back <slug>` to shelve.
+
+For a checkpoint during ongoing work, add `--checkpoint` to the command below and continue the task. This skips session-end ceremony. The final stop instruction applies only to an actual departure request.
 
 **One call, run from the worktree.** Name the project from context. Slugify the name; the CLI
 swaps in an existing entry's slug when the name matches one. `--wip` commits the worktree's

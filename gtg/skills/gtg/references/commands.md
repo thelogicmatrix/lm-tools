@@ -16,7 +16,7 @@ otherwise read as a verb.
 | Session start | `gtg <project>` | Resume that project (`gtg.mjs resume <project>`; brackets optional) |
 | Mid-session | `gtg` | Depart (SKILL.md Exit Procedure), slug inferred from context |
 | Mid-session | `gtg [project]` | Depart, **force the handoff slug** to `project` (`--exact`) |
-| Anytime | `gtg <core verb>` | Route per the table below. A **core verb** (`list`, `backlog`, `back`, `active`, `prune`, `remove`, `supersede`, `peek`, `resume`, `rename`, `unparent`, `log`, `report`, `stats`, `undo`, `help`) always routes to its command, never to a project |
+| Anytime | `gtg <core verb>` | Route per the table below. A **core verb** (`list`, `backlog`, `back`, `active`, `prune`, `remove`, `complete`, `supersede`, `peek`, `resume`, `rename`, `unparent`, `log`, `report`, `stats`, `undo`, `help`) always routes to its command, never to a project |
 
 Disambiguation, in this order:
 
@@ -28,7 +28,7 @@ Disambiguation, in this order:
 4. Any other token (mid-session, or carrying further args like `gtg issues p1`) goes straight
    to the CLI as an extension verb.
 
-Bookkeeping verbs (`list`, bare `backlog`, `back`, `active`, `remove`, `prune`, `undo`, `log`, `stats`)
+Bookkeeping verbs (`list`, bare `backlog`, `back`, `active`, `complete`, `remove`, `prune`, `undo`, `log`, `stats`)
 never reach this file: SKILL.md routes them straight to the CLI, slug not list number.
 
 ## Router table
@@ -38,7 +38,7 @@ never reach this file: SKILL.md routes them straight to the CLI, slug not list n
 | "gtg backlog &lt;idea&gt;" (an idea named, not bare) | Park a long-horizon idea, see Backlog Park below. |
 | "gtg supersede &lt;n\|slug&gt;" / "this rolled up into X" / "I filed that one in error" | The entry was **neither shipped nor abandoned**. Run `gtg.mjs supersede <n\|slug> [--into <n\|slug>]`. Use it when consolidating several entries into one parent, or clearing an entry that should never have existed: `remove` would write a phantom ship and `back` reads as shelved-for-later, and both corrupt throughput. Pass `--into` whenever another entry absorbed it. Stop. |
 | "gtg peek &lt;project&gt;" | Read `docs/handoffs/active/&lt;slug&gt;.json` (or `docs/handoffs/backlog/&lt;slug&gt;.json`) — one file, one entry — then read its `file` verbatim and relay the content. Don't know the slug? `gtg.mjs list` prints it. The packed `_active.json` / `_backlog.json` no longer exist — the record directories are the whole store. **Do not consume**, no store mutation. |
-| "gtg resume &lt;project&gt;" (mid-session; at session start "gtg &lt;project&gt;" is enough) | The project was **picked back up**, not shipped. SKILL.md Resume Procedure. `remove` means shipped, `resume` means picked back up; conflating them makes throughput history meaningless. |
+| "gtg resume &lt;project&gt;" (mid-session; at session start "gtg &lt;project&gt;" is enough) | The project was **picked back up**, not shipped. SKILL.md Resume Procedure. `complete` (also `remove`/`prune`) means shipped; `resume` retains the current handoff and means picked back up; conflating them makes throughput history meaningless. |
 | "gtg rename &lt;n\|slug&gt; &lt;new&gt;" | Run `gtg.mjs rename <n\|slug> <new-slug>`. It re-points any sub-project whose `parent` named the old slug, and leaves past handoff filenames alone because those record what the project was called then. The **portfolio** slug is separate: relay the `projects rename` line it prints rather than assuming both moved. Stop. |
 | a `projects rename` printed a `NOTE:` about dangling parents | Run the `gtg rename <old> <new>` it names. Given a slug no entry here carries, `rename` repairs the stale `parent` reference instead of renaming an entry. Stop. |
 | an entry's `parent` names a family that does not exist, or names itself | Run `gtg.mjs unparent <n\|slug>`. `rename` re-**points** a parent (every child carrying it, at once), `unparent` **removes** one (a single entry). Re-pointing a dangling parent at the entry's own slug only makes a self-parent, so reach for `unparent` whenever the right answer is "no family". Stop. |
