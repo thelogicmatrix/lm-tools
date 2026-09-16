@@ -4,7 +4,7 @@ Use this for an ongoing multi-step project, including native subagent work. `gtg
 
 ## Start and inspect
 
-A slug follows one line of work under its named project across sessions. Maintain it automatically at meaningful task transitions and before yielding after substantive work, without waiting for a departure request. Batch changes using existing updates; do not update per tool call or reread unchanged state. On a new session, list/show the current work and continue its next action without requiring a parked handoff.
+A slug follows one line of work under its named project across sessions. Maintain it automatically at meaningful task transitions and before yielding after substantive work, without waiting for a departure request. Batch changes using existing updates; do not update per tool call or reread unchanged state. On any fresh session, use the known slug or list to find the current work, then run `progress show <slug> --json` once before reconstructing or continuing tasks. Continue its next action without requiring a parked handoff.
 
 Mutations attribute the participating session from explicit `GTG_SESSION_ID`, then native `CODEX_THREAD_ID`/`CODEX_SESSION_ID` (and Claude's session ID). Session history is recorded participation, not worker liveness. The record is current only as of its timestamp; a crash can precede the next checkpoint. No background model calls are involved.
 
