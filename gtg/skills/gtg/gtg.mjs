@@ -65,6 +65,13 @@ const userVisible = (arr) => arr.filter((e) => !isExtensionEntry(e));
 // are separate invocations, which is exactly what a harness session id gives us.
 // GTG_SESSION_ID is the portable override for other harnesses and for tests.
 const SESSION_ID = process.env.GTG_SESSION_ID || process.env.CLAUDE_CODE_SESSION_ID || '';
+// Progress also records Codex's native task/session identity. Keep this separate from undo's
+// established identity contract: progress attribution is history, not process ownership.
+const PROGRESS_SESSION_ID = process.env.GTG_SESSION_ID
+  || process.env.CODEX_THREAD_ID
+  || process.env.CODEX_SESSION_ID
+  || process.env.CLAUDE_CODE_SESSION_ID
+  || '';
 const SESSION_TRAILER = 'gtg-session';
 // Which harness is writing. Two agents share one store now (Claude Code and Codex, 2026-08-26),
 // and a resume from the other side wants to know whose task-list conventions the handoff
@@ -1359,7 +1366,10 @@ else {
       // ownParent rides the ctx as well as being closed over by ownEntries: an extension that
       // WRITES an entry needs the same namespace its reader filters on, and deriving it a
       // second time on the writer side is exactly the drift class this closes.
-      await mod.default({ root: ROOT, args: rest, readStore, writeStore, commit, countHandoffFiles, ownEntries, ownParent });
+      await mod.default({
+        root: ROOT, args: rest, readStore, writeStore, commit, countHandoffFiles,
+        ownEntries, ownParent, sessionId: PROGRESS_SESSION_ID || undefined,
+      });
     } catch (e) {
       console.error(`gtg: extension '${cmd}' failed: ${(e?.message || String(e)).split('\n')[0]}`);
       process.exit(1);

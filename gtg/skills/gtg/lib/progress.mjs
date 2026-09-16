@@ -20,11 +20,13 @@ export const PROGRESS_STATES = Object.freeze([
 
 const SLUG_OK = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const TASK_ID_OK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SESSION_ID_OK = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/;
 const TASK_KEYS = new Set(['id', 'purpose']);
 const RECORD_KEYS = new Set([
   'version', 'slug', 'project', 'plan', 'revision', 'stage', 'nextAction',
-  'createdAt', 'updatedAt', 'tasks',
+  'createdAt', 'updatedAt', 'tasks', 'sessions',
 ]);
+const SESSION_KEYS = new Set(['id', 'firstSeenAt', 'lastSeenAt']);
 const STORED_TASK_KEYS = new Set([
   'id', 'purpose', 'status', 'worker', 'role', 'model', 'effort',
   'evidence', 'note', 'updatedAt',
@@ -155,6 +157,48 @@ function validTimestamp(value, label) {
   return value;
 }
 
+function optionalSessionId(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || !SESSION_ID_OK.test(value)) {
+    throw new Error('session id must start with a letter or digit, contain only [A-Za-z0-9._:/-], and be at most 256 characters');
+  }
+  return value;
+}
+
+function normalizeSessions(raw) {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) throw new Error('sessions must be an array');
+  const seen = new Set();
+  return raw.map((session, index) => {
+    const label = `session ${index + 1}`;
+    if (!session || typeof session !== 'object' || Array.isArray(session)) {
+      throw new Error(`${label} must be an object`);
+    }
+    checkKeys(session, SESSION_KEYS, label);
+    const id = optionalSessionId(session.id);
+    if (!id) throw new Error(`${label} id must be a non-empty session id`);
+    if (seen.has(id)) throw new Error(`duplicate session id ${JSON.stringify(id)}`);
+    seen.add(id);
+    const firstSeenAt = validTimestamp(session.firstSeenAt, `${label} firstSeenAt`);
+    const lastSeenAt = validTimestamp(session.lastSeenAt, `${label} lastSeenAt`);
+    if (Date.parse(lastSeenAt) < Date.parse(firstSeenAt)) {
+      throw new Error(`${label} lastSeenAt must not precede firstSeenAt`);
+    }
+    return { id, firstSeenAt, lastSeenAt };
+  });
+}
+
+function recordSession(record, sessionId, timestamp) {
+  if (!sessionId) return;
+  const existing = record.sessions?.find((session) => session.id === sessionId);
+  if (existing) {
+    existing.lastSeenAt = timestamp;
+    return;
+  }
+  record.sessions ??= [];
+  record.sessions.push({ id: sessionId, firstSeenAt: timestamp, lastSeenAt: timestamp });
+}
+
 export function validateProgressRecord(raw, expectedSlug) {
   try {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('record must be an object');
@@ -171,6 +215,7 @@ export function validateProgressRecord(raw, expectedSlug) {
     const nextAction = optionalText(raw.nextAction, 'nextAction');
     const createdAt = validTimestamp(raw.createdAt, 'createdAt');
     const updatedAt = validTimestamp(raw.updatedAt, 'updatedAt');
+    const sessions = normalizeSessions(raw.sessions);
     if (!Array.isArray(raw.tasks)) throw new Error('tasks must be an array');
     const seen = new Set();
     const tasks = raw.tasks.map((task, index) => {
@@ -201,10 +246,12 @@ export function validateProgressRecord(raw, expectedSlug) {
         updatedAt: validTimestamp(task.updatedAt, `task ${id} updatedAt`),
       };
     });
-    return {
+    const record = {
       version: raw.version, slug, project, plan, revision: raw.revision, stage,
       nextAction, createdAt, updatedAt, tasks,
     };
+    if (sessions !== undefined) record.sessions = sessions;
+    return record;
   } catch (e) {
     throw new Error(`invalid progress record${expectedSlug ? ` for ${expectedSlug}` : ''} - ${e.message}`);
   }
@@ -240,8 +287,9 @@ export function listProgress(root) {
   });
 }
 
-export function initializeProgress(root, { slug, project, plan, stage = 'planned', nextAction = '', tasks }) {
+export function initializeProgress(root, { slug, project, plan, stage = 'planned', nextAction = '', tasks }, sessionId) {
   validateProgressSlug(slug);
+  const cleanSessionId = optionalSessionId(sessionId);
   const cleanTasks = Array.isArray(tasks)
     ? normalizeTaskDefinitions(tasks)
     : parseTaskDefinitions(String(tasks ?? ''));
@@ -268,6 +316,7 @@ export function initializeProgress(root, { slug, project, plan, stage = 'planned
       updatedAt: timestamp,
       tasks: cleanTasks.map((task) => taskFromDefinition(task, timestamp)),
     };
+    recordSession(record, cleanSessionId, timestamp);
     writeAtomic(file, record);
     return record;
   });
@@ -286,9 +335,10 @@ function checkRevision(record, expectedRevision) {
   }
 }
 
-export function updateProgress(root, slug, expectedRevision, changes) {
+export function updateProgress(root, slug, expectedRevision, changes, sessionId) {
   validateProgressSlug(slug);
   requireExpectedRevision(expectedRevision);
+  const cleanSessionId = optionalSessionId(sessionId);
   return withProgressLock(root, slug, (file) => {
     const record = readProgress(root, slug);
     checkRevision(record, expectedRevision);
@@ -329,14 +379,16 @@ export function updateProgress(root, slug, expectedRevision, changes) {
     }
     record.revision += 1;
     record.updatedAt = timestamp;
+    recordSession(record, cleanSessionId, timestamp);
     writeAtomic(file, record);
     return record;
   });
 }
 
-export function addProgressTasks(root, slug, expectedRevision, definitions) {
+export function addProgressTasks(root, slug, expectedRevision, definitions, sessionId) {
   validateProgressSlug(slug);
   requireExpectedRevision(expectedRevision);
+  const cleanSessionId = optionalSessionId(sessionId);
   const cleanDefinitions = normalizeTaskDefinitions(definitions);
   return withProgressLock(root, slug, (file) => {
     const record = readProgress(root, slug);
@@ -350,6 +402,7 @@ export function addProgressTasks(root, slug, expectedRevision, definitions) {
     record.tasks.push(...cleanDefinitions.map((definition) => taskFromDefinition(definition, timestamp)));
     record.revision += 1;
     record.updatedAt = timestamp;
+    recordSession(record, cleanSessionId, timestamp);
     writeAtomic(file, record);
     return record;
   });

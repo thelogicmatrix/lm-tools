@@ -57,7 +57,7 @@ function parseOptions(argv, allowed) {
   return values;
 }
 
-function init(root, argv, commit) {
+function init(root, argv, commit, sessionId) {
   const slug = argv[0];
   if (!slug || slug.startsWith('--')) return usage('init needs a slug');
   const options = parseOptions(argv.slice(1), new Set(['--project', '--plan', '--stage', '--next-action']));
@@ -68,12 +68,12 @@ function init(root, argv, commit) {
   const record = initializeProgress(root, {
     slug, project: options.project, plan: options.plan,
     stage: options.stage ?? 'planned', nextAction: options.nextAction ?? '', tasks,
-  });
+  }, sessionId);
   commit([progressRelativePath(record.slug)], `gtg progress: initialize ${record.project}`);
   console.log(`Initialized ${record.project} progress at revision ${record.revision}.`);
 }
 
-function add(root, argv, commit) {
+function add(root, argv, commit, sessionId) {
   const slug = argv[0];
   if (!slug || slug.startsWith('--')) return usage('add needs a slug');
   const options = parseOptions(argv.slice(1), new Set(['--expected-revision']));
@@ -81,7 +81,7 @@ function add(root, argv, commit) {
   if (options.expectedRevision === undefined) return usage('missing --expected-revision');
   const tasks = parseTaskDefinitions(readFileSync(0, 'utf8'));
   if (!tasks.length) return usage('add needs at least one task definition');
-  const record = addProgressTasks(root, slug, options.expectedRevision, tasks);
+  const record = addProgressTasks(root, slug, options.expectedRevision, tasks, sessionId);
   commit([progressRelativePath(record.slug)], `gtg progress: add tasks to ${record.project}`);
   console.log(`Added ${tasks.length} task${tasks.length === 1 ? '' : 's'} to ${record.project}; revision ${record.revision}.`);
 }
@@ -108,7 +108,7 @@ function list(root, argv) {
   }
 }
 
-function update(root, argv, commit) {
+function update(root, argv, commit, sessionId) {
   const slug = argv[0];
   if (!slug || slug.startsWith('--')) return usage('update needs a slug');
   let offset = 1;
@@ -124,17 +124,17 @@ function update(root, argv, commit) {
     taskId, status: options.status, worker: options.worker, role: options.role,
     model: options.model, effort: options.effort, evidence: options.evidence,
     note: options.note, stage: options.stage, nextAction: options.nextAction,
-  });
+  }, sessionId);
   commit([progressRelativePath(record.slug)], `gtg progress: update ${record.project} to revision ${record.revision}`);
   console.log(`Updated ${record.project} progress to revision ${record.revision}.`);
 }
 
-export default ({ root, args, commit }) => {
+export default ({ root, args, commit, sessionId }) => {
   const [verb, ...rest] = args ?? [];
-  if (verb === 'init') return init(root, rest, commit);
-  if (verb === 'add') return add(root, rest, commit);
+  if (verb === 'init') return init(root, rest, commit, sessionId);
+  if (verb === 'add') return add(root, rest, commit, sessionId);
   if (verb === 'show') return show(root, rest);
   if (verb === 'list') return list(root, rest);
-  if (verb === 'update') return update(root, rest, commit);
+  if (verb === 'update') return update(root, rest, commit, sessionId);
   return usage(`unknown verb ${JSON.stringify(verb ?? '')}`);
 };

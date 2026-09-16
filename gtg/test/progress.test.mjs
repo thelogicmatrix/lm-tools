@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   addProgressTasks,
   initializeProgress,
+  updateProgress,
   validateProgressRecord,
 } from '../skills/gtg/lib/progress.mjs';
 
@@ -16,6 +17,20 @@ const TASKS = [
   { id: 'task-1', purpose: 'Build persistent progress' },
   { id: 'task-2', purpose: 'Document the orchestration contract' },
 ];
+const SESSION_ENV_KEYS = [
+  'GTG_SESSION_ID', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CLAUDE_CODE_SESSION_ID',
+];
+
+function childEnv(root, sessionEnv = { GTG_SESSION_ID: 'progress-test' }) {
+  const env = {
+    ...process.env,
+    GTG_HUB: root,
+    GTG_NO_SYNC: '1',
+    GIT_CEILING_DIRECTORIES: tmpdir(),
+  };
+  for (const key of SESSION_ENV_KEYS) delete env[key];
+  return Object.assign(env, sessionEnv);
+}
 
 function tempHub() {
   const root = mkdtempSync(join(tmpdir(), 'gtg-progress-'));
@@ -25,18 +40,12 @@ function tempHub() {
   return root;
 }
 
-function gtg(root, args, input = '') {
+function gtg(root, args, input = '', sessionEnv = { GTG_SESSION_ID: 'progress-test' }) {
   return spawnSync(process.execPath, [CLI, ...args], {
     cwd: root,
     encoding: 'utf8',
     input,
-    env: {
-      ...process.env,
-      GTG_HUB: root,
-      GTG_NO_SYNC: '1',
-      GTG_SESSION_ID: 'progress-test',
-      GIT_CEILING_DIRECTORIES: tmpdir(),
-    },
+    env: childEnv(root, sessionEnv),
   });
 }
 
@@ -44,13 +53,7 @@ function gtgAsync(root, args, input = '') {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], {
       cwd: root,
-      env: {
-        ...process.env,
-        GTG_HUB: root,
-        GTG_NO_SYNC: '1',
-        GTG_SESSION_ID: 'progress-test',
-        GIT_CEILING_DIRECTORIES: tmpdir(),
-      },
+      env: childEnv(root),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -99,6 +102,138 @@ test('progress init creates a validated versioned record without deriving task I
   ]);
   assert.ok(record.createdAt && record.updatedAt);
   assert.match(r.stdout, /Initialized Alpha progress at revision 1/);
+});
+
+test('progress records the invoking session once and retains accepted work across sessions', () => {
+  const root = tempHub();
+  let r = gtg(root, [
+    'progress', 'init', 'alpha', '--project', 'Alpha', '--plan', 'docs/plans/alpha.md',
+  ], JSON.stringify([TASKS[0]]), { CODEX_THREAD_ID: 'session-one' });
+  assert.equal(r.status, 0, r.stderr);
+
+  r = gtg(root, [
+    'progress', 'update', 'alpha', 'task-1', '--expected-revision', '1',
+    '--status', 'done', '--evidence', 'commit abc; tests pass',
+  ], '', { CODEX_THREAD_ID: 'session-two' });
+  assert.equal(r.status, 0, r.stderr);
+
+  r = gtg(root, [
+    'progress', 'update', 'alpha', '--expected-revision', '2', '--stage', 'review',
+  ], '', { CODEX_THREAD_ID: 'session-one' });
+  assert.equal(r.status, 0, r.stderr);
+  const record = readRecord(root);
+  assert.deepEqual(record.tasks.map(({ id, status, evidence }) => ({ id, status, evidence })), [{
+    id: 'task-1', status: 'done', evidence: 'commit abc; tests pass',
+  }]);
+  assert.deepEqual(record.sessions.map(({ id }) => id), ['session-one', 'session-two']);
+  assert.equal(record.sessions[0].firstSeenAt, record.createdAt);
+  assert.equal(record.sessions[0].lastSeenAt, record.updatedAt);
+});
+
+test('progress session environment precedence covers init, update, add, and Claude portability', () => {
+  const root = tempHub();
+  let r = gtg(root, [
+    'progress', 'init', 'alpha', '--project', 'Alpha', '--plan', 'docs/plans/alpha.md',
+  ], JSON.stringify([TASKS[0]]), {
+    GTG_SESSION_ID: 'explicit', CODEX_THREAD_ID: 'codex-thread',
+    CODEX_SESSION_ID: 'codex-session', CLAUDE_CODE_SESSION_ID: 'claude-session',
+  });
+  assert.equal(r.status, 0, r.stderr);
+  r = gtg(root, [
+    'progress', 'update', 'alpha', 'task-1', '--expected-revision', '1', '--status', 'implementing',
+  ], '', {
+    CODEX_THREAD_ID: 'codex-thread', CODEX_SESSION_ID: 'codex-session',
+    CLAUDE_CODE_SESSION_ID: 'claude-session',
+  });
+  assert.equal(r.status, 0, r.stderr);
+  r = gtg(root, [
+    'progress', 'add', 'alpha', '--expected-revision', '2',
+  ], JSON.stringify([TASKS[1]]), {
+    CODEX_SESSION_ID: 'codex-session', CLAUDE_CODE_SESSION_ID: 'claude-session',
+  });
+  assert.equal(r.status, 0, r.stderr);
+  r = gtg(root, [
+    'progress', 'update', 'alpha', '--expected-revision', '3', '--stage', 'review',
+  ], '', { CLAUDE_CODE_SESSION_ID: 'claude-session' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(readRecord(root).sessions.map(({ id }) => id), [
+    'explicit', 'codex-thread', 'codex-session', 'claude-session',
+  ]);
+});
+
+test('progress without a native session environment does not invent attribution', () => {
+  const root = tempHub();
+  const r = gtg(root, [
+    'progress', 'init', 'alpha', '--project', 'Alpha', '--plan', 'docs/plans/alpha.md',
+  ], '[]', {});
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(Object.hasOwn(readRecord(root), 'sessions'), false);
+});
+
+test('legacy version 1 progress records remain valid and gain attribution on mutation', () => {
+  const root = tempHub();
+  assert.equal(init(root).status, 0);
+  const legacy = readRecord(root);
+  delete legacy.sessions;
+  writeFileSync(recordPath(root), JSON.stringify(legacy, null, 2) + '\n');
+  assert.equal(validateProgressRecord(legacy, 'alpha').sessions, undefined);
+
+  const r = gtg(root, [
+    'progress', 'update', 'alpha', '--expected-revision', '1', '--stage', 'implementation',
+  ], '', { CODEX_THREAD_ID: 'current-session' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(readRecord(root).sessions.map(({ id }) => id), ['current-session']);
+});
+
+test('malformed stored sessions and stale session updates preserve record bytes', () => {
+  const malformedRoot = tempHub();
+  assert.equal(init(malformedRoot).status, 0);
+  const malformed = readRecord(malformedRoot);
+  malformed.sessions = [{
+    id: 'progress-test', firstSeenAt: malformed.createdAt,
+    lastSeenAt: malformed.updatedAt, unexpected: true,
+  }];
+  const malformedBytes = JSON.stringify(malformed, null, 2) + '\n';
+  writeFileSync(recordPath(malformedRoot), malformedBytes);
+  let r = gtg(malformedRoot, [
+    'progress', 'update', 'alpha', '--expected-revision', '1', '--stage', 'review',
+  ], '', { CODEX_THREAD_ID: 'new-session' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /session 1 has unknown field/);
+  assert.equal(readFileSync(recordPath(malformedRoot), 'utf8'), malformedBytes);
+
+  const staleRoot = tempHub();
+  assert.equal(init(staleRoot).status, 0);
+  r = gtg(staleRoot, [
+    'progress', 'update', 'alpha', '--expected-revision', '1', '--stage', 'implementation',
+  ], '', { CODEX_THREAD_ID: 'accepted-session' });
+  assert.equal(r.status, 0, r.stderr);
+  const acceptedBytes = readFileSync(recordPath(staleRoot), 'utf8');
+  r = gtg(staleRoot, [
+    'progress', 'update', 'alpha', '--expected-revision', '1', '--stage', 'review',
+  ], '', { CODEX_THREAD_ID: 'stale-session' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /revision conflict/);
+  assert.equal(readFileSync(recordPath(staleRoot), 'utf8'), acceptedBytes);
+  assert.equal(acceptedBytes.includes('stale-session'), false);
+});
+
+test('source progress mutation APIs reject malformed session IDs without changing storage', () => {
+  const invalidInitRoot = tempHub();
+  assert.throws(() => initializeProgress(invalidInitRoot, {
+    slug: 'alpha', project: 'Alpha', plan: 'plan.md', tasks: [],
+  }, 'bad session'), /session id/);
+  assert.equal(existsSync(recordPath(invalidInitRoot)), false);
+
+  const root = tempHub();
+  initializeProgress(root, {
+    slug: 'alpha', project: 'Alpha', plan: 'plan.md', tasks: [TASKS[0]],
+  }, 'source-session');
+  const before = readFileSync(recordPath(root), 'utf8');
+  assert.throws(() => addProgressTasks(root, 'alpha', 1, [TASKS[1]], 'bad\nsession'), /session id/);
+  assert.equal(readFileSync(recordPath(root), 'utf8'), before);
+  assert.throws(() => updateProgress(root, 'alpha', 1, { stage: 'review' }, 'bad session'), /session id/);
+  assert.equal(readFileSync(recordPath(root), 'utf8'), before);
 });
 
 test('persisted terminal and blocked states must retain their required evidence or reason', () => {
