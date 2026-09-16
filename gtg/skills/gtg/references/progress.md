@@ -41,6 +41,8 @@ Reconcile obsolete tasks as skipped with a reason. Explain a changed total in th
 
 ## Handoff and resume
 
+After resume, run `progress show <slug> --json` before reconstructing tasks or redispatching workers. The human summary omits pending/done/skipped task details; use the full current record for stable IDs, states, evidence and worker references, then reconcile any explicit handoff list against it.
+
 The progress record lives in `docs/handoffs/progress/<slug>.json`. A matching normal handoff includes progress automatically. An explicit `## Task list` supplied in the handoff is preserved, never replaced or duplicated; progress appears separately. On resume, current progress is shown and remains on disk after the handoff entry is consumed. Its revision supersedes an older embedded progress snapshot. If an explicit task list disagrees with current progress, reconcile the difference against the plan and evidence rather than silently replacing either.
 
 Use `progress show` to inspect a running project without consuming a handoff. Use normal `resume` when actually picking up parked work. After resume, reconcile historical workers with the current native agent inventory; retain verified completed work and redispatch only unresolved work if the old worker is gone.

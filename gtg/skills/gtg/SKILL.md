@@ -28,7 +28,7 @@ its mirror, prints the handoff, consumes the entry, and runs the after-resume ho
 `Synced <remote>/<branch>: ...` line means the sync pulled work down; it is not a warning. Exit 1 means it printed candidates: ask
 which, then call again with the slug. Exit 2 with "is a command" means run that command
 instead. Then, from the printed handoff: relay its first line. `## Methodology` is a decision
-already made, re-enter it without asking. If current persistent progress is printed, use `references/progress.md` and preserve its task states instead of reconstructing an older snapshot. Otherwise, `## Task list`: re-create each non-completed line
+already made, re-enter it without asking. If current persistent progress is printed, run `progress show <slug> --json` and read `references/progress.md` before reconstructing tasks or redispatching workers; preserve its current task states instead of an older snapshot. Otherwise, `## Task list`: re-create each non-completed line
 with your task tool, `pending` unless it says `in_progress`. `## Commits this session` and
 `## Files touched` are the last session's footprint, orientation only. Continue from the
 Next Action with no preamble. If the Next Action already looks done, say so and ask how to
