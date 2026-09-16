@@ -371,6 +371,39 @@ test('undo refuses before store mutation when the current handoff body is dirty'
   assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), head);
 });
 
+test('undo refuses when a later commit changed only the persistent handoff body', () => {
+  const root = hub();
+  assert.equal(handoff(root, 'alpha', 'Alpha', BODY.replace('checkpoint', 'OLD BODY')).status, 0);
+  const activePath = join(root, ACTIVE, 'alpha.json');
+  const handoffPath = join(root, 'docs', 'handoffs', 'current', 'alpha.md');
+  writeFileSync(handoffPath, 'LATER COMMITTED BODY\n');
+  execFileSync('git', ['add', '--', 'docs/handoffs/current/alpha.md'], { cwd: root });
+  execFileSync('git', ['commit', '-q', '-m', 'docs: later body edit'], { cwd: root });
+  const before = [readFileSync(activePath, 'utf8'), readFileSync(handoffPath, 'utf8')];
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+
+  const result = gtg(root, ['undo', '--no-list']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /handoff body changed after the store commit/);
+  assert.deepEqual([readFileSync(activePath, 'utf8'), readFileSync(handoffPath, 'utf8')], before);
+  assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), head);
+});
+
+test('undo of a rename restores the original slug and canonical path together', () => {
+  const root = hub();
+  assert.equal(handoff(root, 'alpha', 'Alpha').status, 0);
+  assert.equal(gtg(root, ['rename', 'alpha', 'beta', '--no-list']).status, 0);
+  assert.equal(existsSync(join(root, 'docs', 'handoffs', 'current', 'alpha.md')), false);
+
+  const result = gtg(root, ['undo', '--no-list']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(active(root).map((entry) => entry.slug), ['alpha']);
+  assert.equal(active(root)[0].file, 'docs/handoffs/current/alpha.md');
+  assert.equal(existsSync(join(root, 'docs', 'handoffs', 'current', 'alpha.md')), true);
+  assert.equal(existsSync(join(root, 'docs', 'handoffs', 'current', 'beta.md')), false);
+  assert.match(gtg(root, ['resume', 'alpha']).stdout, /checkpoint/);
+});
+
 test('help documents checkpoint hook intent on the existing handoff command', () => {
   const root = hub();
   const result = gtg(root, ['help']);

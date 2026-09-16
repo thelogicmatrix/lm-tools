@@ -1325,9 +1325,16 @@ function undo() {
   } catch { /* the empty check below reports it */ }
 
   // Refuse before restoring any store path if a handoff body has uncommitted edits.
-  // The anchor proves ownership of the committed change, not of later working-tree prose.
+  // The anchor proves ownership of its own committed body change, not of a later
+  // body-only commit or later working-tree prose.
   for (const rel of changed.filter(isHandoffDocPath)) {
     try {
+      const bodyTip = execFileSync('git', ['log', '-1', '--format=%H', '--', rel],
+        { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+      if (bodyTip !== last) {
+        console.error(`gtg undo: handoff body changed after the store commit: ${rel}`);
+        process.exit(2);
+      }
       const dirty = execFileSync('git', ['status', '--porcelain', '--', rel],
         { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
       if (dirty) {
