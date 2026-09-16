@@ -254,3 +254,126 @@ test('rename refuses a case-insensitive target progress collision before mutatio
   assert.equal(existsSync(join(root, ACTIVE, 'beta.json')), false);
   assert.equal(existsSync(join(root, 'docs', 'handoffs', 'current', 'alpha.md')), true);
 });
+
+test('rename rejects leading punctuation before moving a canonical handoff', () => {
+  const root = hub();
+  assert.equal(handoff(root).status, 0);
+  const activePath = join(root, ACTIVE, 'alpha.json');
+  const handoffPath = join(root, 'docs', 'handoffs', 'current', 'alpha.md');
+  const before = [readFileSync(activePath, 'utf8'), readFileSync(handoffPath, 'utf8')];
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+
+  for (const slug of ['_bad', '.bad', '-bad']) {
+    const result = gtg(root, ['rename', 'alpha', slug, '--no-list']);
+    assert.equal(result.status, 2, `rename unexpectedly accepted ${slug}`);
+    assert.match(result.stderr, /must start with a letter or digit/);
+    assert.deepEqual([readFileSync(activePath, 'utf8'), readFileSync(handoffPath, 'utf8')], before);
+    assert.equal(existsSync(join(root, ACTIVE, `${slug}.json`)), false);
+    assert.equal(existsSync(join(root, 'docs', 'handoffs', 'current', `${slug}.md`)), false);
+    assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), head);
+  }
+});
+
+test('rename rejects case-insensitive store collisions before moving either handoff', () => {
+  const root = hub();
+  assert.equal(handoff(root).status, 0);
+  const legacy = 'docs/handoffs/2026-09-01-0900-beta.md';
+  writeFileSync(join(root, legacy), '# Handoff: Existing beta\n');
+  mkdirSync(join(root, ACTIVE), { recursive: true });
+  writeFileSync(join(root, ACTIVE, 'beta.json'), JSON.stringify({
+    project: 'Existing beta', slug: 'beta', sessions: 1, next: 'Keep', file: legacy,
+    created: '2026-09-01T09:00:00+08:00', updated: '2026-09-01T09:00:00+08:00',
+  }, null, 2) + '\n');
+  execFileSync('git', ['add', '--', ACTIVE, legacy], { cwd: root });
+  execFileSync('git', ['commit', '-q', '-m', 'test: existing beta'], { cwd: root });
+  const alphaRecord = join(root, ACTIVE, 'alpha.json');
+  const betaRecord = join(root, ACTIVE, 'beta.json');
+  const alphaBody = join(root, 'docs', 'handoffs', 'current', 'alpha.md');
+  const before = [alphaRecord, betaRecord, alphaBody, join(root, legacy)]
+    .map((file) => readFileSync(file, 'utf8'));
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+
+  const result = gtg(root, ['rename', 'alpha', 'BeTa', '--no-list']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /already used by another project/);
+  assert.deepEqual([alphaRecord, betaRecord, alphaBody, join(root, legacy)]
+    .map((file) => readFileSync(file, 'utf8')), before);
+  assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), head);
+});
+
+test('rename fails closed when the progress directory cannot be inspected', () => {
+  const root = hub();
+  assert.equal(handoff(root).status, 0);
+  writeFileSync(join(root, 'docs', 'handoffs', 'progress'), 'not a directory\n');
+  execFileSync('git', ['add', '--', 'docs/handoffs/progress'], { cwd: root });
+  execFileSync('git', ['commit', '-q', '-m', 'test: unreadable progress location'], { cwd: root });
+  const activePath = join(root, ACTIVE, 'alpha.json');
+  const handoffPath = join(root, 'docs', 'handoffs', 'current', 'alpha.md');
+  const before = [readFileSync(activePath, 'utf8'), readFileSync(handoffPath, 'utf8')];
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+
+  const result = gtg(root, ['rename', 'alpha', 'beta', '--no-list']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /cannot inspect progress records/);
+  assert.deepEqual([readFileSync(activePath, 'utf8'), readFileSync(handoffPath, 'utf8')], before);
+  assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), head);
+});
+
+test('handoff rejects an invalid slug before changing an existing line or git head', () => {
+  const root = hub();
+  assert.equal(handoff(root).status, 0);
+  const activePath = join(root, ACTIVE, 'alpha.json');
+  const handoffPath = join(root, 'docs', 'handoffs', 'current', 'alpha.md');
+  const before = [readFileSync(activePath, 'utf8'), readFileSync(handoffPath, 'utf8')];
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+
+  const result = handoff(root, '_bad', 'Invalid work');
+  assert.equal(result.status, 2);
+  assert.deepEqual([readFileSync(activePath, 'utf8'), readFileSync(handoffPath, 'utf8')], before);
+  assert.equal(existsSync(join(root, 'docs', 'handoffs', 'current', '_bad.md')), false);
+  assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), head);
+});
+
+test('undo restores the prior persistent body and only paths from its handoff commit', () => {
+  const root = hub();
+  assert.equal(handoff(root, 'alpha', 'Alpha', BODY.replace('checkpoint', 'OLD BODY')).status, 0);
+  assert.equal(handoff(root, 'beta', 'Beta', BODY.replace('checkpoint', 'BETA BODY')).status, 0);
+  const betaPath = join(root, 'docs', 'handoffs', 'current', 'beta.md');
+  const betaBefore = readFileSync(betaPath, 'utf8');
+  assert.equal(handoff(root, 'alpha', 'Alpha', BODY.replace('checkpoint', 'NEW BODY')).status, 0);
+
+  const result = gtg(root, ['undo', '--no-list']);
+  assert.equal(result.status, 0, result.stderr);
+  const alpha = active(root).find((entry) => entry.slug === 'alpha');
+  assert.equal(alpha.sessions, 1);
+  const resumed = gtg(root, ['resume', 'alpha']);
+  assert.match(resumed.stdout, /OLD BODY/);
+  assert.doesNotMatch(resumed.stdout, /NEW BODY/);
+  assert.equal(readFileSync(betaPath, 'utf8'), betaBefore,
+    'undo must not restore another handoff path that the anchor commit did not touch');
+});
+
+test('undo refuses before store mutation when the current handoff body is dirty', () => {
+  const root = hub();
+  assert.equal(handoff(root, 'alpha', 'Alpha', BODY.replace('checkpoint', 'OLD BODY')).status, 0);
+  assert.equal(handoff(root, 'alpha', 'Alpha', BODY.replace('checkpoint', 'NEW BODY')).status, 0);
+  const activePath = join(root, ACTIVE, 'alpha.json');
+  const handoffPath = join(root, 'docs', 'handoffs', 'current', 'alpha.md');
+  writeFileSync(handoffPath, 'UNCOMMITTED BODY\n');
+  const recordBefore = readFileSync(activePath, 'utf8');
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+
+  const result = gtg(root, ['undo', '--no-list']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /handoff body has uncommitted changes/);
+  assert.equal(readFileSync(activePath, 'utf8'), recordBefore);
+  assert.equal(readFileSync(handoffPath, 'utf8'), 'UNCOMMITTED BODY\n');
+  assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), head);
+});
+
+test('help documents checkpoint hook intent on the existing handoff command', () => {
+  const root = hub();
+  const result = gtg(root, ['help']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /--checkpoint.*current handoff.*hook/i);
+});

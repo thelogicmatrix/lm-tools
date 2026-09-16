@@ -35,6 +35,7 @@ const COLLECTIONS = { active: DIR_ACTIVE, backlog: DIR_BACKLOG };
 const PACKED_ACTIVE = 'docs/handoffs/_active.json';
 const PACKED_BACKLOG = 'docs/handoffs/_backlog.json';
 const STORE_PATHSPEC = [PACKED_ACTIVE, PACKED_BACKLOG, DIR_ACTIVE, DIR_BACKLOG];
+const SLUG_OK = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 // Directory of this CLI file - bundled extensions ship alongside it under extensions/.
 const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -288,8 +289,12 @@ function countHandoffFiles(slug) {
 // the line's history. Anything outside these two shapes falls back to the current path.
 function reusableHandoffPath(rel) {
   if (typeof rel !== 'string') return null;
-  const safe = /^docs\/handoffs\/(?:\d{4}-\d{2}-\d{2}-\d{4}-[A-Za-z0-9][A-Za-z0-9_-]*|current\/[A-Za-z0-9][A-Za-z0-9_-]*)\.md$/.test(rel);
+  const safe = isHandoffDocPath(rel);
   return safe && existsSync(join(ROOT, rel)) ? rel : null;
+}
+function isHandoffDocPath(rel) {
+  return typeof rel === 'string'
+    && /^docs\/handoffs\/(?:\d{4}-\d{2}-\d{2}-\d{4}-[A-Za-z0-9][A-Za-z0-9_-]*|current\/[A-Za-z0-9][A-Za-z0-9_-]*)\.md$/.test(rel);
 }
 function sameHandoffPath(a, b) {
   return typeof a === 'string' && typeof b === 'string'
@@ -299,10 +304,8 @@ function progressSlugOnDisk(slug) {
   const dir = join(ROOT, 'docs/handoffs/progress');
   if (!existsSync(dir)) return null;
   const wanted = `${slug}.json`.toLowerCase();
-  try {
-    const file = readdirSync(dir).find((name) => name.toLowerCase() === wanted);
-    return file ? file.slice(0, -'.json'.length) : null;
-  } catch { return null; }
+  const file = readdirSync(dir).find((name) => name.toLowerCase() === wanted);
+  return file ? file.slice(0, -'.json'.length) : null;
 }
 // Earliest handoff filename's date, as a midnight ISO stamp. Null if none exist.
 function firstHandoffDate(slug) {
@@ -433,7 +436,7 @@ async function writeHandoff(argv, { which, verb }) {
   // that no-orphan-file guarantee only holds while nothing after that write can still refuse -
   // `--slug _foo` used to pass here, land the markdown, and then throw inside writeCollection,
   // leaving an untracked .md, no entry, and a body that came from stdin and is therefore gone.
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(a.slug)) { console.error(`gtg ${verb}: --slug must start with a letter or digit and match [A-Za-z0-9_-]`); process.exit(2); }
+  if (!SLUG_OK.test(a.slug)) { console.error(`gtg ${verb}: --slug must start with a letter or digit and match [A-Za-z0-9_-]`); process.exit(2); }
   if (!body) { console.error(`gtg ${verb}: empty body on stdin`); process.exit(2); }
   // Slug reuse lives HERE, not in a `list <name>` probe the skill runs first (one tool turn per
   // departure, 2026-08-26). A fresh slug for a project that already has an entry mints a
@@ -787,6 +790,7 @@ function help() {
       [--wip]      commit the worktree's uncommitted work first (worktree only, never the shared root)
       [--exact]    keep --slug literally; by default one name-matching entry lends its slug
       [--harness]  who wrote it (claude|codex|...); auto-detected from the environment
+      [--checkpoint] refresh the current handoff and set hook ctx.checkpoint without departure ceremony
       appends "## Task list" (harness task store) and, in a worktree, "## Commits this session"
       and "## Files touched" (git log since the session started) unless the body has them;
       runs <root>/.gtg/after-handoff.mjs afterwards if present (default export fn(ctx))
@@ -871,8 +875,8 @@ function rename(argv) {
   const [from, to] = argv;
   if (!from || !to) { console.error('Usage: gtg rename <number|slug> <new-slug>'); process.exit(2); }
   // Same constraint --slug is held to, and for the same reason: a slug becomes a path segment.
-  if (!/^[A-Za-z0-9_-]+$/.test(to)) {
-    console.error('gtg rename: <new-slug> must match [A-Za-z0-9_-]'); process.exit(2);
+  if (!SLUG_OK.test(to)) {
+    console.error('gtg rename: <new-slug> must start with a letter or digit and match [A-Za-z0-9_-]'); process.exit(2);
   }
   const act = entries('active');
   const bl = entries('backlog');
@@ -900,13 +904,18 @@ function rename(argv) {
   }
   const old = match.slug;
   if (old === to) { console.error(`gtg rename: '${to}' is already its slug`); process.exit(2); }
-  if ([...act, ...bl].some((e) => e.slug === to)) {
+  if ([...act, ...bl].some((e) => e.slug.toLowerCase() === to.toLowerCase())) {
     console.error(`gtg rename: '${to}' is already used by another project`); process.exit(2);
   }
   // Progress is a separate durable record keyed by the same stable slug. Silently moving only
   // the handoff would orphan its tasks, while moving both needs its own revision-aware contract.
   // Fail closed before any file/store mutation until that operation exists.
-  const progressCollision = progressSlugOnDisk(old) ?? progressSlugOnDisk(to);
+  let progressCollision;
+  try { progressCollision = progressSlugOnDisk(old) ?? progressSlugOnDisk(to); }
+  catch (e) {
+    console.error(`gtg rename: cannot inspect progress records - ${firstMeaningfulLine(e)}`);
+    process.exit(2);
+  }
   if (progressCollision) {
     console.error(`gtg rename: progress '${progressCollision}' is bound to this identity; cannot rename this line of work`);
     process.exit(2);
@@ -1241,8 +1250,8 @@ async function resumeConsume(argv) {
 //
 // Finding C1, and the rule it left behind: the anchor must span BOTH collections.
 // It was once picked from the active store alone, but two mutations touch the
-// backlog ONLY (`gtg backlog --project ...` parking a new idea, and
-// `gtg resume <backlog-slug>`), so an active-only anchor skipped right past those,
+// backlog ONLY (`gtg backlog --project ...` parking a new idea, and explicit
+// completion of backlog work), so an active-only anchor skipped right past those,
 // landed on an unrelated older active-list commit, reverted THAT instead, and
 // silently deleted the backlog. STORE_PATHSPEC is what keeps that fixed now: it
 // names both sharded directories, so a backlog-only commit is still the anchor,
@@ -1295,7 +1304,9 @@ function undo() {
   const last = mine.sha;
   const subject = mine.subject;
 
-  // Rewind every path the anchor commit touched to its state at `${last}^`. The packed store
+  // Rewind every store or handoff-body path the anchor commit touched to its state at
+  // `${last}^`. Persistent handoffs overwrite one current body, so restoring only
+  // the record would pair a session-1 entry with session-2 prose. The packed store
   // made this two whole files; a sharded store is many, so the unit is now "the paths this
   // commit changed" and git names them for us. STORE_PATHSPEC covers the packed files too, so
   // an undo of a pre-shard commit still works exactly as it used to. `--root` keeps the
@@ -1304,12 +1315,30 @@ function undo() {
   // A path absent at `last^` was CREATED by this commit, so undoing it means removing it -
   // the same rule the packed version followed, and the reason a deletion has to be in the
   // commit path list below rather than left in the working tree.
+  const isStorePath = (rel) => STORE_PATHSPEC.some((path) => rel === path || rel.startsWith(path + '/'));
   let changed = [];
   try {
     changed = execFileSync('git', ['diff-tree', '-r', '--root', '--no-commit-id', '--name-only',
-      last, '--', ...STORE_PATHSPEC], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] })
-      .toString().split('\n').map((s) => s.trim()).filter(Boolean);
+      last, '--', 'docs/handoffs'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().split('\n').map((s) => s.trim())
+      .filter((rel) => rel && (isStorePath(rel) || isHandoffDocPath(rel)));
   } catch { /* the empty check below reports it */ }
+
+  // Refuse before restoring any store path if a handoff body has uncommitted edits.
+  // The anchor proves ownership of the committed change, not of later working-tree prose.
+  for (const rel of changed.filter(isHandoffDocPath)) {
+    try {
+      const dirty = execFileSync('git', ['status', '--porcelain', '--', rel],
+        { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+      if (dirty) {
+        console.error(`gtg undo: handoff body has uncommitted changes: ${rel}`);
+        process.exit(2);
+      }
+    } catch (e) {
+      console.error(`gtg undo: cannot verify handoff body before restore - ${firstMeaningfulLine(e)}`);
+      process.exit(2);
+    }
+  }
 
   const paths = [];
   for (const rel of changed) {
