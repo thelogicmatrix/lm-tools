@@ -580,7 +580,7 @@ test('handoff generates a progress Task list and resume prints current state whi
   assert.match(r.stdout, /revision 2/);
   assert.match(r.stdout, /Completed: 1\/2 · skipped: 0/);
   assert.match(r.stdout, /Next action: Start task-2/);
-  assert.equal(existsSync(recordPath(root)), true, 'normal resume consumed the durable progress record');
+  assert.equal(existsSync(recordPath(root)), true, 'normal resume must retain the durable progress record');
   assert.equal(readRecord(root).revision, 2);
   assert.deepEqual(readdirSync(join(root, 'docs', 'handoffs', 'progress')).sort(), ['alpha.json']);
 });

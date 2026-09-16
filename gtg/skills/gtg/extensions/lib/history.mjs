@@ -219,8 +219,15 @@ export function perProject(events, sessions, activeEntries, backlogEntries, effo
     const realSlug = storeEntry?.slug || slug;
     const dates = evs.map((e) => e.date).sort(); // oldest-first
     const born = dates[0] ? dates[0].slice(0, 10) : null;
-    const sessCount = sessions.filter((s) => s.slug === realSlug).length
-      || evs.filter((e) => e.type === 'handoff').length;
+    // Current GTG entries carry the authoritative checkpoint-event count. Filename
+    // counts are a legacy fallback only: one persistent current file cannot represent
+    // its revision count, and preferring a surviving dated file would freeze a line at 1.
+    const storedSessions = Number.isInteger(storeEntry?.sessions) && storeEntry.sessions >= 0
+      ? storeEntry.sessions
+      : null;
+    const eventSessions = evs.filter((e) => e.type === 'handoff').length;
+    const sessCount = storedSessions
+      ?? (eventSessions || sessions.filter((s) => s.slug === realSlug).length);
     const ship = evs.find((e) => e.type === 'prune' && e.shipped);
     let status = 'dormant';
     if (active.has(slug)) status = 'active';
@@ -475,6 +482,10 @@ export function buildReport(root) {
   tp.shipRate = denom ? Number((tp.shipped / denom).toFixed(3)) : null;
   return {
     historyAvailable: available,
+    // Canonical current files intentionally have no timestamp in their names.
+    // The hour histogram can therefore describe only retained legacy dated files;
+    // make that limitation machine-visible to report consumers.
+    coverage: { sessionHoursByClock: 'legacy-dated-handoff-files-only' },
     counts: { active: active.length, backlog: backlog.length },
     habit: habit(events, sessions),
     throughput: tp,

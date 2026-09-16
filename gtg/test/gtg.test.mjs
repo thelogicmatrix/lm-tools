@@ -87,8 +87,8 @@ const nameStatus = (root, ref) =>
     .trim().split('\n').filter(Boolean);
 
 // Mutate the store the way the other machine would: read, edit, write each record back.
-// Several cases backdate `updated` to trip the 7-day auto-shelf, which is the only way to
-// reach that path without waiting a week.
+// Several cases backdate `updated` to prove stale work stays explicit and bookkeeping leaves
+// activity timestamps alone.
 const patchActive = (root, fn) => {
   const items = active(root);
   fn(items);
@@ -101,7 +101,7 @@ const patchActive = (root, fn) => {
   const r = gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
   assert.equal(r.status, 0, `handoff failed: ${r.stderr}`);
   const rel = r.stdout.split('\n')[0].trim();
-  assert.match(rel, /^docs\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-proj-a\.md$/);
+  assert.equal(rel, 'docs/handoffs/current/proj-a.md');
   assert.ok(existsSync(join(repo, rel)), 'handoff doc missing');
   const doc = readFileSync(join(repo, rel), 'utf8');
   assert.match(doc, /^# Handoff: Project A/);
@@ -186,23 +186,24 @@ const patchActive = (root, fn) => {
   console.log('ok 2 - list + filter');
 }
 
-// --- 2b. 7-day auto-shelf: stale active entry moves to backlog on list ---
+// --- 2b. stale active work stays active until explicitly shelved ---
 {
   const repo = tempRepo();
   gtg(repo, HANDOFF_ARGS('stale-proj', 'Stale Project'), { input: BODY });
   // Backdate the entry 8 days
   patchActive(repo, (h) => { h[0].updated = new Date(Date.now() - 8 * 86400000).toISOString(); });
   const r = gtg(repo, ['list']);
-  assert.match(r.stdout, /Auto-shelved 1 project/);
-  assert.match(r.stdout, /No active gtg projects/);
+  assert.doesNotMatch(r.stdout, /Auto-shelved|shelves in/);
+  assert.match(r.stdout, /Stale Project/);
+  assert.equal(backlog(repo).length, 0);
+  assert.equal(active(repo).length, 1);
+  const parked = gtg(repo, ['back', 'stale-proj', '--no-list']);
+  assert.equal(parked.status, 0, parked.stderr);
   const bl = backlog(repo);
-  assert.equal(bl.length, 1);
   assert.equal(bl[0].slug, 'stale-proj');
-  assert.equal(active(repo).length, 0);
-  // shelf listing shows it
   const rb = gtg(repo, ['backlog']);
   assert.match(rb.stdout, /b1\. Stale Project/);
-  console.log('ok 2b - auto-shelf + backlog list');
+  console.log('ok 2b - stale work needs explicit shelving');
 }
 
 // --- 2c. list numbering matches resolveEntry's full-list order (not filtered subset) ---
@@ -243,7 +244,7 @@ const patchActive = (root, fn) => {
     env: { GIT_CONFIG_GLOBAL: noConfig, GIT_CONFIG_SYSTEM: noConfig, GIT_CONFIG_NOSYSTEM: '1' },
   });
   assert.notEqual(r.status, 0, `a genuine git commit failure must exit non-zero so a batch caller can detect it: ${r.stderr}`);
-  assert.match(r.stdout, /^docs\/handoffs\/\d{4}-\d{2}-\d{2}-\d{4}-proj-c\.md$/m, 'handoff success output missing from stdout');
+  assert.match(r.stdout, /^docs\/handoffs\/current\/proj-c\.md$/m, 'handoff success output missing from stdout');
   assert.match(r.stdout, /RESUME: "gtg proj-c"/);
   assert.match(r.stderr, /uncommitted/i, 'genuine git commit failure must be surfaced as a warning, not swallowed');
   // The cause line, via firstMeaningfulLine: never blank (an empty stderr Buffer is TRUTHY and
@@ -311,7 +312,7 @@ const patchActive = (root, fn) => {
 }
 
 // --- Finding I1: undo must restore BOTH stores, not leave the entry duplicated ---
-// back/active/autoShelf commit both stores together in one commit. undo used to restore
+// back/active commit both stores together in one commit. undo used to restore
 // only the active side from the pre-commit parent, leaving the moved entry ALSO present on
 // the backlog.
 {
@@ -366,7 +367,7 @@ const patchActive = (root, fn) => {
   console.log('ok - Finding 2b: active hint uses sorted position');
 }
 
-// --- Finding 3: undo must not re-trigger autoShelf (no re-park, no extra commit) ---
+// --- Finding 3: undo of stale work restores it active with exactly one commit ---
 {
   const repo = tempRepo();
   gtg(repo, HANDOFF_ARGS('stale-undo', 'Stale Undo'), { input: BODY });
@@ -380,8 +381,8 @@ const patchActive = (root, fn) => {
   assert.equal(active(repo)[0].slug, 'stale-undo');
   assert.equal(backlog(repo).length, 0, 'undo must not re-park the stale entry to backlog');
   const commitsAfterUndo = execSync('git rev-list --count HEAD', { cwd: repo, encoding: 'utf8' }).trim();
-  assert.equal(Number(commitsAfterUndo), Number(commitsBeforeUndo) + 1, 'undo must create exactly one commit, no autoShelf side-commit');
-  console.log('ok - Finding 3: undo does not re-trigger autoShelf');
+  assert.equal(Number(commitsAfterUndo), Number(commitsBeforeUndo) + 1, 'undo must create exactly one commit');
+  console.log('ok - Finding 3: undo restores stale work without implicit shelving');
 }
 
 // --- 6. extension dispatch + ctx contract ---
@@ -505,7 +506,7 @@ const patchActive = (root, fn) => {
   console.log('ok 7d - user command intact alongside bundled command');
 }
 
-// --- 8. resume consumes an entry with its OWN commit subject (not prune) ---
+// --- 8. resume retains active and backlog entries without a bookkeeping commit ---
 {
   const repo = tempRepo();
   let r = gtg(repo, HANDOFF_ARGS('proj-r', 'Project R'), { input: BODY });
@@ -513,11 +514,11 @@ const patchActive = (root, fn) => {
 
   r = gtg(repo, ['resume', 'proj-r']);
   assert.equal(r.status, 0, `resume failed: ${r.stderr}`);
-  assert.equal(active(repo).length, 0, 'resume did not remove the entry');
+  assert.equal(active(repo).length, 1, 'resume must retain the current entry');
 
   const subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
-  assert.match(subject, /^gtg resume: Project R - handoff consumed$/,
-    `resume must not reuse the prune subject, got: ${subject}`);
+  assert.match(subject, /^handoff: Project R - session 1$/,
+    `resume must not create a bookkeeping commit, got: ${subject}`);
 
   // falls back to the backlog when the slug is not active
   r = gtg(repo, ['backlog', '--project', 'Idea Z', '--slug', 'idea-z',
@@ -526,13 +527,14 @@ const patchActive = (root, fn) => {
   r = gtg(repo, ['resume', 'idea-z']);
   assert.equal(r.status, 0, `backlog resume failed: ${r.stderr}`);
   const blSubject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
-  assert.match(blSubject, /^gtg resume: Idea Z - backlog handoff consumed$/);
+  assert.match(blSubject, /^gtg backlog: new Idea Z - session 1$/);
+  assert.equal(backlog(repo).length, 1, 'resume must retain explicitly shelved work');
 
   // no match exits 2
   r = gtg(repo, ['resume', 'nope']);
   assert.equal(r.status, 2, 'resume on a missing slug should exit 2');
 
-  console.log('ok 8 - resume has its own verb and commit subject');
+  console.log('ok 8 - resume retains active and backlog work without mutation');
 }
 
 // --- 9. phase is gone; sessions counts up; created is stable ---
@@ -571,7 +573,7 @@ const patchActive = (root, fn) => {
 }
 
 // --- 10. created backfills from disk when handoff files exist but no store entry does
-// (a real project whose entry was consumed by `gtg resume`, now handed off again) ---
+// (a real legacy project whose store entry is missing, now handed off again) ---
 {
   const repo = tempRepo();
   const dir = join(repo, 'docs/handoffs');
@@ -832,24 +834,23 @@ const patchActive = (root, fn) => {
   console.log('ok 15 - Finding C1: undo targets a backlog-only mutation correctly');
 }
 
-// --- 15b. Finding C1: same bug via the OTHER backlog-only mutation, `gtg resume
-// <backlog-slug>` (consumes a backlog entry, writes the backlog store alone) ---
+// --- 15b. explicit completion of backlog work is undoable without touching active work ---
 {
   const repo = tempRepo();
   gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
   gtg(repo, ['backlog', '--project', 'Idea Y', '--slug', 'idea-y', '--next', 'TBD'], { input: BODY });
-  const rr = gtg(repo, ['resume', 'idea-y']);
+  const rr = gtg(repo, ['complete', 'idea-y', '--no-list']);
   assert.equal(rr.status, 0, rr.stderr);
 
   const ru = gtg(repo, ['undo']);
   assert.equal(ru.status, 0, ru.stderr);
-  assert.match(ru.stdout, /Undone: gtg resume: Idea Y/,
-    `undo must target the backlog-consume commit, got: ${ru.stdout}`);
-  assert.equal(active(repo).length, 1, 'undo of a backlog-only resume must not touch the active list');
+  assert.match(ru.stdout, /Undone: gtg prune: remove Idea Y from backlog - confirmed done/,
+    `undo must target the backlog-completion commit, got: ${ru.stdout}`);
+  assert.equal(active(repo).length, 1, 'undo of backlog completion must not touch the active list');
   const bl = backlog(repo);
-  assert.equal(bl.length, 1, 'undo must restore the consumed backlog entry');
+  assert.equal(bl.length, 1, 'undo must restore the completed backlog entry');
   assert.equal(bl[0].slug, 'idea-y');
-  console.log('ok 15b - Finding C1: undo restores a consumed backlog-only entry');
+  console.log('ok 15b - undo restores an explicitly completed backlog entry');
 }
 
 // --- 16. Finding C1: undoing the very first-ever handoff removes the record file
@@ -959,8 +960,7 @@ const patchActive = (root, fn) => {
   console.log('ok 20 - Finding I4a: new-idea park has its own unambiguous commit subject');
 }
 
-// --- 21. Finding I4 (part 2): autoShelf's commit subject names the projects it
-// swept, not just a bare count ---
+// --- 21. list does not create a shelf commit; explicit back names the project ---
 {
   const repo = tempRepo();
   gtg(repo, HANDOFF_ARGS('s-one', 'S One'), { input: BODY });
@@ -969,9 +969,13 @@ const patchActive = (root, fn) => {
 
   const r = gtg(repo, ['list']);
   assert.equal(r.status, 0, r.stderr);
-  const subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
-  assert.match(subject, /^gtg backlog: auto-park 2 stale \(>7d\): S One, S Two$/, `got: ${subject}`);
-  console.log('ok 21 - Finding I4b: autoShelf commit subject names the swept projects');
+  let subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
+  assert.match(subject, /^handoff: S Two - session 1$/, `list must be read-only, got: ${subject}`);
+  const parked = gtg(repo, ['back', 's-one', '--no-list']);
+  assert.equal(parked.status, 0, parked.stderr);
+  subject = execSync('git log -1 --format=%s', { cwd: repo, encoding: 'utf8' }).trim();
+  assert.match(subject, /^gtg backlog: park S One$/);
+  console.log('ok 21 - stale list is read-only; explicit shelf names its project');
 }
 
 // --- 22. minor: firstHandoffDate() emits the same local-offset suffix nowIso()
@@ -1487,6 +1491,9 @@ const patchActive = (root, fn) => {
   assert.equal(doc.throughput.shipped, 1);
   assert.ok(doc.habit && doc.perProject && doc.families && doc.health && doc.fun, 'all sections present');
   assert.ok(doc.effort, 'effort section present');
+  assert.equal(doc.coverage.sessionHoursByClock,
+    'legacy-dated-handoff-files-only',
+    'report JSON must disclose that canonical current revisions have no filename clock');
   assert.ok(typeof doc.throughput.shipRate === 'number', 'assembler fills shipRate');
 
   // The ONLY assertion tying the subject gtg.mjs WRITES to the regex history.mjs PARSES.
@@ -1598,7 +1605,7 @@ const patchActive = (root, fn) => {
 }
 
 
-// --- 37. rename: slug changes, children re-point, handoff files keep their names ---
+// --- 37. rename: slug changes, children re-point, current handoff path follows ---
 {
   const repo = tempRepo();
   gtg(repo, HANDOFF_ARGS('fam', 'Family Parent'), { input: BODY });
@@ -1620,13 +1627,14 @@ const patchActive = (root, fn) => {
   assert.equal(hs.filter((e) => e.parent === 'fam').length, 0,
     'no orphan left pointing at the old slug');
 
-  // History is retained: the handoff file keeps the name it was written under, and the entry
-  // still points at a file that exists.
+  // The writable current path follows the live slug so a new `fam` line cannot clobber it.
+  // Git retains the old path/version in history.
   const after = hs.find((e) => e.slug === 'family').file;
-  assert.equal(after, before, 'the file field is untouched');
-  assert.match(after, /-fam\.md$/, 'the old slug stays in the filename, which is the record');
+  assert.equal(before, 'docs/handoffs/current/fam.md');
+  assert.equal(after, 'docs/handoffs/current/family.md');
+  assert.equal(existsSync(join(repo, before)), false, 'the old writable path must be released');
   assert.ok(existsSync(join(repo, after)), 'and that file is still on disk');
-  console.log('ok 37 - rename: slug changes, children re-point, handoff files keep their names');
+  console.log('ok 37 - rename: slug, children, and current handoff path move together');
 }
 
 // --- 38. rename: refusals, and a backlog entry renames too ---
@@ -1860,21 +1868,17 @@ const patchActive = (root, fn) => {
   console.log('ok 47 - the rendered count agrees with the rendered rows');
 }
 
-// --- 48. autoShelf still acts on extension entries even though list hides them ---
-// The regression guard for filtering at READ time instead of render time: `list` is
-// the only path that runs the 7-day sweep, so an early filter would stop extension
-// entries ever auto-shelving and silently empty `gtg learn`'s shelved section.
+// --- 48. extension entries stay addressable by slug for explicit shelving ---
 {
   const repo = tempRepo();
   gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
-  patchActive(repo, (h) => { h[0].updated = new Date(Date.now() - 9 * 86400000).toISOString(); });
-  const r = gtg(repo, ['list']);
+  const r = gtg(repo, ['back', 'issues-p9-x', '--no-list']);
   assert.equal(r.status, 0, r.stderr);
   const bl = backlog(repo);
   assert.ok(bl.some((e) => e.slug === 'issues-p9-x'),
-    'an idle extension entry was not auto-shelved, so filtering happened before autoShelf');
+    'the extension entry was not explicitly shelved by slug');
   assert.equal(active(repo).length, 0, 'the shelved entry is gone from active');
-  console.log('ok 48 - autoShelf still sees extension entries');
+  console.log('ok 48 - explicit shelving reaches extension entries');
 }
 
 // --- 49. ctx.ownEntries hands an extension both its shelves, and only its own ---
@@ -1974,8 +1978,8 @@ const patchActive = (root, fn) => {
 }
 
 // --- 51. a targeted query reaches a SHELVED extension entry ---
-// autoShelf parks anything idle over 7 days (case 48), which is normal for an issue package
-// between fix sessions, and `backlog` hides extension entries. So without this, the moment a
+// Explicit shelving can park an issue package between fix sessions, and `backlog` hides
+// extension entries. So without this, the moment a
 // package is shelved no builtin listing shows it, `list <candidate>` goes blind again, and a
 // departure mints the duplicate case 50 exists to prevent.
 {
@@ -1983,9 +1987,8 @@ const patchActive = (root, fn) => {
   gtg(repo, [...HANDOFF_ARGS('issues-p9-shelved', 'Issues P9: shelved'), '--parent', 'issues'],
     { input: BODY });
   gtg(repo, [...HANDOFF_ARGS('real-shelved', 'Real Shelved'), '--parent', 'gtg'], { input: BODY });
-  // Backdate both past the 7-day cutoff, then let `list` run the sweep (same trick as case 2b).
-  patchActive(repo, (h) => { for (const e of h) e.updated = new Date(Date.now() - 9 * 86400000).toISOString(); });
-  gtg(repo, ['list']);
+  assert.equal(gtg(repo, ['back', 'issues-p9-shelved', '--no-list']).status, 0);
+  assert.equal(gtg(repo, ['back', 'real-shelved', '--no-list']).status, 0);
   const bl = backlog(repo);
   assert.equal(bl.length, 2, 'setup: both entries must be on the shelf');            // GUARD
   assert.equal(active(repo).length, 0, 'setup: nothing left active');       // GUARD
@@ -2105,7 +2108,7 @@ const patchActive = (root, fn) => {
   gtg(dir, ['handoff', '--project', 'Alpha', '--slug', 'alpha', '--next', 'x',
     '--parent', 'ghost'], { input: 'body\n' });
   // Bookkeeping is not work, so the idle clock `list` auto-shelves on must not restart.
-  // Backdated first, the way the auto-shelf tests do it, and captured BEFORE the unparent:
+  // Backdated first, and captured BEFORE the unparent:
   // reading `updated` afterwards can only catch a deletion, and nowIso() is second-
   // granularity, so a stamp taken "now" would compare equal to a restamp in the same second.
   const before = new Date(Date.now() - 2 * 86400000).toISOString();
@@ -2216,18 +2219,23 @@ const patchActive = (root, fn) => {
   writeFileSync(join(dir, '.gtg', 'after-handoff.mjs'),
     `import { writeFileSync } from 'node:fs';
 export default async (ctx) => {
-  writeFileSync(ctx.root + '/hook-ran.json', JSON.stringify({ keys: Object.keys(ctx).sort(), slug: ctx.entry.slug, file: ctx.file, body: ctx.body }));
+  writeFileSync(ctx.root + '/hook-ran.json', JSON.stringify({ keys: Object.keys(ctx).sort(), slug: ctx.entry.slug, file: ctx.file, body: ctx.body, checkpoint: ctx.checkpoint }));
   console.log('hook says hi');
 };\n`);
   let r = gtg(dir, HANDOFF_ARGS('hk', 'Hooked'), { input: BODY });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /hook says hi/);
   const ran = JSON.parse(readFileSync(join(dir, 'hook-ran.json'), 'utf8'));
-  assert.deepEqual(ran.keys, ['body', 'commit', 'entry', 'file', 'readStore', 'root', 'worktree', 'writeStore']);
+  assert.deepEqual(ran.keys, ['body', 'checkpoint', 'commit', 'entry', 'file', 'readStore', 'root', 'worktree', 'writeStore']);
   assert.equal(ran.slug, 'hk');
-  assert.match(ran.file, /docs\/handoffs\/.*-hk\.md$/);
+  assert.equal(ran.file, 'docs/handoffs/current/hk.md');
+  assert.equal(ran.checkpoint, false);
   assert.equal(ran.body, BODY.trim());
   assert.ok(r.stdout.trim().endsWith('RESUME: "gtg hk"'), 'RESUME stays the last line');
+  r = gtg(dir, [...HANDOFF_ARGS('hk', 'Hooked'), '--checkpoint'], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(readFileSync(join(dir, 'hook-ran.json'), 'utf8')).checkpoint, true,
+    '--checkpoint must reach the hook without changing the handoff command');
   try { execFileSync('git', ['rm', '-q', '--cached', 'hook-ran.json'], { cwd: dir, stdio: 'ignore' }); }
   catch { /* absent from the index is the intended already-clean state */ }
   rmSync(join(dir, 'hook-ran.json'), { force: true });
@@ -2357,28 +2365,28 @@ export default async (ctx) => {
   console.log('ok 65 - task list appended from the harness store, never duplicated, absent when unknown');
 }
 
-// --- 3.0.0: resume is the whole pick-up in one call ---
+// --- resume prints the current handoff and always retains it ---
 {
-  // Prints the handoff, consumes, keeps the commit subject; --keep reads without consuming.
+  // --keep remains compatible and tells hooks this was a read rather than a pickup.
   const dir = tempRepo();
   gtg(dir, HANDOFF_ARGS('one', 'Only One'), { input: BODY });
   let r = gtg(dir, ['resume', 'one', '--keep']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^RESUME: "Only One" - handoff of \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(docs\/handoffs\/.*-one\.md\)\n# Handoff: Only One\n/);
+  assert.match(r.stdout, /^RESUME: "Only One" - handoff of \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(docs\/handoffs\/current\/one\.md\)\n# Handoff: Only One\n/);
   assert.match(r.stdout, /## Next Action\ndo the next thing/);
-  assert.match(r.stdout, /Kept: Only One \(not consumed\)/);
-  assert.equal(active(dir).length, 1, '--keep must not consume');
+  assert.match(r.stdout, /Kept: Only One \(current handoff retained\)/);
+  assert.equal(active(dir).length, 1, '--keep must retain');
   // Bare resume with exactly one active project picks it without a name.
   r = gtg(dir, ['resume']);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /RESUME: "Only One"/);
-  assert.match(r.stdout, /Consumed: Only One$/m);
-  assert.equal(active(dir).length, 0);
-  assert.match(execSync('git log -1 --format=%s', { cwd: dir }).toString(), /^gtg resume: Only One - handoff consumed/);
+  assert.match(r.stdout, /Kept: Only One \(current handoff retained\)$/m);
+  assert.equal(active(dir).length, 1);
+  assert.match(execSync('git log -1 --format=%s', { cwd: dir }).toString(), /^handoff: Only One - session 1/);
   r = gtg(dir, ['resume']);
-  assert.equal(r.status, 2, 'nothing to resume exits 2');
-  assert.match(r.stdout, /Nothing to resume/);
-  console.log('ok 66 - resume prints the handoff and consumes in one call; --keep reads only');
+  assert.equal(r.status, 0, 'the retained handoff remains resumable');
+  assert.match(r.stdout, /RESUME: "Only One"/);
+  console.log('ok 66 - resume prints and retains; --keep remains compatible');
 }
 
 {
@@ -2407,27 +2415,31 @@ export default async (ctx) => {
 }
 
 {
-  // after-resume.mjs runs after the consume with the entry and body; a throwing hook is
-  // reported without undoing the consume.
+  // after-resume.mjs receives retained-state and pickup-intent separately; a throwing hook is
+  // reported without clearing the current handoff.
   const dir = tempRepo();
   mkdirSync(join(dir, '.gtg'), { recursive: true });
   writeFileSync(join(dir, '.gtg', 'after-resume.mjs'),
     `import { writeFileSync } from 'node:fs';
-export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.stringify({ keys: Object.keys(ctx).sort(), slug: ctx.entry.slug, kept: ctx.kept, hasBody: ctx.body.includes('## Next Action') })); console.log('resume hook ran'); };\n`);
+export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.stringify({ keys: Object.keys(ctx).sort(), slug: ctx.entry.slug, kept: ctx.kept, resumed: ctx.resumed, hasBody: ctx.body.includes('## Next Action') })); console.log('resume hook ran'); };\n`);
   gtg(dir, HANDOFF_ARGS('hk', 'Hooked'), { input: BODY });
   let r = gtg(dir, ['resume', 'hk']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /Consumed: Hooked\nresume hook ran/);
+  assert.match(r.stdout, /Kept: Hooked \(current handoff retained\)\nresume hook ran/);
   const ran = JSON.parse(readFileSync(join(dir, 'resumed.json'), 'utf8'));
-  assert.deepEqual(ran.keys, ['body', 'commit', 'entry', 'file', 'kept', 'readStore', 'root', 'writeStore']);
-  assert.deepEqual([ran.slug, ran.kept, ran.hasBody], ['hk', false, true]);
+  assert.deepEqual(ran.keys, ['body', 'commit', 'entry', 'file', 'kept', 'readStore', 'resumed', 'root', 'writeStore']);
+  assert.deepEqual([ran.slug, ran.kept, ran.resumed, ran.hasBody], ['hk', true, true, true]);
+  r = gtg(dir, ['resume', 'hk', '--keep']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(readFileSync(join(dir, 'resumed.json'), 'utf8')).resumed, false,
+    '--keep must retain its non-pickup signal for hooks');
   writeFileSync(join(dir, '.gtg', 'after-resume.mjs'), `export default () => { throw new Error('kaboom'); };\n`);
   gtg(dir, HANDOFF_ARGS('hk2', 'Hooked Two'), { input: BODY });
   r = gtg(dir, ['resume', 'hk2']);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /after-resume hook failed - kaboom/);
-  assert.equal(active(dir).length, 0, 'consume survives a failing hook');
-  console.log('ok 68 - after-resume hook: ctx, runs after consume, failure reported not hidden');
+  assert.equal(active(dir).length, 2, 'a failing hook must not clear either current handoff');
+  console.log('ok 68 - after-resume hook: retained state, pickup intent, failure reported');
 }
 
 // --- 69. unrelated project edits on two machines produce disjoint file sets ---
