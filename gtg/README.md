@@ -67,6 +67,13 @@ Normal resume passes `kept: true, resumed: true`; explicit `--keep` passes `resu
 Use `handoff --checkpoint` for an in-progress update; hooks receive `checkpoint: true`
 so personal integrations can skip departure ceremony. Existing `remove`/`prune` completion aliases remain.
 
+Renaming a canonical current handoff moves its file safely; legacy dated documents keep
+their historical names. Rename refuses a line with a persistent progress record because
+automatic progress-identity migration is unsupported. Keep that stable slug rather than
+manually moving records. In-progress checkpoints omit session duration to avoid counting
+the same elapsed time repeatedly. Hour-of-day history derived from dated legacy documents
+has limited coverage; persistent-file revisions do not supply that historical series.
+
 ## Persistent task progress
 
 `gtg progress init|show|list|update|add` tracks stable plan tasks, recorded worker IDs,
