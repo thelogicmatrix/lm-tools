@@ -1,6 +1,6 @@
 ---
 name: gtg
-description: 'Pause and resume over the command word "gtg". Bare "gtg" mid-session wraps the current work for a cold resume (after doing whatever else the message asks). "gtg <project>" at session start resumes it. "gtg <verb>" is bookkeeping. Mentioning gtg while discussing the skill itself is not a trigger.'
+description: 'Use for gtg pause/resume commands and persistent task or subagent progress in an ongoing multi-step project. Bare "gtg" mid-session departs; "gtg <project>" at session start resumes. Mentioning gtg while discussing the skill itself is not a departure trigger.'
 ---
 
 # GTG — Pause and Resume
@@ -11,10 +11,13 @@ exploration, no new work); the content is accurate enough for a cold resume days
 `gtg.mjs` = `node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs"`. Storage root = the current git
 repo, or `$GTG_HUB` if set.
 
+In Codex, resolve the CLI beside this loaded skill if `CLAUDE_PLUGIN_ROOT` is absent. Set the intended shared hub explicitly; a generated workspace is not automatically that hub.
+
 | Input | Do |
 |---|---|
 | `gtg` mid-session | Exit Procedure below. Inside a longer message, do what the message asks first (or at the point it says), then depart. No question either way. |
 | Session-start `gtg` or `gtg <project>` | Resume Procedure below |
+| `gtg progress …` or tracking task/subagent execution | Read `references/progress.md`; use its CLI for persistent state and counts. This does not depart or consume a handoff. |
 | `gtg list` / bare `gtg backlog` / `gtg back`, `active`, `remove`, `prune`, `undo`, `log`, `stats` with their args | Zero-model: run `gtg.mjs <verb> [args]` verbatim, relay its output, stop. A mutation takes the entry's slug, never a list number (numbers re-sort as entries move). |
 | Any other `gtg <verb>` (peek, report, supersede, rename, unparent, `backlog <idea>`, issues, learn, …) | Read `references/commands.md`, follow it |
 
@@ -25,7 +28,7 @@ its mirror, prints the handoff, consumes the entry, and runs the after-resume ho
 `Synced <remote>/<branch>: ...` line means the sync pulled work down; it is not a warning. Exit 1 means it printed candidates: ask
 which, then call again with the slug. Exit 2 with "is a command" means run that command
 instead. Then, from the printed handoff: relay its first line. `## Methodology` is a decision
-already made, re-enter it without asking. `## Task list`: re-create each non-completed line
+already made, re-enter it without asking. If current persistent progress is printed, use `references/progress.md` and preserve its task states instead of reconstructing an older snapshot. Otherwise, `## Task list`: re-create each non-completed line
 with your task tool, `pending` unless it says `in_progress`. `## Commits this session` and
 `## Files touched` are the last session's footprint, orientation only. Continue from the
 Next Action with no preamble. If the Next Action already looks done, say so and ask how to

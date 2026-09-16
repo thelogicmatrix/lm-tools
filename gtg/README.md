@@ -56,6 +56,18 @@ Requires Node.js ≥ 18 and git on PATH.
 
 Handoffs live in *your repo* (`<repo>/docs/handoffs/`), committed to *your* history.
 
+## Persistent task progress
+
+`gtg progress init|show|list|update|add` tracks stable plan tasks, recorded worker IDs,
+review states, evidence, blockers, and the next action. Counts come from validated
+state: only `done` tasks count as completed; skipped tasks are separate. Stored
+worker assignments do not prove a worker is currently running.
+
+Progress survives handoff consumption. Resume prints current progress before the
+older snapshot, and handoff preserves an explicit user-written Task list.
+See [the progress command reference](skills/gtg/references/progress.md) for stdin
+format, revision checks, and controller ownership. These CLI operations use no model.
+
 ## Advanced: tracking multiple repos from one place
 
 Set `GTG_HUB=<path>` (a git repo) and every gtg command stores its handoffs there
