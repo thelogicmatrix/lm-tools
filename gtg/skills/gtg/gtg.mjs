@@ -7,6 +7,7 @@ import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { readCollection, writeCollection } from './lib/store.mjs';
+import { readProgress, renderProgress, renderProgressTaskList } from './lib/progress.mjs';
 
 // --- storage root -----------------------------------------------------------
 function resolveRoot() {
@@ -418,6 +419,9 @@ async function writeHandoff(argv, { which, verb }) {
       a.slug = near[0].slug;
     }
   }
+  // Progress is durable state scoped by the same stable slug. Read it before any handoff or
+  // --wip mutation so a corrupt matching record fails loudly without leaving half a handoff.
+  const progress = readProgress(ROOT, a.slug, { optional: true });
   // ROOT is the storage hub, NOT the project. A project in its own worktree has
   // its own branch - detect there, or the hub's branch gets recorded for everyone.
   // Inferred from where the call is made when the flag is omitted: a session runs in its
@@ -461,8 +465,15 @@ async function writeHandoff(argv, { which, verb }) {
   // where "commits since I started" would be everyone's. Each is added only when the body
   // has not already got a section of that name, so a caller can still write its own.
   const auto = [];
-  const tasks = readHarnessTasks();
-  if (tasks.length && !sectionOf(body, 'Task list')) auto.push(`## Task list\n${tasks.join('\n')}`);
+  if (!sectionOf(body, 'Task list')) {
+    const progressTasks = progress ? renderProgressTaskList(progress) : '';
+    const harnessTasks = progress ? [] : readHarnessTasks();
+    if (progress) auto.push(`## Task list\n${progressTasks || '(no tasks)'}`);
+    else if (harnessTasks.length) auto.push(`## Task list\n${harnessTasks.join('\n')}`);
+  }
+  if (progress && !sectionOf(body, 'Progress')) {
+    auto.push(`## Progress (snapshot revision ${progress.revision}, updated ${progress.updatedAt})\n${renderProgress(progress)}`);
+  }
   if (ownWorktree && verb === 'handoff') {
     const since = sessionStartIso() || prior?.updated || new Date(Date.now() - 12 * 3600e3).toISOString();
     const { commits, files } = gitSince(worktree, since);
@@ -781,6 +792,7 @@ function help() {
   gtg undo                     revert THIS SESSION'S last change to the stores
   gtg stats                    one-screen scoreboard: streak, ships, sessions, effort
   gtg report                   full report JSON -> docs/handoffs/_report.json
+  gtg progress <verb>          persistent task progress: init, add, show, list, update
 After a move (back/active/remove/resume/undo) the updated list auto-prints when
 stdout is a terminal; it stays silent when piped (so an AI wastes no context).
 Force either way with --list / --no-list.
@@ -1069,6 +1081,7 @@ function syncTarget(git) {
 function syncHub() {
   if (synced) return; // once per process - see `synced` up by the migration block
   synced = true;
+  if (process.env.GTG_NO_SYNC) return; // isolated tests and explicit offline callers
   // stderr piped, not inherited: execFileSync forwards a child's stderr to ours otherwise,
   // and git narrates a refused fast-forward in nine hint: lines - five of git's own above every
   // line of ours. The after-resume hook piped it for the same reason before this moved here.
@@ -1155,8 +1168,12 @@ async function resumeConsume(argv) {
   }
   const file = match.file ? join(ROOT, match.file) : null;
   const body = file && existsSync(file) ? readFileSync(file, 'utf8').trim() : null;
+  const progress = readProgress(ROOT, match.slug, { optional: true });
   const when = typeof match.updated === 'string' ? match.updated.slice(0, 16).replace('T', ' ') : '?';
   console.log(`RESUME: "${match.project}" - handoff of ${when}${match.file ? ` (${match.file})` : ''}`);
+  if (progress) {
+    console.log(`CURRENT PROGRESS (supersedes handoff snapshot)\n${renderProgress(progress)}`);
+  }
   console.log(body ?? `(no handoff file at ${match.file ?? 'none'}; the entry's next action is all there is: ${match.next})`);
   if (a.keep) {
     console.log(`Kept: ${match.project} (not consumed)`);

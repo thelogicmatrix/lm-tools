@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // gtg self-check - assert-based, no framework. Runs every command against
 // throwaway temp git repos. Non-zero exit on any failure.
-import { execSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,6 +39,9 @@ function tempRepoNoIdentity() {
 function gtg(cwd, args, opts = {}) {
   const env = { ...process.env, ...(opts.env || {}) };
   delete env.GTG_HUB;
+  if (opts.noCodex) {
+    for (const key of Object.keys(env)) if (key.startsWith('CODEX_')) delete env[key];
+  }
   if (!(opts.env && 'CLAUDE_CODE_SESSION_ID' in opts.env)) delete env.CLAUDE_CODE_SESSION_ID;
   env.GIT_CEILING_DIRECTORIES = tmpdir();
   if (opts.session === null) delete env.GTG_SESSION_ID;
@@ -2225,8 +2228,9 @@ export default async (ctx) => {
   assert.match(ran.file, /docs\/handoffs\/.*-hk\.md$/);
   assert.equal(ran.body, BODY.trim());
   assert.ok(r.stdout.trim().endsWith('RESUME: "gtg hk"'), 'RESUME stays the last line');
-  execSync('git rm -q --cached hook-ran.json 2>/dev/null || true', { cwd: dir });
-  execSync('rm -f hook-ran.json', { cwd: dir });
+  try { execFileSync('git', ['rm', '-q', '--cached', 'hook-ran.json'], { cwd: dir, stdio: 'ignore' }); }
+  catch { /* absent from the index is the intended already-clean state */ }
+  rmSync(join(dir, 'hook-ran.json'), { force: true });
   gtg(dir, ['backlog', '--project', 'Idea', '--slug', 'idea', '--next', 'x'], { input: 'body\n' });
   assert.equal(existsSync(join(dir, 'hook-ran.json')), false, 'hook must not fire on a backlog park');
   writeFileSync(join(dir, '.gtg', 'after-handoff.mjs'), `export default () => { throw new Error('boom'); };\n`);
@@ -2252,7 +2256,7 @@ export default async (ctx) => {
   assert.match(list, /Codex Side s1 \[~2h\] \([^)]*\) ·codex/);
   assert.match(list, /Other s1 \[~2h\] \([^)]*\) ·hermes/);
   // An unidentified caller leaves the field off rather than guessing.
-  r = gtg(dir, HANDOFF_ARGS('u', 'Unknown'), { input: BODY, env: { CLAUDECODE: '' } });
+  r = gtg(dir, HANDOFF_ARGS('u', 'Unknown'), { input: BODY, env: { CLAUDECODE: '' }, noCodex: true });
   const u = active(dir).find((e) => e.slug === 'u');
   assert.equal('harness' in u && u.harness !== undefined, false);
   assert.doesNotMatch(gtg(dir, ['list']).stdout, /Unknown s1 \[~2h\] \([^)]*\) ·/);
