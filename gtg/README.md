@@ -117,10 +117,10 @@ error anywhere. `ownEntries()` reads the sharded store; `readStore` is for genui
 files like `_session.json`.
 
 `ctx` = `{ root, args, readStore(path), writeStore(path, data), commit(paths, message), countHandoffFiles(slug), ownEntries() }`.
-`countHandoffFiles(slug)` returns how many `docs/handoffs/*.md` files exist for that slug — the
-same true-count fallback the CLI itself uses when an entry's `sessions` field is absent (legacy
-entries), so an extension doesn't have to re-implement the file-count logic to avoid the same
-hardcoded-`1` bug.
+`countHandoffFiles(slug)` counts matching legacy dated documents plus the canonical
+`docs/handoffs/current/<slug>.md` if present. This is a file-count fallback for entries
+without a stored `sessions` count; it does not count every revision of a persistent file.
+For current entries, prefer their stored checkpoint count.
 
 A command whose output's **first line** starts with `GTG-DIRECTIVE:` is not relayed to you —
 the skill follows the instruction on that line instead. That lets a custom command hand control
@@ -182,8 +182,9 @@ than a fix.
 There are no markdown hooks any more (2.0.0 removed `.gtg/skill/on-exit.md`, 3.0.0 removed
 `on-resume.md`): checking for one cost a tool turn every time, and anything they did is
 either mechanical (belongs in the script) or already in the handoff body. The resume hook's
-`ctx` is `{ root, entry, file, body, kept, readStore, writeStore, commit }`; `kept` is true
-under `--keep`. On exit the CLI itself
+`ctx` is `{ root, entry, file, body, kept, resumed, readStore, writeStore, commit }`; `kept` is true
+for all resumes and `resumed` distinguishes normal pickup from explicit `--keep`. Handoff hooks
+also receive `checkpoint`, true for an in-progress update. On exit the CLI itself
 appends what the machine knows and the model used to type: a `## Task list` read from the
 harness's task store (Claude Code: `<config dir>/tasks/<session id>/`), and, for a project in
 its own worktree, `## Commits this session` and `## Files touched` from its git log since the
@@ -273,7 +274,7 @@ Each entry in `docs/handoffs/active/<slug>.json` / `docs/handoffs/backlog/<slug>
 |---|---|---|
 | `project` | `--project` | display name |
 | `slug` | `--slug` | stable id; also the handoff filename suffix |
-| `sessions` | auto | how many handoffs this slug has, counted from files on disk |
+| `sessions` | auto | stored checkpoint count; legacy entries initialise from dated handoff files |
 | `created` | auto | first handoff's date, carried forward across parks and reactivations |
 | `worktree` | `--worktree` | where the work lives; the literal `repo root` if in the storage repo |
 | `branch` | `--branch`, else detected **in the worktree** | the project's branch, not the hub's |

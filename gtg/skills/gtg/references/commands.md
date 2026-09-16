@@ -58,9 +58,9 @@ these, never a number.
 ## Working a package
 
 `gtg issues <pN>` hands back a `GTG-DIRECTIVE` that resumes with `--keep`: the package entry is
-never consumed. It is the only live mapping from its `pN` to a name, and every `docs/issues/`
-file in the batch carries `**Package:** pN` pointing at it, so consuming it orphans them all
-for exactly as long as you are working it. A package retires by being **finished**: fix its
+retained, as with every resume. `--keep` preserves non-pickup intent for portfolio hooks.
+It is the live mapping from its `pN` to a name, and every `docs/issues/` file in the batch
+carries `**Package:** pN` pointing at it. A package retires by being **finished**: fix its
 members and delete their files as you go; when the last one goes, its row renders
 `no members - unstamped, or done` and names the `gtg remove` that closes it.
 
