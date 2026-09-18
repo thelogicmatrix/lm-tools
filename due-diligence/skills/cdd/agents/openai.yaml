@@ -1,0 +1,6 @@
+interface:
+  display_name: "Construction Due Diligence"
+  short_description: "Build explicitly to a DD brief"
+  default_prompt: "Use $cdd to create a build brief for this work."
+policy:
+  allow_implicit_invocation: false

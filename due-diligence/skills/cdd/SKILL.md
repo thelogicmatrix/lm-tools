@@ -1,6 +1,6 @@
 ---
 name: cdd
-description: Use BEFORE building any work product a stakeholder will scrutinise — a report, doc, dataset, spec, UI, code, pipeline, or educational content — to build it to standard from the first line instead of fixing it under review afterward. Triggers on "cdd", "construction dd", "build to dd standard", "build to spec", or when about to start building something that Due Diligence would later review. The forward half of Due Diligence.
+description: Use only when explicitly invoked as cdd, construction dd, or build to DD standard. Do not activate automatically for planning, implementation, or work that Due Diligence might later review.
 ---
 
 # Construction Due Diligence (cdd)
@@ -13,7 +13,7 @@ DD's research corpus, run **forward**. DD attacks a finished draft; `cdd` briefs
 
 ## Hard guard — read first
 
-`cdd` does **NOT** replace the DD review. Building to a checklist is not the same as being verified against it: you still run Due Diligence on the finished artifact. `cdd` reduces what the critic finds; it never licenses skipping it. If you catch yourself thinking "I built it with cdd, so it's already DD'd" — stop. That's the failure this guard exists for.
+`cdd` does **NOT** replace a DD review, but it also does not schedule one. Run Due Diligence separately only when the user explicitly requests it or at its outbound/branch-finish boundary.
 
 ## Flow
 
@@ -36,7 +36,7 @@ DD's research corpus, run **forward**. DD attacks a finished draft; `cdd` briefs
    - *data-provenance* with Measure → "0/N untraced when the draft is done".
    - *visual-ui-ux* "forced horizontal scroll" → "no horizontal scroll at 390/768/1024/1280"; *pedagogy* "forward reference" → "introduce every concept before you use it".
 
-5. **Build to the brief.** Keep the checklist in view while constructing. When done, hand off to the **Due Diligence** skill for the actual review (see hard guard).
+5. **Build to the brief.** Keep the checklist in view while constructing. Stop when the requested build work is done; do not trigger Due Diligence automatically.
 
 ## Output
 

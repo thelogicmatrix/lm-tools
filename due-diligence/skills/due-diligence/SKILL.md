@@ -1,6 +1,6 @@
 ---
 name: due-diligence
-description: Use when about to deliver, hand off, ship, or "finalize" any work product (report, analysis, doc, dataset, spec, code, deliverable) — especially AI-generated — that a stakeholder, reviewer, or boss will scrutinize; or when asked to make something "production-ready", "bulletproof", "perfect", or "reviewed before sending". For deliverables with a real reader; skip throwaway scratch.
+description: Use only when explicitly invoked, immediately before an outbound send or publication, or for the final whole-branch review. Do not use for planning, construction, routine code review, verification, intermediate task completion, or local-only deliverables.
 ---
 
 # Due Diligence
@@ -17,10 +17,13 @@ attacked. **Material defect = blocker or should-fix.** Nits are listed and do no
 
 ## When
 
-Before declaring work done or sending it on; when auditing whether code, a pipeline or a
-process actually works on real inputs; any AI-generated artifact going to a skeptical human;
-"perfect", "production-ready", "boss-proof", "break it". Skip only throwaway scratch with no
-reader.
+Run only at one of these boundaries:
+
+- The user explicitly invokes Due Diligence.
+- Immediately before an outbound send or publication. Tag it `external-send` and always select `data-privacy`; the pass must catch PII before anything leaves the machine.
+- At final branch finish, after ordinary review and verification, over the whole branch rather than only the latest diff.
+
+Do not run during planning, construction, routine Superpowers review, verification, intermediate task completion, handoff, or local-only work. Those paths already have their own checks, and duplicating them wastes time and context.
 
 ## Calibrate effort first, then say which tier and why
 
