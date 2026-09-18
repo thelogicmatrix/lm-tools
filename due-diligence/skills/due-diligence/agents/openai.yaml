@@ -1,0 +1,6 @@
+interface:
+  display_name: "Due Diligence"
+  short_description: "Review outbound work or a finished branch"
+  default_prompt: "Use $due-diligence to review this deliverable."
+policy:
+  allow_implicit_invocation: false

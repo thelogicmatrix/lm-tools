@@ -38,7 +38,7 @@ and idempotency-rerun-safety).
 | deploy, migration, infra | rollback-blast-radius, reproducibility-portability, observability, backup-recovery, homelab-ops, absent-user-handoff |
 | pipeline, cron, infra | idempotency-rerun-safety, observability, concurrency-safety, resilience, homelab-ops, absent-user-handoff, attention-cost, interface-state-coverage |
 | runbook | reproducibility-portability |
-| external-send | compliance-policy, data-privacy, attention-cost |
+| external-send | data-privacy (required for PII), compliance-policy and attention-cost when relevant |
 | proposal, plan, recommendation | assumptions-risk, alternatives-considered, agency-preservation |
 | educational | pedagogy |
 
