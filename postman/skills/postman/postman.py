@@ -628,9 +628,20 @@ def build_message(rec, ident, to=None, subject_prefix="", in_reply_to=None,
                               cid=f"<{signature_cid(ident)}>")
     for p in files:
         ctype, _ = mimetypes.guess_type(p.name)
+        # mimetypes has no .ics entry, so an invitation would go out as
+        # application/octet-stream and Gmail would offer a download instead of the
+        # invitation UI. That needs text/calendar, the METHOD the file declares, and
+        # the CRLF endings RFC 5545 mandates - a .ics checked out with LF is not one.
+        data, params = p.read_bytes(), {}
+        if p.suffix.lower() == ".ics":
+            ctype = "text/calendar"
+            data = data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+            m = re.search(br"^METHOD:([A-Za-z]+)", data, re.M)
+            params = {"method": (m.group(1).decode() if m else "REQUEST"),
+                      "charset": "utf-8"}
         maintype, _, subtype = (ctype or "application/octet-stream").partition("/")
-        msg.add_attachment(p.read_bytes(), maintype=maintype, subtype=subtype,
-                           filename=p.name)
+        msg.add_attachment(data, maintype=maintype, subtype=subtype,
+                           filename=p.name, params=params)
     # verify the BUILT message, not the intent: "add_attachment did not throw" is not
     # evidence that a file is attached
     built = len(list(msg.iter_attachments()))
@@ -1250,6 +1261,20 @@ def _selftest():
         assert [p.get_content_type() for p in wmsg.iter_attachments()] == \
             ["application/pdf"], [p.get_content_type() for p in wmsg.iter_attachments()]
         assert any(p.get_content_type() == "image/png" for p in wmsg.walk())
+
+        # an .ics goes out as a real invitation: text/calendar with the METHOD the
+        # file declares and CRLF endings, not the octet-stream download Gmail used
+        # to offer. The source file here is LF-only, as a git checkout leaves it.
+        (base / "invite.ics").write_bytes(
+            b"BEGIN:VCALENDAR\nMETHOD:CANCEL\nEND:VCALENDAR\n")
+        imsg = build_message(dict(rec, slug="i", attach="invite.ics"), plain,
+                             base_dir=base)
+        ics = list(imsg.iter_attachments())[0]
+        assert ics.get_content_type() == "text/calendar", ics.get_content_type()
+        assert ics.get_param("method") == "CANCEL", ics.get_param("method")
+        assert ics.get_payload(decode=True) == \
+            b"BEGIN:VCALENDAR\r\nMETHOD:CANCEL\r\nEND:VCALENDAR\r\n", \
+            ics.get_payload(decode=True)
 
         # a caller that omits base_dir for a rec that declares Attach: must raise, not
         # build a file-less message: declared would be 0 as well, so the reconciliation
