@@ -45,9 +45,10 @@ For a checkpoint during ongoing work, add `--checkpoint` to the command below an
 swaps in an existing entry's slug when the name matches one. An entry now survives every resume,
 so its name outlives the session that coined it and the work drifts away from it. Before writing
 the checkpoint, check the name still describes what the project is about. If it does not, run
-`gtg.mjs rename <slug> <new-slug>` first and pass the new name as `--project`. Relay the rename
-in one line, and relay the `projects rename` line it prints rather than assuming the portfolio
-slug moved with it. `--wip` commits the worktree's
+`gtg.mjs rename <slug> <new-slug> --name "<New Name>"` first, then pass that same name as
+`--project`. Without `--name` only the slug moves and the listed title stays wrong. Relay the
+rename in one line, and relay the `projects rename` line it prints rather than assuming the
+portfolio slug moved with it. `--wip` commits the worktree's
 uncommitted work; in the repo root commit the work's own files first
 (`git add <paths> && git commit <paths> -m "wip: gtg checkpoint - <brief>"`, paths on both
 ends). `--parent` = the `docs/projects/` family slug for a sub-project, from context.

@@ -1647,7 +1647,8 @@ const patchActive = (root, fn) => {
   assert.equal(gtg(repo, ['rename', 'proj-a']).status, 2, 'a missing target is a usage error');
   const bad = gtg(repo, ['rename', 'proj-a', 'has spaces']);
   assert.equal(bad.status, 2);
-  assert.match(bad.stderr, /must match/, 'a slug becomes a path segment, so it is constrained');
+  assert.match(bad.stderr, /must start with a letter or digit and match/,
+    'a slug becomes a path segment, so it is constrained');
   const taken = gtg(repo, ['rename', 'proj-a', 'proj-b']);
   assert.equal(taken.status, 2);
   assert.match(taken.stderr, /already used by another project/);
@@ -2737,5 +2738,55 @@ ${r.stdout}`);
 // same records and fork history. Removed in 3.3.0 with the migration itself - there is no
 // packed store left to migrate, so the ordering it guarded no longer exists. The sync that
 // remains is resumeConsume's, and case 73 pins its position ahead of every read.
+
+// --- 77. rename --name moves the display name, and log still finds the old history ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('jev-orion', 'Jev for Orion ranking'), { input: BODY });
+
+  const r = gtg(repo, ['rename', 'jev-orion', 'memory-router', '--name', 'Memory router', '--no-list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Renamed: Jev for Orion ranking -> Memory router \(jev-orion -> memory-router\)/);
+
+  const e = active(repo).find((x) => x.slug === 'memory-router');
+  assert.equal(e.project, 'Memory router', 'the display name moved, not just the slug');
+  assert.deepEqual(e.aka, ['Jev for Orion ranking'], 'the old name is kept, for log');
+
+  // The reason rename left names alone before: `log <slug>` greps commit SUBJECTS for the
+  // project name, and every subject written before the rename carries the old one. Renaming
+  // without keeping the old name blinds the filtered log to the whole project's history.
+  const one = gtg(repo, ['log', 'memory-router']);
+  assert.equal(one.status, 0, one.stderr);
+  assert.match(one.stdout, /Jev for Orion ranking/, 'history under the old name still lists');
+
+  // A second rename keeps both prior names, not just the last one.
+  gtg(repo, ['rename', 'memory-router', 'router', '--name', 'Router', '--no-list']);
+  const e2 = active(repo).find((x) => x.slug === 'router');
+  assert.deepEqual(e2.aka, ['Jev for Orion ranking', 'Memory router']);
+  console.log('ok 77 - rename --name moves the display name and log keeps the old history');
+}
+
+// --- 78. --name survives the next checkpoint, and a bare rename still leaves the name alone ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('proj-a', 'Project A'), { input: BODY });
+  gtg(repo, ['rename', 'proj-a', 'alpha', '--name', 'Alpha', '--no-list']);
+  gtg(repo, HANDOFF_ARGS('alpha', 'Alpha'), { input: BODY });
+  assert.deepEqual(active(repo).find((x) => x.slug === 'alpha').aka, ['Project A'],
+    'a checkpoint rebuilds the entry, so it has to carry aka forward');
+
+  // Omitted, the flag changes nothing: the name is the caller's to move, never inferred
+  // from the slug.
+  const bare = gtg(repo, ['rename', 'alpha', 'beta', '--no-list']);
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.match(bare.stdout, /Renamed: Alpha \(alpha -> beta\)/);
+  const e = active(repo).find((x) => x.slug === 'beta');
+  assert.equal(e.project, 'Alpha', 'a bare rename leaves the display name where it was');
+  assert.deepEqual(e.aka, ['Project A'], 'and adds nothing to aka');
+
+  assert.equal(gtg(repo, ['rename', 'beta', 'gamma', '--name']).status, 2,
+    '--name with no value is a usage error, not an empty name');
+  console.log('ok 78 - --name survives a checkpoint, and a bare rename leaves the name alone');
+}
 
 console.log('ALL PASS');

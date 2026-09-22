@@ -547,6 +547,9 @@ Say: "gtg ${a.slug}"
     // sub-project -> atlas) - carry it forward when the flag is
     // omitted instead of silently dropping the project out of its family.
     parent: inferParent(a.slug, a.parent) ?? prior?.parent,
+    // Former display names, set by `rename --name`. A checkpoint rebuilds the entry field by
+    // field, so anything not carried here is dropped on the next one.
+    aka: prior?.aka,
     // A checkpoint can happen several times in one native session. Recording
     // the cumulative clock on each would make history sum 10+20+30 minutes for
     // 30 minutes of work. Only the final/departure handoff records duration.
@@ -809,8 +812,11 @@ function help() {
                                read-only hint for hooks. Exit 1 = choose from the candidates printed
   gtg supersede <n|slug> [--into <n|slug>]
                                rolled up or created in error (neither ship nor abandon)
-  gtg rename <n|slug> <new>    change a slug, re-pointing any sub-projects. With a slug nothing
-                               here carries, it repairs a stale parent reference instead
+  gtg rename <n|slug> <new> [--name "<Display Name>"]
+                               change a slug, re-pointing any sub-projects. With a slug nothing
+                               here carries, it repairs a stale parent reference instead.
+                               --name also moves the listed title, keeping the old one so
+                               gtg log still finds history written under it
   gtg unparent <n|slug>        clear an entry's parent, so it lists as standalone
   gtg log [n|slug] [-n N]      what happened, read from git rather than a ledger
   gtg undo                     revert THIS SESSION'S last change to the stores
@@ -872,8 +878,16 @@ function activate(argv) {
 // Legacy dated handoff files keep the old slug deliberately. A canonical current file moves
 // with its live entry so reusing the old slug cannot make two lines point at one writable body.
 function rename(argv) {
-  const [from, to] = argv;
-  if (!from || !to) { console.error('Usage: gtg rename <number|slug> <new-slug>'); process.exit(2); }
+  // Positionals come before any flag, so --name's value can hold spaces without being read as one.
+  const cut = argv.findIndex((x) => x.startsWith('--'));
+  const [from, to] = cut === -1 ? argv : argv.slice(0, cut);
+  const flags = parseFlags(argv);
+  if (!from || !to) { console.error('Usage: gtg rename <number|slug> <new-slug> [--name "<Display Name>"]'); process.exit(2); }
+  // `--name` with nothing after it parses as true. Renaming a project to the string "true" is
+  // never what was meant, and an empty name would leave the entry unlistable.
+  if (flags.name !== undefined && typeof flags.name !== 'string') {
+    console.error('gtg rename: --name needs a display name'); process.exit(2);
+  }
   // Same constraint --slug is held to, and for the same reason: a slug becomes a path segment.
   if (!SLUG_OK.test(to)) {
     console.error('gtg rename: <new-slug> must start with a letter or digit and match [A-Za-z0-9_-]'); process.exit(2);
@@ -935,6 +949,17 @@ function rename(argv) {
     handoffPaths.push(oldCurrent, newCurrent);
   }
   match.slug = to;
+  // The display name moves only when asked. It cannot be derived from the slug: a slug is
+  // lowercase and hyphenated, and inferring "Runbook Memory Router" from one would overwrite
+  // whatever capitalisation and wording the project actually chose.
+  const oldName = match.project;
+  if (flags.name && flags.name !== oldName) {
+    // `log <slug>` greps commit SUBJECTS for the project name, and every subject written before
+    // now carries the old one. Dropping it would blind the filtered log to the project's whole
+    // history at the moment its name stops describing it, which is exactly when it gets renamed.
+    match.aka = [...new Set([...(match.aka ?? []), oldName])];
+    match.project = flags.name;
+  }
   let kids = 0;
   for (const e of [...act, ...bl]) if (e.parent === old) { e.parent = to; kids++; }
   // Both stores every time. The entry sits on one shelf but a child can sit on the other.
@@ -942,7 +967,8 @@ function rename(argv) {
   // and the commit has to name it or the removal is left staged for another session.
   const paths = [...saveEntries('active', act), ...saveEntries('backlog', bl)];
   commit([...paths, ...handoffPaths], `gtg rename: ${old} to ${to}`);
-  console.log(`Renamed: ${match.project} (${old} -> ${to})${
+  const named = match.project === oldName ? match.project : `${oldName} -> ${match.project}`;
+  console.log(`Renamed: ${named} (${old} -> ${to})${
     kids ? `, re-pointed ${kids} sub-project(s)` : ''}`);
   console.log(`The portfolio slug is separate. Match it with: projects rename ${old} ${to}`);
 }
@@ -996,7 +1022,10 @@ function log(argv) {
       ?? resolveEntry(entries('backlog'), t);
     if (!match) { console.error(`No project matching '${t}'. Try 'gtg list'.`); process.exit(2); }
     // --fixed-strings: a project name is free text and can hold regex metacharacters.
-    filter.push('--fixed-strings', '--grep', match.project);
+    // Every name it has been called, because several --grep terms OR together and the subjects
+    // under a former name are the same project's history.
+    filter.push('--fixed-strings');
+    for (const n of [match.project, ...(match.aka ?? [])]) filter.push('--grep', n);
   }
   let out = '';
   try {
