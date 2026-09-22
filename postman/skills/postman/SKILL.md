@@ -78,7 +78,7 @@ Per-block headers:
 | `To:` | Optional, overrides the heading address. This is how a multi-address reply works: the heading holds exactly one, IMAP SEARCH needs them split. |
 | `Cc:` | Optional. |
 | `Third-party:` | Why the address does not match the source domain. |
-| `Attach:` | Comma-separated for several files, one line only. Paths resolve against the batch file's own directory. |
+| `Attach:` | Comma-separated for several files, one line only. Paths resolve against the batch file's own directory. A `.ics` goes out as `text/calendar` with the METHOD it declares and CRLF endings, so Gmail shows an invitation and not a download. |
 | `Sent:` | Written by the tool, never by hand. |
 
 A repeated `Attach:` line is a hard error - a repeat would silently overwrite the first,

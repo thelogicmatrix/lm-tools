@@ -1,6 +1,6 @@
 {
   "name": "postman",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "postman - real outbound email from your own mailboxes, one identity per address: byte-exact signatures, address verification before anything sends, and replies that thread onto the existing conversation instead of starting a new one.",
   "author": { "name": "Nathan Wong" }
 }
