@@ -2789,4 +2789,29 @@ ${r.stdout}`);
   console.log('ok 78 - --name survives a checkpoint, and a bare rename leaves the name alone');
 }
 
+// --- 79. a name-only rename: same slug, new title ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('memory-router', 'Jev for Orion ranking'), { input: BODY });
+
+  // The common case. A long-lived entry keeps a good slug while its title stops describing the
+  // work, and without this the only way through was a rename to a throwaway slug and back.
+  const r = gtg(repo, ['rename', 'memory-router', 'memory-router', '--name', 'Memory router', '--no-list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Renamed: Jev for Orion ranking -> Memory router \(memory-router\)/);
+  assert.doesNotMatch(r.stdout, /projects rename/, 'no portfolio slug moved, so nothing to match');
+
+  const e = active(repo).find((x) => x.slug === 'memory-router');
+  assert.equal(e.project, 'Memory router');
+  assert.deepEqual(e.aka, ['Jev for Orion ranking']);
+  assert.equal(e.file, 'docs/handoffs/current/memory-router.md', 'the handoff path did not move');
+  assert.ok(existsSync(join(repo, e.file)), 'and the file is still there');
+
+  // Without a name to move, the same call is still the no-op it always was.
+  const noop = gtg(repo, ['rename', 'memory-router', 'memory-router']);
+  assert.equal(noop.status, 2);
+  assert.match(noop.stderr, /already its slug/);
+  console.log('ok 79 - a name-only rename keeps the slug and the handoff path');
+}
+
 console.log('ALL PASS');

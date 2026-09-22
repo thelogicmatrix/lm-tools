@@ -917,8 +917,11 @@ function rename(argv) {
     return;
   }
   const old = match.slug;
-  if (old === to) { console.error(`gtg rename: '${to}' is already its slug`); process.exit(2); }
-  if ([...act, ...bl].some((e) => e.slug.toLowerCase() === to.toLowerCase())) {
+  // A name-only rename passes the slug it already has. That is the common case once entries
+  // outlive the session that named them: the slug is still right and the title is not.
+  const sameSlug = old === to;
+  if (sameSlug && !flags.name) { console.error(`gtg rename: '${to}' is already its slug`); process.exit(2); }
+  if ([...act, ...bl].some((e) => e !== match && e.slug.toLowerCase() === to.toLowerCase())) {
     console.error(`gtg rename: '${to}' is already used by another project`); process.exit(2);
   }
   // Progress is a separate durable record keyed by the same stable slug. Silently moving only
@@ -937,7 +940,7 @@ function rename(argv) {
   const oldCurrent = canonicalHandoffPath(old);
   const newCurrent = canonicalHandoffPath(to);
   const handoffPaths = [];
-  if (sameHandoffPath(match.file, oldCurrent) && existsSync(join(ROOT, oldCurrent))) {
+  if (!sameSlug && sameHandoffPath(match.file, oldCurrent) && existsSync(join(ROOT, oldCurrent))) {
     if (existsSync(join(ROOT, newCurrent))
       || [...act, ...bl].some((e) => e !== match && sameHandoffPath(e.file, newCurrent))) {
       console.error(`gtg rename: handoff path '${newCurrent}' is already in use`);
@@ -966,11 +969,13 @@ function rename(argv) {
   // The renamed entry's file MOVES (old.json -> to.json), so `deleted` carries the old name
   // and the commit has to name it or the removal is left staged for another session.
   const paths = [...saveEntries('active', act), ...saveEntries('backlog', bl)];
-  commit([...paths, ...handoffPaths], `gtg rename: ${old} to ${to}`);
+  commit([...paths, ...handoffPaths],
+    sameSlug ? `gtg rename: ${oldName} to ${match.project}` : `gtg rename: ${old} to ${to}`);
   const named = match.project === oldName ? match.project : `${oldName} -> ${match.project}`;
-  console.log(`Renamed: ${named} (${old} -> ${to})${
+  console.log(`Renamed: ${named} (${sameSlug ? to : `${old} -> ${to}`})${
     kids ? `, re-pointed ${kids} sub-project(s)` : ''}`);
-  console.log(`The portfolio slug is separate. Match it with: projects rename ${old} ${to}`);
+  // Only a slug has a portfolio half. A title that moved on its own leaves nothing to match.
+  if (!sameSlug) console.log(`The portfolio slug is separate. Match it with: projects rename ${old} ${to}`);
 }
 
 // The inverse of rename's parent path. rename can only re-POINT a parent, and its <new> is

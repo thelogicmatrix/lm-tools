@@ -46,7 +46,8 @@ swaps in an existing entry's slug when the name matches one. An entry now surviv
 so its name outlives the session that coined it and the work drifts away from it. Before writing
 the checkpoint, check the name still describes what the project is about. If it does not, run
 `gtg.mjs rename <slug> <new-slug> --name "<New Name>"` first, then pass that same name as
-`--project`. Without `--name` only the slug moves and the listed title stays wrong. Relay the
+`--project`. Without `--name` only the slug moves and the listed title stays wrong. Pass the
+slug it already has when only the title stopped being true, which is the usual case. Relay the
 rename in one line, and relay the `projects rename` line it prints rather than assuming the
 portfolio slug moved with it. `--wip` commits the worktree's
 uncommitted work; in the repo root commit the work's own files first
