@@ -42,7 +42,12 @@ Write a checkpoint at a meaningful boundary or session end; a checkpoint does no
 For a checkpoint during ongoing work, add `--checkpoint` to the command below and continue the task. This skips session-end ceremony. The final stop instruction applies only to an actual departure request.
 
 **One call, run from the worktree.** Name the project from context. Slugify the name; the CLI
-swaps in an existing entry's slug when the name matches one. `--wip` commits the worktree's
+swaps in an existing entry's slug when the name matches one. An entry now survives every resume,
+so its name outlives the session that coined it and the work drifts away from it. Before writing
+the checkpoint, check the name still describes what the project is about. If it does not, run
+`gtg.mjs rename <slug> <new-slug>` first and pass the new name as `--project`. Relay the rename
+in one line, and relay the `projects rename` line it prints rather than assuming the portfolio
+slug moved with it. `--wip` commits the worktree's
 uncommitted work; in the repo root commit the work's own files first
 (`git add <paths> && git commit <paths> -m "wip: gtg checkpoint - <brief>"`, paths on both
 ends). `--parent` = the `docs/projects/` family slug for a sub-project, from context.
