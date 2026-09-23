@@ -1,6 +1,6 @@
 ---
 name: gtg
-description: 'Use for gtg pause/resume commands and persistent task or subagent progress in an ongoing multi-step project. Bare "gtg" mid-session departs; "gtg <project>" at session start resumes. Mentioning gtg while discussing the skill itself is not a departure trigger.'
+description: 'Use for gtg pause/resume commands, persistent project progress, and "after this, do X" follow-ons for an active GTG project. Bare "gtg" mid-session departs; "gtg <project>" at session start resumes. Mentioning gtg while discussing the skill itself is not a departure trigger.'
 ---
 
 # GTG — Pause and Resume
