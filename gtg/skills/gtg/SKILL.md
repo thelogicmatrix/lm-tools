@@ -37,7 +37,20 @@ followed, not relayed (`--keep` remains a compatibility alias; all resumes retai
 
 ## Checkpoints and Exit Procedure
 
-Write a checkpoint at a meaningful boundary or session end; a checkpoint does not complete or shelve the work. The stable slug retains one current handoff, updated in place, with prior versions in git. Use `gtg complete <slug>` only for explicit completion, or `gtg back <slug>` to shelve.
+Write a checkpoint at a meaningful boundary or session end; a checkpoint does not complete or shelve the work. The stable slug retains one current handoff, updated in place, with prior versions in git. Use `gtg complete <slug>` to complete, or `gtg back <slug>` to shelve.
+
+**Completion is the agent's call, made where it is easy.** Entries persist until completed, so
+an uncompleted finished project lingers forever. Two moments decide it:
+- **At departure.** Before writing the handoff, try to name the Next Action. If none remains
+  because the project's goal is met, run `gtg.mjs complete <slug>` instead of `handoff`, relay
+  `Completed <Name>. gtg undo reverses it.`, and stop. Work that is only blocked on someone
+  else still has a Next Action (waiting on X), so it gets a handoff.
+- **At the finish line.** In a session that resumed an entry, when you report its goal met
+  and the work committed, run `gtg.mjs complete <slug>` in that same turn and say so. Unsure
+  whether the goal is the whole project or one phase of it? Ask in that report, don't complete.
+
+The session-start banner may name stale entries and ask about them. Ask once, act on the
+answer, and never complete one without it.
 
 For a checkpoint during ongoing work, add `--checkpoint` to the command below and continue the task. This skips session-end ceremony. The final stop instruction applies only to an actual departure request.
 

@@ -62,6 +62,8 @@ Resume now retains the current handoff and its entry. A later checkpoint updates
 same current document; git retains earlier versions. Legacy dated documents are kept.
 Use `gtg complete <slug>` when work is finished, `gtg back <slug>` to shelve it, and
 `gtg active <slug>` to reactivate it. `list` never shelves work automatically.
+The agent completes an entry itself (4.1) when a departure finds no Next Action left, or
+when a resumed session finishes the project's goal. `gtg undo` reverses either.
 `--keep` is accepted for compatibility and preserves non-pickup intent for hooks.
 Normal resume passes `kept: true, resumed: true`; explicit `--keep` passes `resumed: false`.
 Use `handoff --checkpoint` for an in-progress update; hooks receive `checkpoint: true`
