@@ -16,7 +16,7 @@ otherwise read as a verb.
 | Session start | `gtg <project>` | Resume that project (`gtg.mjs resume <project>`; brackets optional) |
 | Mid-session | `gtg` | Depart (SKILL.md Exit Procedure), slug inferred from context |
 | Mid-session | `gtg [project]` | Depart, **force the handoff slug** to `project` (`--exact`) |
-| Anytime | `gtg <core verb>` | Route per the table below. A **core verb** (`list`, `backlog`, `back`, `active`, `prune`, `remove`, `complete`, `supersede`, `peek`, `resume`, `rename`, `unparent`, `log`, `report`, `stats`, `undo`, `help`) always routes to its command, never to a project |
+| Anytime | `gtg <core verb>` | Route per the table below. A **core verb** (`list`, `backlog`, `back`, `active`, `prune`, `remove`, `complete`, `keep`, `supersede`, `peek`, `resume`, `rename`, `unparent`, `log`, `report`, `stats`, `undo`, `help`) always routes to its command, never to a project |
 
 Disambiguation, in this order:
 
@@ -28,7 +28,7 @@ Disambiguation, in this order:
 4. Any other token (mid-session, or carrying further args like `gtg issues p1`) goes straight
    to the CLI as an extension verb.
 
-Bookkeeping verbs (`list`, bare `backlog`, `back`, `active`, `complete`, `remove`, `prune`, `undo`, `log`, `stats`)
+Bookkeeping verbs (`list`, bare `backlog`, `back`, `active`, `complete`, `keep`, `remove`, `prune`, `undo`, `log`, `stats`)
 never reach this file: SKILL.md routes them straight to the CLI, slug not list number.
 
 ## Router table

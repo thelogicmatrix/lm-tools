@@ -64,6 +64,14 @@ Use `gtg complete <slug>` when work is finished, `gtg back <slug>` to shelve it,
 `gtg active <slug>` to reactivate it. `list` never shelves work automatically.
 The agent completes an entry itself (4.1) when a departure finds no Next Action left, or
 when a resumed session finishes the project's goal. `gtg undo` reverses either.
+
+**Review line (4.1).** Entries that go quiet get asked about, one per command. `list`,
+`handoff` (not `--checkpoint`), `resume`, `back`, `active`, `complete`, `keep` and bare
+`backlog` end with at most one `REVIEW:` line, in this order: a backlog entry whose
+`--wake` date has come, the stalest active entry at 5+ days, the stalest undated backlog
+entry at 14+ days. A future wake date keeps an entry out of it. `gtg keep <slug>` answers
+"still live" by stamping `reviewed`, not `updated`, so "Nd ago" stays honest.
+`gtg back <slug> --wake YYYY-MM-DD` shelves until a date.
 `--keep` is accepted for compatibility and preserves non-pickup intent for hooks.
 Normal resume passes `kept: true, resumed: true`; explicit `--keep` passes `resumed: false`.
 Use `handoff --checkpoint` for an in-progress update; hooks receive `checkpoint: true`
