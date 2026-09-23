@@ -1,6 +1,6 @@
 ---
 name: gtg
-description: 'Use for gtg pause/resume commands and persistent task or subagent progress in an ongoing multi-step project. Bare "gtg" mid-session departs; "gtg <project>" at session start resumes. Mentioning gtg while discussing the skill itself is not a departure trigger.'
+description: 'Use for gtg pause/resume commands, persistent project progress, and "after this, do X" follow-ons for an active GTG project. Bare "gtg" mid-session departs; "gtg <project>" at session start resumes. Mentioning gtg while discussing the skill itself is not a departure trigger.'
 ---
 
 # GTG — Pause and Resume
@@ -20,6 +20,18 @@ In Codex, resolve the CLI beside this loaded skill if `CLAUDE_PLUGIN_ROOT` is ab
 | `gtg progress …` or tracking task/subagent execution | Read `references/progress.md`; use its CLI for persistent state and counts. This does not depart or consume a handoff. |
 | `gtg list` / bare `gtg backlog` / `gtg back`, `active`, `complete`, `keep`, `remove`, `prune`, `undo`, `log`, `stats` with their args | Zero-model: run `gtg.mjs <verb> [args]` verbatim, relay its output, stop. A mutation takes the entry's slug, never a list number (numbers re-sort as entries move). |
 | Any other `gtg <verb>` (peek, report, supersede, rename, unparent, `backlog <idea>`, issues, learn, …) | Read `references/commands.md`, follow it |
+
+## Up next queue
+
+An active handoff may include an ordered `## Up next` list for medium-horizon follow-ons. Keep
+`## Next Action` to the single task being resumed now. When Nathan says what to do after the
+current task, append it to `## Up next` in the same project's durable handoff and checkpoint
+immediately, leaving `## Next Action` unchanged. Preserve existing items and their order.
+
+On resume, carry the queue forward with the current handoff. Once the current `Next Action` is
+done, promote the first `Up next` item to `Next Action` and remove it from the queue before the
+next handoff. If more items remain, the project is still active. The global backlog remains for
+long-horizon ideas without a place in this project's near-term sequence.
 
 ## Resume Procedure
 
@@ -82,6 +94,9 @@ gtg.mjs handoff --project "<Name>" --slug <slug> --eta "~2h" [--parent <family>]
 
 ## Next Action
 <single concrete first action on resume>
+
+## Up next
+- <optional ordered follow-on>
 
 ## Key Decisions Made
 - <so a fresh session doesn't re-litigate>
