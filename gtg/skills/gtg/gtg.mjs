@@ -799,7 +799,10 @@ function help() {
       runs <root>/.gtg/after-handoff.mjs afterwards if present (default export fn(ctx))
   gtg backlog [same flags]     park on the backlog shelf (body on stdin); bare = list the shelf
   gtg list [project]           active handoffs; read-only, with optional filter
-  gtg back <n|slug>            shelf an active entry to the backlog
+  gtg back <n|slug> [--wake YYYY-MM-DD]
+                               shelf an active entry to the backlog, optionally until a date
+  gtg keep <slug> [--wake YYYY-MM-DD]
+                               answer a REVIEW line with "still live": restarts its review clock
   gtg active <n|slug>          reactivate a backlog entry
   gtg complete <n|slug>        explicitly finish and clear an entry (active first, then backlog)
   gtg remove <n|slug>          drop an entry (active first, then backlog)
@@ -831,14 +834,92 @@ stats/report ship bundled; unknown commands dispatch to <root>/.gtg/commands/<na
 which overrides a bundled one of the same name - see README "Extending gtg".`);
 }
 
+// --- review: one completion question per command ------------------------------
+// Entries persist until an explicit complete, so finished work nobody completed lingers, and
+// a parked entry never comes back by itself. Every command that reads or moves entries ends
+// with at most ONE question, so the check rides on gtg use in any harness rather than on a
+// session-start banner, which T3 Code and IDE threads never reliably see. `keep` answers
+// "still live" and restarts that entry's clock without pretending it was worked on.
+const REVIEW_ACTIVE_DAYS = 5;
+const REVIEW_BACKLOG_DAYS = 14;
+const REVIEW_CMDS = new Set(['handoff', 'list', 'backlog', 'resume', 'back', 'active', 'complete', 'remove', 'rm', 'prune', 'keep', 'supersede']);
+let reviewSkip = null; // the entry this command is working on, never the one asked about
+
+function wakeFlag(v) {
+  if (v === undefined) return undefined;
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v))) {
+    console.error(`gtg: --wake takes a date as YYYY-MM-DD, got '${v}'`);
+    process.exit(2);
+  }
+  return v;
+}
+
+// Priority: a backlog entry whose wake date has come, then the stalest active entry, then the
+// stalest undated backlog entry. A future wake date keeps an entry out of the review entirely.
+function reviewCandidate(now = Date.now()) {
+  const seen = (e) => Math.max(Date.parse(e.updated) || 0, Date.parse(e.reviewed) || 0);
+  const age = (e) => Math.floor((now - seen(e)) / 864e5);
+  const oldest = (arr) => arr.sort((x, y) => seen(x) - seen(y))[0];
+  const today = nowIso().slice(0, 10);
+  const bl = userVisible(entries('backlog')).filter((e) => e.slug !== reviewSkip);
+  const act = userVisible(entries('active')).filter((e) => e.slug !== reviewSkip);
+  const woke = bl.filter((e) => e.wake && e.wake <= today).sort((x, y) => x.wake.localeCompare(y.wake))[0];
+  if (woke) return `REVIEW: ${woke.project} [${woke.slug}] was parked until ${woke.wake}. Ask the user: pick it up (gtg active ${woke.slug}), done (gtg complete ${woke.slug}), or park again (gtg keep ${woke.slug} --wake YYYY-MM-DD).`;
+  const a = oldest(act.filter((e) => age(e) >= REVIEW_ACTIVE_DAYS));
+  if (a) return `REVIEW: ${a.project} [${a.slug}] untouched ${age(a)}d. Ask the user: done (gtg complete ${a.slug}), shelve (gtg back ${a.slug} [--wake YYYY-MM-DD]), or still live (gtg keep ${a.slug}).`;
+  const b = oldest(bl.filter((e) => !e.wake && age(e) >= REVIEW_BACKLOG_DAYS));
+  if (b) return `REVIEW: ${b.project} [${b.slug}] parked ${age(b)}d. Ask the user: done (gtg complete ${b.slug}), or still wanted (gtg keep ${b.slug} [--wake YYYY-MM-DD]).`;
+  return null;
+}
+
+// Quiet for a filtered list (SKILL.md's slug-reuse probe) and for an in-session checkpoint.
+function printReview(cmd, argv) {
+  const a = parseFlags(argv);
+  if (cmd === 'list' && argv.some((x) => !x.startsWith('--'))) return;
+  if (cmd === 'handoff' && a.checkpoint) return;
+  try {
+    const line = reviewCandidate();
+    if (line) console.log(line);
+  } catch (e) {
+    console.error(`gtg: review skipped - ${firstMeaningfulLine(e)}`); // never fails the command it rides on
+  }
+}
+
+function keep(argv) {
+  const t = argv.find((x) => !x.startsWith('--'));
+  if (!t) { console.error('Usage: gtg keep <slug> [--wake YYYY-MM-DD]'); process.exit(2); }
+  const wake = wakeFlag(parseFlags(argv).wake);
+  let which = 'active';
+  let arr = entries('active');
+  let match = resolveEntry(arr, t, displayOrder);
+  if (!match) {
+    which = 'backlog';
+    arr = entries('backlog');
+    match = resolveEntry(arr, t.replace(/^[bB](?=\d+$)/, ''));
+  }
+  if (!match) { console.error(`No project matching '${t}'. Try 'gtg list' or 'gtg backlog'.`); process.exit(2); }
+  if (which === 'active' && wake) {
+    console.error(`gtg: --wake is for shelved work. Shelve it with: gtg back ${match.slug} --wake ${wake}`);
+    process.exit(2);
+  }
+  match.reviewed = nowIso(); // not `updated`: nobody worked on it, and list's "Nd ago" stays true
+  if (which === 'backlog') { if (wake) match.wake = wake; else delete match.wake; }
+  commit(saveEntries(which, arr), `gtg keep: ${match.project}`);
+  const quiet = wake ? `until ${wake}` : `for ${which === 'active' ? REVIEW_ACTIVE_DAYS : REVIEW_BACKLOG_DAYS} days`;
+  console.log(`Kept: ${match.project}. Not asked about again ${quiet}.`);
+}
+
 // --- back / active / remove / undo --------------------------------------------
 function back(argv) {
   const t = argv[0];
-  if (!t) { console.error("Usage: gtg back <number|slug>  (see 'gtg list')"); process.exit(2); }
+  if (!t) { console.error("Usage: gtg back <number|slug> [--wake YYYY-MM-DD]  (see 'gtg list')"); process.exit(2); }
+  const wake = wakeFlag(parseFlags(argv.slice(1)).wake);
   const act = entries('active');
   const match = resolveEntry(act, t, displayOrder);
   if (!match) { console.error(`No active project matching '${t}'. Try 'gtg list'.`); process.exit(2); }
   match.updated = nowIso(); // restamp = parked-at
+  delete match.reviewed;
+  if (wake) match.wake = wake; else delete match.wake;
   const bl = entries('backlog').filter((e) => e.slug !== match.slug);
   bl.push(match);
   const paths = [...saveEntries('active', act.filter((e) => e !== match)),
@@ -848,7 +929,7 @@ function back(argv) {
   // has no position in the listing these numbers index, so indexOf is -1 and the hint would read
   // 'gtg active 0', which resolveEntry turns into arr[-1] and exits 2. Print what actually works.
   const hint = sortByProject(bl).indexOf(match) + 1 || match.slug;
-  console.log(`Parked: ${match.project} -> backlog. Bring back: gtg active ${hint}`);
+  console.log(`Parked: ${match.project} -> backlog${wake ? ` until ${wake}` : ''}. Bring back: gtg active ${hint}`);
 }
 
 function activate(argv) {
@@ -860,6 +941,8 @@ function activate(argv) {
   const match = resolveEntry(bl, t);
   if (!match) { console.error(`No backlog project matching '${t0}'. Try 'gtg backlog'.`); process.exit(2); }
   match.updated = nowIso();
+  delete match.wake; // picked up, so the date it was waiting for no longer applies
+  delete match.reviewed;
   const act = entries('active').filter((e) => e.slug !== match.slug);
   act.push(match);
   const paths = [...saveEntries('backlog', bl.filter((e) => e !== match)),
@@ -1247,6 +1330,7 @@ async function resumeConsume(argv) {
       process.exit(1);
     }
   }
+  reviewSkip = match.slug;
   const file = match.file ? join(ROOT, match.file) : null;
   const body = file && existsSync(file) ? readFileSync(file, 'utf8').trim() : null;
   const progress = readProgress(ROOT, match.slug, { optional: true });
@@ -1414,22 +1498,23 @@ function maybeAutoList(argv) {
   if (a['no-list']) return;
   if (a.list || process.stdout.isTTY) renderList([]);
 }
-const MOVE_CMDS = new Set(['back', 'active', 'complete', 'remove', 'rm', 'prune', 'resume', 'undo', 'rename', 'supersede']);
+const MOVE_CMDS = new Set(['back', 'active', 'complete', 'remove', 'rm', 'prune', 'resume', 'undo', 'rename', 'supersede', 'keep']);
 
 // --- dispatch -----------------------------------------------------------------
 const [cmd, ...rest] = process.argv.slice(2);
 const builtins = {
   handoff, backlog, list, help, '--help': help, '-h': help,
   back, active: activate, complete, remove, rm: remove, prune: remove, resume: resumeConsume, undo,
-  rename, unparent, log, supersede,
+  rename, unparent, log, supersede, keep,
 };
-if (!cmd) { list([]); }
+if (!cmd) { list([]); printReview('list', []); }
 // hasOwn, not truthiness: every inherited Object key resolved here, so `gtg constructor` and
 // `gtg toString` called something that is not a verb instead of falling through to the
 // extension lookup and then the unknown-command error.
 else if (Object.hasOwn(builtins, cmd)) {
   await builtins[cmd](rest);
   if (MOVE_CMDS.has(cmd)) maybeAutoList(rest);
+  if (REVIEW_CMDS.has(cmd)) printReview(cmd, rest);
 }
 else {
   // Extension dispatch, in resolution order: user <root>/.gtg/commands/<cmd>.mjs FIRST

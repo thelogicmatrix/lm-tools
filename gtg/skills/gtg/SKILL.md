@@ -18,7 +18,7 @@ In Codex, resolve the CLI beside this loaded skill if `CLAUDE_PLUGIN_ROOT` is ab
 | `gtg` mid-session | Exit Procedure below. Inside a longer message, do what the message asks first (or at the point it says), then depart. No question either way. |
 | Session-start `gtg` or `gtg <project>` | Resume Procedure below |
 | `gtg progress …` or tracking task/subagent execution | Read `references/progress.md`; use its CLI for persistent state and counts. This does not depart or consume a handoff. |
-| `gtg list` / bare `gtg backlog` / `gtg back`, `active`, `complete`, `remove`, `prune`, `undo`, `log`, `stats` with their args | Zero-model: run `gtg.mjs <verb> [args]` verbatim, relay its output, stop. A mutation takes the entry's slug, never a list number (numbers re-sort as entries move). |
+| `gtg list` / bare `gtg backlog` / `gtg back`, `active`, `complete`, `keep`, `remove`, `prune`, `undo`, `log`, `stats` with their args | Zero-model: run `gtg.mjs <verb> [args]` verbatim, relay its output, stop. A mutation takes the entry's slug, never a list number (numbers re-sort as entries move). |
 | Any other `gtg <verb>` (peek, report, supersede, rename, unparent, `backlog <idea>`, issues, learn, …) | Read `references/commands.md`, follow it |
 
 ## Resume Procedure
@@ -37,7 +37,23 @@ followed, not relayed (`--keep` remains a compatibility alias; all resumes retai
 
 ## Checkpoints and Exit Procedure
 
-Write a checkpoint at a meaningful boundary or session end; a checkpoint does not complete or shelve the work. The stable slug retains one current handoff, updated in place, with prior versions in git. Use `gtg complete <slug>` only for explicit completion, or `gtg back <slug>` to shelve.
+Write a checkpoint at a meaningful boundary or session end; a checkpoint does not complete or shelve the work. The stable slug retains one current handoff, updated in place, with prior versions in git. Use `gtg complete <slug>` to complete, or `gtg back <slug>` to shelve.
+
+**Completion is the agent's call, made where it is easy.** Entries persist until completed, so
+an uncompleted finished project lingers forever. Two moments decide it:
+- **At departure.** Before writing the handoff, try to name the Next Action. If none remains
+  because the project's goal is met, run `gtg.mjs complete <slug>` instead of `handoff`, relay
+  `Completed <Name>. gtg undo reverses it.`, and stop. Work that is only blocked on someone
+  else still has a Next Action (waiting on X), so it gets a handoff.
+- **At the finish line.** In a session that resumed an entry, when you report its goal met
+  and the work committed, run `gtg.mjs complete <slug>` in that same turn and say so. Unsure
+  whether the goal is the whole project or one phase of it? Ask in that report, don't complete.
+
+**A `REVIEW:` line** is the CLI asking about one other entry that has gone quiet (active 5+
+days, backlog 14+ days, or a backlog `--wake` date that has come). Put it to the user once, in
+plain words, at the next natural pause, and run the verb their answer names: `complete`,
+`back <slug> [--wake YYYY-MM-DD]`, `active`, or `keep <slug>` for "still live". Never act on
+one without an answer. An unanswered one simply comes back on a later command.
 
 For a checkpoint during ongoing work, add `--checkpoint` to the command below and continue the task. This skips session-end ceremony. The final stop instruction applies only to an actual departure request.
 
@@ -81,8 +97,9 @@ gtg.mjs handoff --project "<Name>" --slug <slug> --eta "~2h" [--parent <family>]
 BODY
 ```
 
-**Relay the CLI's last line, then stop.** No summary, no offer, no follow-up.
+**Relay the CLI's `RESUME:` line, then stop.** No summary, no offer, no follow-up. If a
+`REVIEW:` line printed, relay it too as one plain question. It needs no answer to leave.
 
 ## Anti-Patterns
-- A departure never asks a question.
+- A departure never asks a question of its own. A `REVIEW:` line is the one it passes on.
 - Stop at the nearest stoppable point. Nothing new beyond what the message itself asked for.
