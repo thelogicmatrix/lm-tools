@@ -1368,12 +1368,12 @@ async function resumeConsume(argv) {
     : file && existsSync(file) ? readFileSync(file, 'utf8').trim() : null;
   const progress = readProgress(ROOT, match.slug, { optional: true });
   const when = typeof match.updated === 'string' ? match.updated.slice(0, 16).replace('T', ' ') : '?';
-  const where = FORGE ? `tracking issue #${FORGE.issueOf(match)}` : match.file;
+  const where = FORGE ? (FORGE.locationOf?.(match) ?? `tracking issue #${FORGE.issueOf(match)}`) : match.file;
   console.log(`RESUME: "${match.project}" - handoff of ${when}${where ? ` (${where})` : ''}`);
   if (progress) {
     console.log(`CURRENT PROGRESS (supersedes handoff snapshot)\n${renderProgress(progress)}`);
   }
-  console.log(body ?? `(no handoff ${FORGE ? 'comment on' : 'file at'} ${where ?? 'none'}; the entry's next action is all there is: ${match.next})`);
+  console.log(body ?? `(no handoff at ${where ?? 'none'}; the entry's next action is all there is: ${match.next})`);
   if (FORGE) {
     const tasks = await FORGE.openTasks(match);
     if (tasks.length) console.log(`Open issues in this milestone:\n${tasks.join('\n')}`);

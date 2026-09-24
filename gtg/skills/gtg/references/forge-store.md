@@ -3,7 +3,29 @@
 gtg keeps its store in files by default: `docs/handoffs/active/<slug>.json`, `backlog/<slug>.json` and
 `current/<slug>.md`, committed to git. A repo can instead point gtg at a Forgejo or Gitea forge, so
 every session reads and writes one shared surface through the issue tracker agents already know.
-With no forge configured nothing changes.
+With no forge configured nothing changes. `"store": "files"` selects versioned files in a
+dedicated Forgejo repository. Without it, the milestone store below remains available.
+
+## Dedicated file repository
+
+Use this config in the hub's `.gtg/forge.json`:
+
+```json
+{ "api": "http://forge.example:3000/api/v1", "repo": "owner/gtg-store", "store": "files", "tokenFile": "${APPDATA}/forgejo-cli/forgejo-cli/data/keys.json" }
+```
+
+Each project is one `docs/handoffs/records/<file-id>.json` file containing its slug,
+`active` or `backlog` shelf, and current handoff body. A rename changes the slug inside
+the same file. Forgejo's Contents API writes each change as a commit and requires the
+previous SHA on updates. This prevents a stale client from silently replacing a newer
+handoff or splitting it from its metadata. The hub remains the caller's home repo,
+so local progress records and portfolio hooks keep their existing paths. The GTG store
+repo needs no tracking issues or milestones. `complete` and `remove` delete the record,
+with its previous handoffs retained in Git history.
+
+The file store has the same command support as the milestone store, including the same
+refused history commands. On an API error during handoff, the body is saved locally at
+`docs/handoffs/current/<slug>.md` and the command exits 1.
 
 ## Mapping
 

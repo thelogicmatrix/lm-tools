@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, basename, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -49,6 +49,7 @@ export function writeSprint(root, sprint) {
   const p = sprintPath(root, sprint.slug);
   try {
     mkdirSync(dirname(p), { recursive: true });
+    if (existsSync(p) && !(statSync(p).mode & 0o222)) throw new Error('sprint file is read-only');
     writeFileSync(p, `${JSON.stringify(sprint, null, 2)}\n`);
   } catch (e) {
     console.error(`learn: could not write ${p}: ${e.message}`);

@@ -26,7 +26,7 @@ export function forgeConfig(root, env = process.env) {
   }
   const token = env.FORGEJO_TOKEN || readToken(cfg, env);
   if (!token) throw new Error('.gtg/forge.json is set but there is no token: set FORGEJO_TOKEN or "tokenFile"');
-  return { api: cfg.api.replace(/\/+$/, ''), repo: cfg.repo, token };
+  return { api: cfg.api.replace(/\/+$/, ''), repo: cfg.repo, token, store: cfg.store };
 }
 
 // A bare token file, or forgejo-cli's keys.json ({ hosts: { "<host:port>": { token } } }).
@@ -44,6 +44,7 @@ const describe = (rec, shelf, issue) =>
 const copy = (r) => ({ ...JSON.parse(JSON.stringify(r)), [ID]: r[ID] });
 
 export async function openForge(cfg, fetchImpl = fetch) {
+  if (cfg.store === 'files') return openFileForge(cfg, fetchImpl);
   // Errors name the method and path, never the headers, so the token cannot reach a transcript.
   const call = async (method, path, body) => {
     const res = await fetchImpl(`${cfg.api}/repos/${cfg.repo}${path}`, {
@@ -164,6 +165,110 @@ export async function openForge(cfg, fetchImpl = fetch) {
       return (await all(`/issues?state=open&type=issues&milestones=${id}`))
         .filter((i) => i.number !== issue)
         .map((i) => `- #${i.number} ${i.title}`);
+    },
+  };
+}
+
+// One JSON file contains both record and current handoff. One SHA-protected PUT changes both.
+async function openFileForge(cfg, fetchImpl) {
+  const sourceSlug = Symbol('gtg-file-source-slug');
+  const base = `${cfg.api}/repos/${cfg.repo}/contents/`;
+  const records = 'docs/handoffs/records/';
+  const call = async (method, path, body, missing = false) => {
+    const res = await fetchImpl(base + path, {
+      method,
+      headers: { Authorization: `token ${cfg.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (missing && res.status === 404) return null;
+    if (!res.ok) throw new Error(`forge ${method} ${path} -> ${res.status} ${(await res.text()).slice(0, 200)}`);
+    return res.status === 204 ? null : res.json();
+  };
+  const read = async (path, missing = false) => {
+    const file = await call('GET', path, undefined, missing);
+    return file && { sha: file.sha, text: Buffer.from(file.content.replace(/\s/g, ''), 'base64').toString('utf8') };
+  };
+  const names = await call('GET', records.slice(0, -1), undefined, true);
+  if (!names) {
+    const repo = await fetchImpl(`${cfg.api}/repos/${cfg.repo}`, {
+      headers: { Authorization: `token ${cfg.token}` }, signal: AbortSignal.timeout(15000),
+    });
+    if (!repo.ok) throw new Error(`forge GET repo ${cfg.repo} -> ${repo.status}`);
+  }
+  const files = (names ?? []).filter((f) => f.name?.endsWith('.json'));
+  const loaded = await Promise.all(files.map(async (f) => {
+    const data = await read(records + encodeURIComponent(f.name));
+    let rec;
+    try { rec = JSON.parse(data.text); } catch (e) { throw new Error(`cannot parse ${records}${f.name} - ${e.message}`); }
+    if (typeof rec.slug !== 'string' || !['active', 'backlog'].includes(rec.shelf)
+      || (rec.handoff !== undefined && typeof rec.handoff !== 'string')) {
+      throw new Error(`invalid gtg record at ${records}${f.name}`);
+    }
+    return { rec, sha: data.sha, fileSlug: f.name.slice(0, -5) };
+  }));
+  const saved = new Map(loaded.map(({ rec, sha, fileSlug }) => [fileSlug, { rec: JSON.stringify(rec), sha }]));
+  const bodyBySlug = new Map(loaded.map(({ rec, fileSlug }) => [fileSlug, rec.handoff]));
+  const entry = (rec, fileSlug) => { const { handoff, ...rest } = rec; return { ...rest, file: undefined, [sourceSlug]: fileSlug }; };
+  const shelves = {
+    active: loaded.filter(({ rec }) => rec.shelf === 'active').map(({ rec, fileSlug }) => entry(rec, fileSlug)),
+    backlog: loaded.filter(({ rec }) => rec.shelf === 'backlog').map(({ rec, fileSlug }) => entry(rec, fileSlug)),
+  };
+  const pending = new Map();
+  let failedHandoff = false;
+  return {
+    entries: (which) => shelves[which].map((r) => ({ ...r })),
+    save(which, items) {
+      shelves[which] = items.map((r) => {
+        const previous = [...shelves.active, ...shelves.backlog].find((x) => x.slug === r.slug);
+        return { ...r, [sourceSlug]: r[sourceSlug] ?? previous?.[sourceSlug] };
+      });
+      return [];
+    },
+    queueHandoff(slug, body) { pending.set(slug, body); },
+    locationOf: (rec) => `${records}${rec[sourceSlug] ?? rec.slug}.json`,
+    async latestHandoff(rec) { return bodyBySlug.get(rec[sourceSlug] ?? rec.slug)?.trim() ?? null; },
+    async openTasks() { return []; },
+    async flush(verb) {
+      if (failedHandoff) throw new Error('handoff write failed earlier in this command');
+      const urls = [];
+      const seen = new Set();
+      const slugs = new Set();
+      for (const shelf of ['active', 'backlog']) for (const item of shelves[shelf]) {
+        const rec = { ...item, shelf };
+        delete rec.file;
+        const slug = rec.slug;
+        let fileSlug = item[sourceSlug] ?? slug;
+        if (!item[sourceSlug]) for (let n = 2; saved.has(fileSlug); n++) fileSlug = `${slug}-${n}`;
+        const body = pending.get(slug) ?? bodyBySlug.get(fileSlug);
+        if (body !== undefined) rec.handoff = body;
+        if (slugs.has(slug) || seen.has(fileSlug)) throw new Error(`duplicate gtg project ${slug}`);
+        slugs.add(slug);
+        seen.add(fileSlug);
+        const serialized = JSON.stringify(rec);
+        const old = saved.get(fileSlug);
+        if (old?.rec === serialized) continue;
+        const path = `${records}${encodeURIComponent(fileSlug)}.json`;
+        let out;
+        try {
+          out = await call(old ? 'PUT' : 'POST', path, {
+            content: Buffer.from(JSON.stringify(rec, null, 2) + '\n').toString('base64'),
+            message: `gtg ${verb}: ${slug}`,
+            ...(old ? { sha: old.sha } : {}),
+          });
+        } catch (e) { if (pending.has(slug)) failedHandoff = true; throw e; }
+        saved.set(fileSlug, { rec: serialized, sha: out.content.sha });
+        bodyBySlug.set(fileSlug, body);
+        item[sourceSlug] = fileSlug;
+        if (pending.has(slug)) urls.push(out.content.html_url ?? `${cfg.api.replace(/\/api\/v1$/, '')}/${cfg.repo}/src/branch/main/${path}`);
+      }
+      for (const [fileSlug, old] of saved) {
+        if (seen.has(fileSlug)) continue;
+        await call('DELETE', `${records}${encodeURIComponent(fileSlug)}.json`, { sha: old.sha, message: `gtg ${verb}: ${fileSlug}` });
+        saved.delete(fileSlug);
+      }
+      pending.clear();
+      return urls;
     },
   };
 }
