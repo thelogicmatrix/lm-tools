@@ -38,6 +38,34 @@
 - Anticipate, don't seed, misconceptions: name the wrong mental model a learner is likely to form and head it off, rather than phrasing that plants it. [misconceptions / threshold-concepts research — Meyer & Land]
 - Where a simplification hides real nuance, it is flagged as simplified ("this is the simple version; the full picture adds…") rather than presented as the whole truth.
 
+### Adult and live training
+Apply this block only when the artifact is a workshop, course or training programme for adults. A self-paced tutorial or docs-that-teach page is not defective for lacking a cohort or live discussion.
+
+**Andragogy (Knowles)**
+- **Need to know:** adults want the *why* before they invest. The relevance, the problem it solves and the cost of not knowing are stated up front. [Knowles, "The Adult Learner"]
+- **Self-concept:** adults resist imposed learning. The content is framed as a resource for their goals, with choice where it is cheap (which module, which tool, which example).
+- **Experience as resource:** the design draws on what learners already know, through real examples from their work and peer sharing. [Knowles. Kolb, experiential learning]
+- **Readiness and problem orientation:** content is organised around a problem the learner has now ("you need to automate this report"), then the tooling that solves it, not the reverse.
+- **Intrinsic motivation:** the durable motivators are confidence, mastery and autonomy. The design gives a felt sense of growing competence.
+
+**Self-Determination Theory (Deci & Ryan)**
+- **Autonomy:** the learner feels they chose this. Mandatory training says so plainly and states its value. [Deci & Ryan, 2000. Niemiec & Ryan, 2009]
+- **Competence:** challenge sits at the right level (see ZPD above), with specific feedback and visible progress. Unclear or unreachable goals undercut it. [Csikszentmihalyi, flow]
+- **Relatedness:** for cohort formats, peer discussion or live Q&A connects the learner to others. [Baumeister & Leary, belongingness]
+
+**Engagement modes, ICAP (Chi & Wylie, 2014)**
+Four modes, ranked by learning outcome: **Interactive** (learners build on each other's contributions) > **Constructive** (the learner produces something beyond the material: self-explanation, a diagram, code, a new example) > **Active** (manipulating the material: highlighting, following steps along) > **Passive** (listening, reading, watching). Load-bearing concepts get Constructive or Interactive work. Passive is for framing, demos and overview. A session of mostly passive time with a few "activities" is still a lecture.
+
+**Transfer (Perkins & Salomon)**
+Transfer back to the job has to be designed for.
+- **Low-road transfer (hugging):** practice mirrors the real setting, with the same tools, similar data and realistic scenarios. [Perkins & Salomon, 1988, 1992. Thorndike, identical elements]
+- **High-road transfer (bridging):** the general principle is named, not just the procedure, and practised in varied contexts so the learner can carry it somewhere new.
+- **Near vs far:** near transfer is the same tool on a different dataset. Far transfer is the pattern in a different domain, and it needs the principle plus varied practice. [Barnett & Ceci, 2002]
+- **Teaching for it:** several examples rather than one, the principle stated before moving on, "where would this not work?" asked to surface boundaries, and the idea revisited across sessions. [Bransford & Schwartz, preparation for future learning]
+
+**Evidence for active learning (Freeman et al., 2014)**
+A meta-analysis of 225 STEM studies found exam scores **about 6% higher** under active learning (0.47 SD), and students in lecture sections **1.5 times as likely to fail**. The effect held across class sizes, course levels and institution types. [Freeman et al., PNAS]
+
 ## Common defects (what to attack)
 - Forward reference: a term/concept used before it's introduced, or a section that can't be understood without knowledge introduced only later.
 - Missing prerequisite: a step assumes knowledge the target learner was never given and can't reasonably have.
@@ -61,6 +89,9 @@
 - [ ] Every term defined at first use; no unstated assumed knowledge
 - [ ] Relevance/motivation stated — why it matters, where it leads
 - [ ] Simplifications are productive (not wrong); misconceptions anticipated not seeded; "simplified" flagged where nuance is hidden
+- [ ] Adult and live training only: the *why* comes first, content is organised around a real problem, and learners' experience is used
+- [ ] Adult and live training only: load-bearing concepts use Constructive or Interactive work, not only Active or Passive
+- [ ] Adult and live training only: practice mirrors the real setting and the general principle is named, with more than one example
 
 ## Sources
 - Sweller, J. — Cognitive Load Theory; worked-example effect (Sweller & Cooper, 1985). Foundational for intrinsic/extraneous load and novice sequencing.
@@ -71,3 +102,8 @@
 - Roediger, H. & Karpicke, J. (2006) — the testing/retrieval-practice effect; Brown, Roediger & McDaniel, "Make It Stick" (2014) — retrieval and spaced practice for durable learning.
 - Willingham, D. — "Why Don't Students Like School?" — cognition for teaching; the curse-of-knowledge / expert blind spot.
 - Meyer, J. & Land, R. — threshold concepts and troublesome knowledge; misconceptions research — why some simplifications must be un-learned.
+- Knowles, M. "The Adult Learner". The six assumptions of andragogy: need to know, self-concept, experience, readiness, problem orientation, intrinsic motivation.
+- Deci, E. & Ryan, R. (2000), Self-Determination Theory. Niemiec, C. & Ryan, R. (2009), autonomy, competence and relatedness in the classroom.
+- Chi, M. & Wylie, R. (2014), "The ICAP Framework: Linking Cognitive Engagement to Active Learning Outcomes", Educational Psychologist.
+- Perkins, D. & Salomon, G. (1988), "Teaching for Transfer", Educational Leadership. Low-road and high-road transfer, hugging and bridging. Barnett, S. & Ceci, S. (2002), a taxonomy for near and far transfer.
+- Freeman, S. et al. (2014), "Active learning increases student performance in science, engineering, and mathematics", PNAS. 225-study meta-analysis.
