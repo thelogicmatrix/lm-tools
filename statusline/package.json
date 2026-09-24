@@ -1,9 +1,9 @@
 {
   "name": "statusline",
-  "version": "1.0.0",
-  "description": "Two-row Claude Code status line.",
+  "version": "1.1.0",
+  "description": "Status lines for Claude Code and Codex.",
   "private": true,
   "scripts": {
-    "test": "node test/statusline.test.mjs"
+    "test": "node test/statusline.test.mjs && node test/codex.test.mjs"
   }
 }

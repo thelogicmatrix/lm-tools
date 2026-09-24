@@ -1,53 +1,89 @@
 # statusline
 
-A two-row Claude Code status line, built only from the payload the harness hands a status
-line command on stdin. No cache files, no background writer, no state of its own.
+One package with harness-native status lines for Claude Code and Codex.
+
+## Claude Code
+
+Claude gets the original two-row renderer directly from the JSON payload supplied to its status
+line command. It has no cache file, background writer, or state of its own.
 
 ```
 Opus 5 | hi | orion | █░░░░░░░░░ 12% | personal
-5h:42% ↺ 7:26p | 7d:8% | $3.46
+5h:42% ↻ 7:26p | 7d:8% | $3.46
 ```
 
-**Row 1** model, effort level, project directory, context fill, account.
-**Row 2** the 5 hour usage window with its reset time, the 7 day window, session cost.
+**Row 1** model, effort level, project directory, context fill, account. **Row 2** the
+5-hour usage window with its reset time, the 7-day window, and session cost. Optional data
+disappears instead of rendering dashes.
 
-Every segment except the model and directory disappears when its data is absent, so a cold
-session shows a short line rather than a row of dashes.
-
-## Why an account label
-
-If you run two logins against one machine (say a personal `~/.claude` and a work
-`~/.claudework`, selected with `CLAUDE_CONFIG_DIR`), nothing on screen otherwise tells you
-which one is driving the session. The label is the config dir name with the leading dot
-stripped, and a bare `.claude` reads as `personal`. Override it with
-`CLAUDE_STATUSLINE_ACCOUNT`.
-
-## Install
+Install it with:
 
 ```
 /statusline-install
 ```
 
-Claude Code plugins cannot declare a top-level `statusLine` themselves: a plugin's
-`settings.json` supports only the `agent` and `subagentStatusLine` keys. So the command
-copies `scripts/statusline.js` to `<config-dir>/hooks/statusline-lm.js` and points
-`statusLine` at the copy. It copies rather than referencing the plugin directory because a
-plugin cache path carries its version number and would break on the next update. Re-run the
-command to pick up a newer version of the script.
+The command copies `scripts/statusline.js` to `<config-dir>/hooks/statusline-lm.js` and updates
+`settings.json`. Re-run it after plugin updates. `CLAUDE_STATUSLINE_ACCOUNT` overrides the account
+label. Otherwise the label comes from `CLAUDE_CONFIG_DIR` (`.claude` reads as `personal`).
 
-Restart the session after installing.
+Context fill and the 5-hour window share pressure bands: green under 50 percent, yellow to 70,
+orange to 80, and blinking red above that. The 7-day window stays grey.
 
-## Colors
+## Codex
 
-Context fill and the 5 hour window share one set of pressure bands: green under 50 percent,
-yellow to 70, orange to 80, blinking red above that. The 7 day window stays grey, because it
-moves too slowly to be worth an alarm.
+Codex supports a native single-row footer made from predefined items. Install the plugin, then ask
+the skill to configure it:
+
+```powershell
+codex plugin add statusline@lm-tools
+```
+
+```text
+$statusline install
+```
+
+The installer surgically adds this to `$CODEX_HOME/config.toml` (normally
+`~/.codex/config.toml`) while preserving every other setting:
+
+```toml
+[tui]
+status_line = ["model-with-reasoning", "project-name", "context-used", "five-hour-limit", "weekly-limit"]
+status_line_use_colors = true
+```
+
+If a different status line already exists, the installer stops rather than replacing it without
+approval. Restart Codex after installation.
+
+### Vibes cost
+
+Codex does not support custom calculated footer items. Its native `estimated-thread-cost` item
+only renders on Enterprise workspaces (per the item description in codex-cli 0.156.1). The local
+rollout still contains the same
+model and cumulative token data used by `/status`. Get an on-demand estimate with:
+
+```text
+$statusline cost
+```
+
+Example:
+
+```
+~$2.37 · gpt-5.6-sol · 193.9K uncached in + 3.33M cached in + 13.2K out · API-equivalent, not billed
+```
+
+This is intentionally fun, not accounting. It applies the API token prices captured on 2026-08-27
+for GPT-5.6 Sol, Terra, or Luna, prices cache reads and cache writes separately, and does not count
+reasoning tokens twice. It is not the cost of a ChatGPT subscription session. Unknown future models
+fail clearly until the pricing snapshot is updated. The estimate uses the published base token rates.
+It does not reconstruct per-request long-context surcharges or tool fees. Pricing source:
+<https://developers.openai.com/api/docs/models/compare>. Cache-write multiplier source:
+<https://developers.openai.com/api/docs/guides/prompt-caching>.
 
 ## Test
 
-```
+```powershell
 npm test
 ```
 
-Covers the band boundaries, the optional segments, the account label including both
-fallbacks, and that a malformed payload prints nothing instead of breaking the status line.
+The suite covers the Claude renderer plus Codex config preservation, conflict handling, session
+selection, subagent exclusion, cache-aware cost arithmetic, and plugin packaging.

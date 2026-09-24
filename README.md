@@ -34,6 +34,7 @@ codex plugin add logical-research@lm-tools
 codex plugin add projects@lm-tools
 codex plugin add learn@lm-tools
 codex plugin add postman@lm-tools
+codex plugin add statusline@lm-tools
 ```
 
 Each tool ships a `.codex-plugin/plugin.json` manifest. The skills and hooks remain shared with Claude Code, so the two harnesses run the same source rather than copied ports.
@@ -92,15 +93,14 @@ password manager CLI or a full vault client all work and postman never learns wh
 → [postman/README.md](postman/README.md)
 
 ### [statusline](statusline/README.md)
-A two-row status line built only from the payload Claude Code hands it on stdin: model,
-effort, project, context fill, **which login is driving the session**, the 5 hour and 7 day
-usage windows, and session cost. No cache file, no background writer, no state of its own,
-so there is nothing to go stale and a malformed payload prints nothing rather than breaking
-the line. Claude Code only, since a status line is a Claude Code surface and there is no
-Codex equivalent to port it onto.
-**Extend it:** the account label comes from your `CLAUDE_CONFIG_DIR` name, and
-`CLAUDE_STATUSLINE_ACCOUNT` overrides it, so two logins on one machine label themselves
-without any config file. → [statusline/README.md](statusline/README.md)
+One package, two native integrations. Claude Code keeps the two-row renderer with model,
+effort, project, context pressure, account, usage windows, reset time, and session cost. Codex
+gets its native single-row footer with model/reasoning, project, context, and usage limits, plus
+an on-demand **vibes cost** calculated from the current rollout's model and cache-aware token
+counts. No daemon or polling process runs in either harness.
+**Extend it:** Claude's account label still follows `CLAUDE_CONFIG_DIR` and
+`CLAUDE_STATUSLINE_ACCOUNT`. Codex's small dated pricing table is explicit and easy to update
+when model prices change. → [statusline/README.md](statusline/README.md)
 
 ## The shared contract
 

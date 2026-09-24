@@ -1,0 +1,16 @@
+{
+  "name": "statusline",
+  "version": "1.1.0",
+  "description": "Native Codex status-line setup with an optional API-equivalent session cost estimate.",
+  "author": { "name": "Nathan Wong" },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "statusline",
+    "shortDescription": "Configure Codex's footer and estimate session cost",
+    "longDescription": "Install a useful native Codex footer and calculate a clearly labelled API-equivalent cost estimate from local session token usage.",
+    "developerName": "Nathan Wong",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": ["Install my Codex status line", "Estimate this Codex session's cost"]
+  }
+}
