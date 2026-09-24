@@ -2140,7 +2140,14 @@ def main(argv=None):
     if argv[:1] == ["inbox"]:
         import inbox
         return inbox.inbox_main(argv[1:])
-    ap = argparse.ArgumentParser(description=__doc__)
+    if argv[:1] == ["search"]:
+        import inbox
+        return inbox.search_main(argv[1:])
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="subcommands, each with its own -h: 'inbox IDENTITY' reads a mailbox "
+               "window, 'search IDENTITY QUERY' runs a Gmail search server-side and "
+               "prints the hits with their URLs.")
     ap.add_argument("--selftest", action="store_true",
                     help="run the built-in checks and exit")
     ap.add_argument("--verify", metavar="BATCH",

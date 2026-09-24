@@ -3,6 +3,7 @@
 import email
 import email.header
 import email.policy
+import html as htmllib
 import imaplib
 import json
 import os
@@ -140,12 +141,57 @@ def parse_message(raw):
     }
 
 
+TAG_RE = re.compile(r"<[^>]+>")
+# whole elements whose content is never message text: a <head> carries the <meta>
+# and CSS that filled the old raw window, and comments carry Outlook's <!--[if mso]>
+HIDDEN_RE = re.compile(r"<!--.*?-->|<(head|style|script|title)\b[^>]*>.*?</\1\s*>",
+                       re.S | re.I)
+URL_RE = re.compile(r"https?://[^\s\"<>)']+")
+
+SNIPPET_CHARS = 2000
+# ponytail: a byte cap on the whole message, not a BODYSTRUCTURE walk to the text
+# part. Text parts sit before attachments in real mail, so the cap only bites on an
+# html-only body over 256 KB, whose snippet then comes from its first 256 KB. Walk
+# BODYSTRUCTURE and fetch the one part if that shows up.
+BODY_FETCH = "(BODY.PEEK[]<0.262144>)"
+
+
+def html_to_text(html):
+    # ponytail: regex reduction, no HTML parser. Upgrade if real mail arrives unreadable
+    return htmllib.unescape(TAG_RE.sub(" ", HIDDEN_RE.sub(" ", html)))
+
+
+def body_text(msg):
+    """Readable body of an EmailMessage parsed with policy.default: the plain part
+    when there is one, else the html part reduced to text. get_content decodes the
+    part, so quoted-printable, base64 and the part's own headers never reach the
+    caller - the raw-bytes read before 2026-09-24 handed all three over as text."""
+    part = msg.get_body(preferencelist=("plain", "html"))
+    if part is None:
+        return ""
+    try:
+        text = part.get_content()
+    except (KeyError, LookupError, UnicodeDecodeError):
+        payload = part.get_payload(decode=True)
+        text = payload.decode("utf-8", errors="replace") if payload else ""
+    return html_to_text(text) if part.get_content_subtype() == "html" else text
+
+
 def decode_snippet(raw_bytes):
-    """Whitespace-collapsed first 2000 body bytes. Keyword fodder for a consumer's
-    classifier, not a rendering - same semantics as the the ad-hoc script this replaced."""
+    """Whitespace-collapsed first 2000 characters of the message TEXT. Keyword fodder
+    for a consumer's classifier, not a rendering.
+
+    raw_bytes is the whole message (BODY_FETCH), and the text is extracted BEFORE the
+    cut. Cutting first was issue #11: 2000 raw bytes of an html mail are DOCTYPE, meta
+    and inline CSS, and a real rejection reduced to 12 characters of markup, so the
+    classifier read the subject line and nothing else. Never raises."""
     if not isinstance(raw_bytes, (bytes, bytearray)):
         return ""
-    return " ".join(raw_bytes.decode("utf-8", errors="replace").split())
+    try:
+        text = body_text(email.message_from_bytes(raw_bytes, policy=email.policy.default))
+    except Exception:
+        text = raw_bytes.decode("utf-8", errors="replace")   # one bad mailer, not the pull
+    return " ".join(text.split())[:SNIPPET_CHARS]
 
 
 def fetch_window(M, mailbox, days, with_snippets=False, from_addr=None):
@@ -198,7 +244,7 @@ def fetch_window(M, mailbox, days, with_snippets=False, from_addr=None):
         msg = parse_message(d[0][1])
         msg["uid"] = uid.decode()
         if with_snippets:
-            btyp, braw = M.uid("FETCH", uid, "(BODY.PEEK[TEXT]<0.2000>)")
+            btyp, braw = M.uid("FETCH", uid, BODY_FETCH)
             msg["snippet"] = decode_snippet(braw[0][1]) if (
                 btyp == "OK" and braw and isinstance(braw[0], tuple)) else ""
         out.append(msg)
@@ -210,9 +256,6 @@ def fetch_window(M, mailbox, days, with_snippets=False, from_addr=None):
         print(f"postman inbox: skipped {skipped} malformed fetch(es) in {mailbox}",
               file=sys.stderr)
     return out
-
-
-TAG_RE = re.compile(r"<[^>]+>")
 
 
 def save_attachments(msg, att_dir, prefix):
@@ -300,18 +343,7 @@ def fetch_fence_text(M, uid, cap_lines=12, cap_chars=800,
         # listed (path None) so inbox.md can say an image is carrying the answer
         if atts_out is not None:
             atts_out.extend(save_attachments(msg, att_dir, att_prefix))
-        part = msg.get_body(preferencelist=("plain", "html"))
-        if part is None:
-            return ""
-        try:
-            text = part.get_content()
-        except (KeyError, LookupError, UnicodeDecodeError):
-            payload = part.get_payload(decode=True)
-            text = payload.decode("utf-8", errors="replace") if payload else ""
-        if part.get_content_subtype() == "html":
-            # ponytail: crude tag strip, no HTML parser; upgrade if a real venue's
-            # fence text arrives unreadable
-            text = TAG_RE.sub(" ", text)
+        text = body_text(msg)
     except Exception:
         return ""
     lines = [ln.strip() for ln in text.replace("\r\n", "\n").splitlines()]
@@ -715,6 +747,89 @@ def inbox_main(argv):
     return 0
 
 
+SEARCH_LIMIT = 40
+
+
+def search_mail(M, query, limit=SEARCH_LIMIT, out=sys.stdout):
+    """Gmail's own search, run on the server: UID SEARCH X-GM-RAW on All Mail, then
+    fetch the hits and nothing else. Prints one Date | From | Subject line per hit,
+    each URL in its plain and html parts under it, and returns the total hit count.
+
+    This is what "find the link in my mailbox" needs. A window pull is one round trip
+    per message in the window, and a 400-day pull for one booking link was still
+    running when it was killed on 2026-09-24. The same answer came back in seconds
+    from X-GM-RAW (issue #23). Readonly SELECT, BODY.PEEK: nothing is marked read."""
+    typ, _ = M.select(postman.ALL_MAIL, readonly=True)
+    if typ != "OK":
+        raise InboxError(f"SELECT {postman.ALL_MAIL} failed: {typ}")
+    # an IMAP quoted string: a Gmail phrase query ("exact words") carries its own
+    # double quotes, and an unescaped one ends the string early
+    quoted = '"%s"' % query.replace("\\", "\\\\").replace('"', '\\"')
+    typ, data = M.uid("SEARCH", "X-GM-RAW", quoted)
+    if typ != "OK":
+        raise InboxError(f"SEARCH X-GM-RAW failed: {typ} {data}")
+    uids = (data[0] or b"").split()
+    shown = uids[-limit:] if limit > 0 else uids     # UIDs ascend, so the newest hits
+    print(f"{len(uids)} match(es) for {query!r} in {postman.ALL_MAIL}"
+          + (f", showing the newest {len(shown)}" if len(shown) < len(uids) else ""),
+          file=out, flush=True)
+    for n, uid in enumerate(shown, 1):
+        typ, d = M.uid("FETCH", uid, BODY_FETCH)
+        if typ != "OK" or not d or not isinstance(d[0], tuple):
+            print(f"[{n}/{len(shown)}] uid {uid.decode()}: fetch failed", file=out, flush=True)
+            continue
+        h = parse_message(d[0][1])
+        print(f"[{n}/{len(shown)}] {h['date_raw']} | {h['from_raw']} | {h['subject']}",
+              file=out, flush=True)
+        urls = set()
+        try:
+            for part in email.message_from_bytes(
+                    d[0][1], policy=email.policy.default).walk():
+                if part.get_content_type() in ("text/plain", "text/html"):
+                    # unescaped, so an href's &amp; reads as the & a browser follows
+                    urls.update(URL_RE.findall(htmllib.unescape(part.get_content())))
+        except Exception:
+            pass                          # the header line above still stands
+        for url in sorted(urls):
+            print(f"    {url}", file=out)
+    return len(uids)
+
+
+def search_main(argv):
+    import argparse
+    ap = argparse.ArgumentParser(
+        prog="postman search",
+        description="Gmail search (X-GM-RAW) over All Mail, server-side. Prints Date, "
+                    "From, Subject and URLs for the hits only. Read-only.")
+    ap.add_argument("identity")
+    ap.add_argument("query", help="ordinary Gmail syntax, quoted: "
+                                  "'from:vendor.example (booking OR portal)'")
+    ap.add_argument("--limit", type=int, default=SEARCH_LIMIT,
+                    help=f"fetch only the newest N hits (default {SEARCH_LIMIT}, 0 = all)")
+    args = ap.parse_args(argv)
+    if not args.query.isascii():
+        # imaplib sends arguments as ASCII and would die mid-command with a traceback
+        print("postman search: the query must be ASCII (non-ASCII needs an IMAP "
+              "literal, which this does not send)", file=sys.stderr)
+        return 1
+    ident = postman.resolve_identity(args.identity, None)
+    print(f"reading as: {ident['sender']}  (identity: {ident['name']})")
+    try:
+        pw = postman.gmail_password(ident)
+    except SystemExit as e:
+        print(f"postman search: {e}", file=sys.stderr)
+        return 2                # the same 2 = credentials, 1 = IMAP split as inbox
+    # stdout is cp1252 here and subjects carry curly quotes and accented names
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    try:
+        with postman.imap_session(pw, ident["sender"]) as M:
+            search_mail(M, args.query, args.limit)
+    except (imaplib.IMAP4.error, InboxError, OSError) as e:
+        print(f"postman search: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def selftest():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
@@ -757,11 +872,11 @@ def selftest():
     m2 = parse_message(b"From: news@jobboard.example\r\nSubject: Jobs for you\r\n")
     assert m2["when"] is None and m2["refs"] == set() and m2["to_addrs"] == []
     assert m2["from_display"] == ""                        # no display name given
-    # snippet: whitespace-collapsed, never raises - byte-compatible with the consumer
-    # contract (same decode_body semantics as the script this replaced)
-    assert decode_snippet(b"line one\r\n  line\ttwo\r\n") == "line one line two"
+    # snippet: whitespace-collapsed body text, never raises
+    assert decode_snippet(b"Subject: s\r\n\r\nline one\r\n  line\ttwo\r\n") \
+        == "line one line two"
     assert decode_snippet(None) == ""
-    assert decode_snippet(b"\xff\xfebad") != ""            # errors=replace, no raise
+    assert decode_snippet(b"Subject: s\r\n\r\n\xff\xfebad") != ""   # no raise
 
     # One fake IMAP covers the fetch loop, the never-lie raise and the fence. It
     # answers M.uid() and nothing else, so a regression back to sequence-number
@@ -789,15 +904,117 @@ def selftest():
             spec = args[-1]
             if "HEADER" in spec:
                 return ("OK", [(b"41", raw)])
-            if "TEXT" in spec:
-                return ("OK", [(b"41", b"snippet   body\r\n")])
             return ("OK", [(b"41", self.body)])
 
     M = FakeIMAP()
     got = fetch_window(M, "INBOX", INBOX_DAYS, with_snippets=True)
     assert len(got) == 1 and got[0]["uid"] == "41", got
     assert got[0]["from_addr"] == "dana.r@venuegroup.example"
-    assert got[0]["snippet"] == "snippet body", got[0]["snippet"]
+    assert got[0]["snippet"] == "Table for one hundred confirmed", got[0]["snippet"]
+
+    # Issue #11: text is extracted from the MIME part FIRST and the text is cut, not
+    # the raw bytes. This fake honours the section and the <start.len> partial of
+    # every FETCH the way a real server does, so the pre-fix BODY.PEEK[TEXT]<0.2000>
+    # read gets exactly the 2000 raw bytes it asked for and fails both asserts below.
+    class RangeIMAP:
+        def __init__(self, raw):
+            self.raw = raw
+
+        def select(self, mailbox, readonly=False):
+            return ("OK", None)
+
+        def uid(self, cmd, *args):
+            if cmd == "SEARCH":
+                return ("OK", [b"7"])
+            spec = args[-1]
+            head, _, text = self.raw.partition(b"\r\n\r\n")
+            data = (head + b"\r\n\r\n" if "HEADER" in spec
+                    else text if "[TEXT]" in spec else self.raw)
+            rng = re.search(r"<(\d+)\.(\d+)>", spec)
+            if rng:
+                data = data[int(rng[1]):int(rng[1]) + int(rng[2])]
+            return ("OK", [(b"7", data)])
+
+    # an html-only mail whose head and inline CSS run past the old 2000-byte window,
+    # the shape that reduced a real rejection to 12 characters of markup
+    css = "".join(f".c{i}{{color:#{i:06x};margin:0 auto}}\r\n" for i in range(120))
+    html_mail = ("From: Talent Team <careers@hiring.example>\r\n"
+                 "Subject: Application Status Update\r\n"
+                 "Content-Type: text/html; charset=utf-8\r\n\r\n"
+                 "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Update</title>"
+                 f"<style>{css}</style></head><body><!--[if mso]><table><![endif]-->"
+                 "<p>Dear Ada,</p><p>We regret to inform you that we will not be "
+                 "moving forward.</p></body></html>\r\n").encode()
+    assert html_mail.index(b"We regret") > 2000              # beyond the old cut
+    got = fetch_window(RangeIMAP(html_mail), "INBOX", INBOX_DAYS, with_snippets=True)
+    assert got[0]["snippet"] == ("Dear Ada, We regret to inform you that we will not "
+                                 "be moving forward."), got[0]["snippet"]
+    # a quoted-printable part with its own headers, behind a boundary: the part
+    # headers, the boundary, =3D and the soft line break must all be gone
+    qp_mail = (b"From: Recruiting <jobs@fintech.example>\r\n"
+               b"Subject: Your application\r\n"
+               b'Content-Type: multipart/alternative; boundary="91ae4e6db3e6"\r\n\r\n'
+               b"--91ae4e6db3e6\r\n"
+               b"Content-Transfer-Encoding: quoted-printable\r\n"
+               b'Content-Type: text/plain; charset="utf-8"\r\n\r\n'
+               b"Your appli=\r\ncation for Analyst =3D shortlisted.\r\n"
+               b"--91ae4e6db3e6\r\n"
+               b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+               b"<p>html twin</p>\r\n"
+               b"--91ae4e6db3e6--\r\n")
+    got = fetch_window(RangeIMAP(qp_mail), "INBOX", INBOX_DAYS, with_snippets=True)
+    assert got[0]["snippet"] == "Your application for Analyst = shortlisted.", \
+        got[0]["snippet"]
+    # and the cut still happens, on the text
+    long_mail = b"Subject: s\r\n\r\n" + b"word " * 1000
+    assert len(decode_snippet(long_mail)) == SNIPPET_CHARS
+
+    # Issue #23: search runs X-GM-RAW on All Mail, readonly, escapes the query as an
+    # IMAP quoted string, fetches only the hits, and prints each hit's header line
+    # and its URLs (html entities unescaped, deduped across the two parts).
+    class SearchIMAP:
+        def __init__(self, hits, body):
+            self.hits, self.body, self.calls = hits, body, []
+
+        def select(self, mailbox, readonly=False):
+            self.calls.append(("SELECT", mailbox, readonly))
+            return ("OK", None)
+
+        def uid(self, cmd, *args):
+            self.calls.append((cmd,) + args)
+            if cmd == "SEARCH":
+                return ("OK", [self.hits])
+            return ("OK", [(args[0], self.body)])
+
+    link_mail = (b"From: Portal <mailsend@flexiportal.example>\r\n"
+                 b"Subject: Your booking link\r\n"
+                 b"Date: Tue, 22 Sep 2026 09:00:00 +0800\r\n"
+                 b'Content-Type: multipart/alternative; boundary="b2"\r\n\r\n'
+                 b"--b2\r\nContent-Type: text/plain\r\n\r\n"
+                 b"Book here: https://book.flexiportal.example/r?id=1&t=2\r\n"
+                 b"--b2\r\nContent-Type: text/html\r\n\r\n"
+                 b'<a href="https://book.flexiportal.example/r?id=1&amp;t=2">Book</a>'
+                 b'<a href="https://help.flexiportal.example/faq">FAQ</a>\r\n'
+                 b"--b2--\r\n")
+    import io
+    S, buf = SearchIMAP(b"3 5 9", link_mail), io.StringIO()
+    n = search_mail(S, 'from:flexiportal.example "booking link"', limit=2, out=buf)
+    assert n == 3
+    assert S.calls[0] == ("SELECT", postman.ALL_MAIL, True), S.calls[0]
+    assert S.calls[1] == ("SEARCH", "X-GM-RAW",
+                          '"from:flexiportal.example \\"booking link\\""'), S.calls[1]
+    # the newest two hits only, and nothing fetched for the rest
+    assert [c[1] for c in S.calls if c[0] == "FETCH"] == [b"5", b"9"], S.calls
+    lines = buf.getvalue().splitlines()
+    assert lines[0].startswith("3 match(es)") and "newest 2" in lines[0], lines[0]
+    assert lines[1] == ("[1/2] Tue, 22 Sep 2026 09:00:00 +0800 | Portal "
+                        "<mailsend@flexiportal.example> | Your booking link"), lines[1]
+    assert lines[2:4] == ["    https://book.flexiportal.example/r?id=1&t=2",
+                          "    https://help.flexiportal.example/faq"], lines
+    # no hits is a count line and no fetch, not silence
+    S, buf = SearchIMAP(b"", link_mail), io.StringIO()
+    assert search_mail(S, "nothing", out=buf) == 0
+    assert buf.getvalue().startswith("0 match(es)") and len(S.calls) == 2
     # the fence takes the PLAIN alternative, not the html one. get_body/get_content
     # are EmailMessage-only, so dropping policy=email.policy.default from
     # fetch_fence_text fails this assert instead of crashing on a real venue's reply.
