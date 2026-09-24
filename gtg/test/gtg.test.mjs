@@ -2,7 +2,7 @@
 // gtg self-check - assert-based, no framework. Runs every command against
 // throwaway temp git repos. Non-zero exit on any failure.
 import { execFileSync, execSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,8 +14,7 @@ const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'gtg',
 function tempRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'gtg-'));
   execSync('git init -q -b main', { cwd: dir });
-  execSync('git config user.email test@test', { cwd: dir });
-  execSync('git config user.name test', { cwd: dir });
+  appendFileSync(join(dir, '.git', 'config'), '\n[user]\n\temail = test@test\n\tname = test\n');
   return dir;
 }
 
