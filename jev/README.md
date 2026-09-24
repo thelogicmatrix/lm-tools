@@ -13,6 +13,11 @@ Never run any of these on customer data: the whole body goes to OpenRouter.
     node scripts/lib.test.mjs && node --test skills/jevchecker/jevchecker.test.mjs
     node scripts/jevgate.mjs --selftest
     node scripts/jevclassify.mjs --selftest
+    node scripts/jevmail.mjs --selftest
+
+`scripts/jevmail.mjs --ask "<question>" --identity <id> --query "<gmail query>"` finds the message
+and the link or passage that answers a question, after narrowing with postman's search. It refuses
+the `work` identity in code. Usage is in the file header.
 
 `jevgate`, `jevjd`, `titles`, `limits` and the `exp-*` scripts import orion's prefilter and run
 helpers from `C:/Users/thelo/.claude/skills/orion/lib/` by absolute path. They need that tree.

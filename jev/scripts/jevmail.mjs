@@ -9,14 +9,24 @@
 // ⚠ THIS SENDS EMAIL CONTENT TO A THIRD PARTY (OpenRouter, then TypeSafe). Sender, subject and
 // snippet leave the machine. That is fine for Nathan's own job-hunt mailbox and was his explicit
 // call on 2026-09-22. It is NOT fine for anything with work or customer data in it, per AGENTS.md:
-// customer PII never leaves the machine. There is no allowlist enforcing that here, deliberately —
-// a guard that silently decides which mailbox is safe would be worse than a comment you have to
-// read. Check what you are piping in.
+// customer PII never leaves the machine. The tag mode reads a pipe and cannot know which mailbox
+// it came from, so check what you are piping in. The search mode runs postman itself, so it knows
+// the identity and refuses `work` (the work mailbox) in code before anything is read or sent. A
+// search over work mail stops at `postman search`, run by hand.
 //
 // Usage:
-//   python .claude/skills/postman/inbox.py <identity> --days 30 --json | node jevmail.mjs
+//   python postman.py inbox <identity> --days 30 --json | node jevmail.mjs      (tag a window)
 //   node jevmail.mjs --in window.json --json tags.json
+//   node jevmail.mjs --ask "<plain-English ask>" --identity <id> --query "<gmail query>"
+//   node jevmail.mjs --ask "<plain-English ask>" --identity <id> --from <addr|domain> [--days N]
+//       [--top 5] [--json hits.json]                                             (search)
 //   node jevmail.mjs --selftest
+//
+// Search narrows first, server-side: --query runs `postman search` (X-GM-RAW, the newest 40 hits,
+// Date, From, Subject and URLs but no body), --from runs `postman inbox --from --json` (one
+// sender's slice, with a 2000-character text snippet). Then one Jev call per message scores the
+// message and each of its links and passages against the ask, and prints a ranked shortlist.
+// Jev generates no text, so it picks among the parts it is shown and never writes an answer.
 //
 // Deliberately NOT a generic engine. One chunker that knows what an email is, questions written
 // out below. The generic version was specced (docs/superpowers/specs/2026-09-22-jevchecker-design.md)
@@ -26,7 +36,9 @@
 
 import fs from 'node:fs';
 import assert from 'node:assert';
-import { askJev, runPool, toText, noulsFrom, firedTags } from './lib.mjs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { askJev, runPool, noulsFrom, firedTags, readKey } from './lib.mjs';
 
 const CONCURRENCY = 6;
 
@@ -73,23 +85,16 @@ const TAGS = {
 // a fact. Same discipline as the jevchecker spec: signal, not verdict.
 const FIRES_AT = 0.5;
 
-// ⚠ inbox.py hands over some snippets as raw quoted-printable HTML rather than text. Measured on
-// the 391-message 30-day jobhunt window, 2026-09-22: 33 snippets (8%) begin with markup and 26 are
-// under 40% real words. Worst senders are twinehq.com (28) and myworkday.com. Klook's
-// "Application Status Update" was 420 characters of `<!DOCTYPE html>` and `=3D` with no message
-// text at all, so is_rejection scored 0.39 and it was missed — off the subject line alone, which
-// is the only thing Jev actually had to read.
-//
-// Cleaning here rather than in postman's decode_snippet, which is the real root cause: that
-// function feeds the live outbound mail path and Orion's own digest, and this session is not the
-// place to change it. Filed as docs/issues/postman-snippet-html.md.
+// The snippet arrives as clean text and goes in as-is. It used to be raw quoted-printable HTML for
+// 8% of a 2026-09-22 window, cut to 2000 bytes before any decoding, and was scrubbed here with
+// toText(). postman now extracts the text before the cut (nathan/home#11, lm-tools #6).
 
-// What Jev judges. Sender, subject and the cleaned snippet, which is all inbox.py carries per
+// What Jev judges. Sender, subject and the snippet, which is all postman's --json carries per
 // message anyway. Not the thread_id or attribution: those are Orion's own derived fields and
 // feeding a pipeline's guesses back in as evidence is how a wrong attribution becomes
 // self-confirming.
 export function stateFor(m) {
-  return `From: ${m.from ?? ''}\nDate: ${m.date ?? ''}\nSubject: ${m.subject ?? ''}\n\n${toText(m.snippet)}`;
+  return `From: ${m.from ?? ''}\nDate: ${m.date ?? ''}\nSubject: ${m.subject ?? ''}\n\n${m.snippet ?? ''}`;
 }
 
 const questions = Object.fromEntries(
@@ -154,6 +159,226 @@ function report(rows) {
   }
 }
 
+// ---- search mode ---------------------------------------------------------------------------
+
+// ⚠ THE WORK MAILBOX NEVER REACHES OPENROUTER. It holds customer PII, and every message this mode
+// judges is posted to a third party. Checked first, before postman runs or a key is read, so a
+// refused search has read nothing and sent nothing. By name, because postman resolves an identity
+// by exact key and has no aliases.
+const REFUSED_IDENTITIES = new Set(['work']);
+export function checkIdentity(identity) {
+  const id = String(identity ?? '').trim();
+  if (!id) throw new Error('--identity is required. Search never picks a mailbox by default.');
+  if (REFUSED_IDENTITIES.has(id.toLowerCase())) {
+    throw new Error(`refusing identity '${id}': it holds customer data and this mode posts mail to `
+      + 'OpenRouter. Run `postman search` by hand instead. Nothing was read or sent.');
+  }
+  return id;
+}
+
+const POSTMAN = fileURLToPath(new URL('../../postman/skills/postman/postman.py', import.meta.url));
+
+// --query is Gmail's own search (X-GM-RAW). --from is one sender's slice with text snippets.
+export function postmanArgs({ identity, query, from, days }) {
+  if (!query === !from) throw new Error('give exactly one of --query "<gmail query>" or --from <addr>');
+  if (query) return ['search', identity, query];
+  return ['inbox', identity, '--json', '--from', from, ...(days ? ['--days', String(days)] : [])];
+}
+
+// Same shape as orion's call: stderr inherited so postman's own errors show, 2 = credentials and
+// 1 = IMAP carried on the thrown error's status.
+const runPostman = (args) => execFileSync('python', [POSTMAN, ...args], {
+  encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
+  timeout: 10 * 60 * 1000, maxBuffer: 64 * 1024 * 1024,
+});
+
+// `postman search` output: a `[n/K] Date | From | Subject` line per hit, its URLs indented under
+// it. A fetch-failed line has no ` | ` and opens no message, so URLs after it attach to nothing.
+// ponytail: a display name holding " | " shifts part of it into the subject. Ask postman for a
+// --json search output if that ever bites.
+export function parseSearch(text) {
+  const out = [];
+  let cur = null;
+  for (const line of String(text).split(/\r?\n/)) {
+    const hit = line.match(/^\[\d+\/\d+\] (.*)$/);
+    if (hit) {
+      const [date, from, ...rest] = hit[1].split(' | ');
+      cur = rest.length ? { date, from, subject: rest.join(' | '), snippet: '', urls: [] } : null;
+      if (cur) out.push(cur);
+    } else if (cur && /^ {4}\S/.test(line)) {
+      cur.urls.push(line.trim());
+    }
+  }
+  return out;
+}
+
+const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
+const PASSAGE_CHARS = 300;
+// ponytail: a tracking-heavy mail can carry more links than this, and the rest are not asked.
+// The count of dropped parts is kept on the row. Split into two calls if a real hit is ever lost.
+const MAX_PARTS = 40;
+// A narrowing step that still returns more than this has not narrowed. Refused before any call.
+export const MAX_MESSAGES = 60;
+
+// The candidates Jev picks among: prose passages first (a 2000-character snippet makes at most
+// about eight), then every distinct link.
+export function partsFor(m) {
+  const snippet = String(m.snippet ?? '');
+  const urls = [...new Set([...(m.urls ?? []), ...(snippet.match(URL_RE) ?? [])])];
+  const passages = [];
+  for (const s of snippet.replace(URL_RE, ' ').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/)) {
+    if (!s) continue;
+    if (passages.length && passages.at(-1).length + s.length < PASSAGE_CHARS) passages[passages.length - 1] += ` ${s}`;
+    else passages.push(s);
+  }
+  const all = [...passages, ...urls];
+  return { parts: all.slice(0, MAX_PARTS), dropped: Math.max(0, all.length - MAX_PARTS) };
+}
+
+// The mail is untrusted. A `[p3]` written into it would point a question at the wrong part, the
+// same attack jevchecker's deforge closes for `[cN]`.
+const unmark = (t) => String(t ?? '').replace(/\[\s*p\d+\s*\]/gi, '(marker removed)');
+export function searchStateFor(m, parts) {
+  return `From: ${unmark(m.from)}\nDate: ${unmark(m.date)}\nSubject: ${unmark(m.subject)}\n\n`
+    + `Parts of this message:\n${parts.map((p, i) => `[p${i}] ${unmark(p)}`).join('\n')}`;
+}
+
+export function searchQuestions(ask, n) {
+  const q = { message: { type: 'noul', instructions: `This message contains what the person is looking for: ${ask}` } };
+  for (let i = 0; i < n; i++) {
+    q[`p${i}`] = { type: 'noul', instructions: `For the part marked [p${i}]: this link or passage is what the person is looking for: ${ask}` };
+  }
+  return q;
+}
+
+const byScore = (a, b) => (b.score ?? -1) - (a.score ?? -1);
+
+// Narrow with postman, then one call per message, ranked. `run` is the postman call, replaced in
+// the selftest so nothing touches a mailbox.
+export async function searchMail({ ask, identity, query, from, days }, { key, run = runPostman, onDone } = {}) {
+  const id = checkIdentity(identity);
+  if (!String(ask ?? '').trim()) throw new Error('--ask needs the plain-English question');
+  const args = postmanArgs({ identity: id, query, from, days });
+  const raw = run(args);
+  const messages = query ? parseSearch(raw) : JSON.parse(raw);
+  if (messages.length > MAX_MESSAGES) {
+    throw new Error(`${messages.length} messages matched, over ${MAX_MESSAGES}. Narrow the query. Nothing was sent.`);
+  }
+  const rows = await runPool(messages, async (m) => {
+    const { parts, dropped } = partsFor(m);
+    const base = { from: m.from, date: m.date, subject: m.subject, dropped };
+    try {
+      const { answers, cost } = await askJev(searchStateFor(m, parts), searchQuestions(ask, parts.length), key);
+      const s = noulsFrom(answers, ['message', ...parts.map((_, i) => `p${i}`)]);
+      return { ...base, score: s.message, parts: parts.map((text, i) => ({ text, score: s[`p${i}`] })).sort(byScore), cost };
+    } catch (e) {
+      return { ...base, score: null, parts: [], error: e.message };
+    }
+  }, CONCURRENCY, onDone);
+  return rows.sort(byScore);
+}
+
+function reportSearch(rows, top) {
+  const ok = rows.filter((r) => !r.error);
+  const cleared = ok.filter((r) => r.score !== null && r.score >= FIRES_AT).length;
+  console.log(`judged ${ok.length} messages, ${cleared} cleared ${FIRES_AT}, `
+    + `cost $${ok.reduce((s, r) => s + (r.cost ?? 0), 0).toFixed(5)}\n`);
+  for (const r of ok.slice(0, top)) {
+    console.log(`${r.score === null ? '  - ' : r.score.toFixed(2)}  ${r.date ?? ''} | ${r.from ?? ''} | ${r.subject ?? ''}`);
+    for (const p of r.parts.filter((p) => p.score !== null && p.score >= FIRES_AT).slice(0, 3)) {
+      console.log(`      ${p.score.toFixed(2)}  ${p.text.length > 200 ? `${p.text.slice(0, 200)}...` : p.text}`);
+    }
+    if (r.dropped) console.log(`      (${r.dropped} parts not asked, over the ${MAX_PARTS} cap)`);
+  }
+  const failed = rows.filter((r) => r.error);
+  if (failed.length) {
+    console.log(`\n  failed ${failed.length}`);
+    for (const f of failed.slice(0, 5)) console.log(`    ${String(f.subject).slice(0, 50)}: ${f.error}`);
+  }
+  console.log('\nA score is a signal, not a verdict. Open the message before acting on it.');
+}
+
+// Async because the pipeline is. The model call is mocked by replacing `fetch`, as lib.test.mjs
+// does, and the postman call by the injected `run`. Invented data only.
+export async function selftestSearch() {
+  // The refusal, pinned by value, including the spellings a hand might type.
+  for (const bad of ['work', 'WORK', ' Work ']) assert.throws(() => checkIdentity(bad), /refusing identity/);
+  for (const none of ['', '  ', undefined, null]) assert.throws(() => checkIdentity(none), /--identity is required/);
+  assert.strictEqual(checkIdentity(' jobhunt '), 'jobhunt');
+
+  assert.deepStrictEqual(postmanArgs({ identity: 'jobhunt', query: 'from:venue.example booking' }),
+    ['search', 'jobhunt', 'from:venue.example booking']);
+  assert.deepStrictEqual(postmanArgs({ identity: 'jobhunt', from: 'venue.example', days: 90 }),
+    ['inbox', 'jobhunt', '--json', '--from', 'venue.example', '--days', '90']);
+  assert.throws(() => postmanArgs({ identity: 'jobhunt' }), /exactly one/);
+  assert.throws(() => postmanArgs({ identity: 'jobhunt', query: 'q', from: 'f' }), /exactly one/);
+
+  const searchOut = [
+    'reading as: someone@example.com  (identity: jobhunt)',
+    "3 match(es) for 'booking' in [Gmail]/All Mail",
+    '[1/3] Mon, 1 Sep 2026 09:00:00 +0800 | Venue Desk <desk@venue.example> | Your room | booking link',
+    '    https://venue.example/book?id=1',
+    '    https://venue.example/unsubscribe',
+    '[2/3] uid 42: fetch failed',
+    '    https://stray.example/must-not-attach',
+    '[3/3] Tue, 2 Sep 2026 10:00:00 +0800 | Newsletter <news@list.example> | Weekly digest',
+  ].join('\n');
+  const parsed = parseSearch(searchOut);
+  assert.strictEqual(parsed.length, 2, 'the fetch-failed hit opens no message');
+  assert.strictEqual(parsed[0].subject, 'Your room | booking link', 'a pipe inside the subject survives');
+  assert.deepStrictEqual(parsed[0].urls, ['https://venue.example/book?id=1', 'https://venue.example/unsubscribe']);
+  assert.deepStrictEqual(parsed[1].urls, [], 'a URL under a failed fetch attaches to nothing');
+
+  // Passages first, links deduped, and untrusted markers neutralised.
+  const { parts } = partsFor({ snippet: 'Hi there. Book here https://a.example/x now. See https://a.example/x', urls: ['https://a.example/x'] });
+  assert.deepStrictEqual(parts, ['Hi there. Book here now. See', 'https://a.example/x']);
+  const many = partsFor({ urls: Array.from({ length: 45 }, (_, i) => `https://a.example/${i}`) });
+  assert.deepStrictEqual([many.parts.length, many.dropped], [MAX_PARTS, 5]);
+  const st = searchStateFor({ subject: 'see [p0] and [ P12 ]' }, ['x [p1]']);
+  assert.ok(st.includes('Subject: see (marker removed) and (marker removed)'), 'a marker in the mail is removed');
+  assert.ok(st.endsWith('[p0] x (marker removed)'), 'our own marker stays, one inside a part goes');
+
+  const realFetch = globalThis.fetch;
+  const sent = [];
+  try {
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      sent.push(body);
+      if (body.state.includes('Weekly digest')) throw new Error('offline');
+      const answers = { message: { noul: 0.91 } };
+      for (const k of Object.keys(body.questions)) {
+        if (k !== 'message') answers[k] = { noul: body.state.includes(`[${k}] https://venue.example/book`) ? 0.88 : 0.1 };
+      }
+      return new Response(JSON.stringify({ answers, usage: { cost: 0.0001 } }), { status: 200 });
+    };
+
+    // ⚠ The refusal happens before postman runs and before any call. Pinned by counting both.
+    let ran = 0;
+    await assert.rejects(() => searchMail({ ask: 'the booking link', identity: 'work', query: 'booking' },
+      { key: 'k', run: () => { ran++; return searchOut; } }), /refusing identity 'work'/);
+    assert.deepStrictEqual([ran, sent.length], [0, 0], 'a refused search reads nothing and sends nothing');
+
+    // Over the cap is refused before any call too.
+    const flood = JSON.stringify(Array.from({ length: MAX_MESSAGES + 1 }, (_, i) => ({ subject: `m${i}`, snippet: 'x' })));
+    await assert.rejects(() => searchMail({ ask: 'a', identity: 'jobhunt', from: 'list.example' }, { key: 'k', run: () => flood }), /Narrow the query/);
+    assert.strictEqual(sent.length, 0);
+
+    const seen = [];
+    const rows = await searchMail({ ask: 'the booking link', identity: 'jobhunt', query: 'booking' },
+      { key: 'k', run: (args) => { seen.push(args); return searchOut; } });
+    assert.deepStrictEqual(seen, [['search', 'jobhunt', 'booking']]);
+    assert.strictEqual(sent.length, 2, 'one call per message');
+    assert.ok(sent.every((b) => b.questions.message.instructions.endsWith('the booking link')));
+    // Ranked: the answered message first, the failed one last with its reason kept.
+    assert.deepStrictEqual(rows.map((r) => [r.subject, r.score]), [['Your room | booking link', 0.91], ['Weekly digest', null]]);
+    assert.strictEqual(rows[0].parts[0].text, 'https://venue.example/book?id=1', 'the link that answers comes first');
+    assert.strictEqual(rows[1].error, 'offline');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  return 'jevmail search selftest OK';
+}
+
 export function selftest() {
   // A missing answer is null, never 0 — otherwise a partial response reads as a clean negative.
   assert.strictEqual(toTags({}).is_rejection, null);
@@ -169,35 +394,10 @@ export function selftest() {
   // Fired tags come back strongest first.
   assert.deepStrictEqual(fired({ a: 0.6, b: 0.9, c: 0.7 }).map(([k]) => k), ['b', 'c', 'a']);
   assert.deepStrictEqual(fired({ a: 0.1 }), []);
-  // Quoted-printable, in the order that actually matters: a soft line break decoded after =XX
-  // glues the words either side of it together.
-  assert.strictEqual(toText('applic=\r\nation'), 'application');
-  assert.strictEqual(toText('a=3Db'), 'a=b');
-  // Markup goes, and the words inside it survive.
-  assert.strictEqual(toText('<p>Thank you for <b>applying</b></p>'), 'Thank you for applying');
-  assert.strictEqual(toText('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>Regret</body></html>'), 'Regret');
-  // Script and style bodies are not prose. Stripping tags alone would leave the CSS behind as
-  // "content" and it reads like text to a model.
-  assert.strictEqual(toText('<style>body{color:red}</style>Hello'), 'Hello');
-  assert.strictEqual(toText('<script>var x="apply now"</script>Hi'), 'Hi');
-  assert.strictEqual(toText('<!-- hidden -->Visible'), 'Visible');
-  // MIME scaffolding is not content. Real shapes from the 2026-09-22 window.
-  assert.strictEqual(toText('--91ae4e6db3e694e7bbe369bdae65a8975dab85b2404766f66bf0923ccdf9\nHello'), 'Hello');
-  assert.strictEqual(toText('Content-Transfer-Encoding: quoted-printable\nHello'), 'Hello');
-  assert.strictEqual(toText('Content-Type: text/plain; charset="utf-8"\nHello'), 'Hello');
-  assert.strictEqual(toText('------------------------------=\nHello'), 'Hello');
-  // ...but an em-dash-ish run inside a sentence is not scaffolding, and a "Content-Type" mentioned
-  // mid-sentence must survive: the patterns are line-anchored for exactly this reason.
-  assert.strictEqual(toText('We discussed Content-Type: json in the call'), 'We discussed Content-Type: json in the call');
 
-  // Entities, including the numeric ones Workday emits.
-  assert.strictEqual(toText('Tom &amp; Jerry&#39;s'), "Tom & Jerry's");
-  assert.strictEqual(toText('a&nbsp;b'), 'a b');
-  // An unknown entity becomes a space rather than surviving as literal junk.
-  assert.strictEqual(toText('a&zzz;b'), 'a b');
-  // Plain text passes through untouched, which is the common case (median ratio was 1.00).
-  assert.strictEqual(toText('Thanks for your application.'), 'Thanks for your application.');
-  assert.strictEqual(toText(null), '');
+  // The snippet goes in verbatim now that postman sends text. A scrub here would eat a real
+  // "a=3Db" or "<b>" in a message that means it.
+  assert.ok(stateFor({ snippet: 'rate is a=3Db <b>' }).endsWith('rate is a=3Db <b>'));
 
   // The state carries the four fields Jev is meant to judge and none of Orion's derived ones.
   const s = stateFor({ from: 'a@b.c', date: 'd', subject: 's', snippet: 'body',
@@ -213,7 +413,27 @@ const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(`--${n}`);
 const opt = (n) => { const i = argv.indexOf(`--${n}`); return i < 0 ? null : argv[i + 1]; };
 
-if (flag('selftest')) { console.log(selftest()); process.exit(0); }
+if (flag('selftest')) { console.log(selftest()); console.log(await selftestSearch()); process.exit(0); }
+
+if (flag('ask')) {
+  try {
+    checkIdentity(opt('identity'));       // first, so a refused search never needs a key either
+    const key = readKey();
+    if (!key) throw new Error('no OPENROUTER_API_KEY in the environment or ~/.jev.env. Vault proj/jev.');
+    const rows = await searchMail(
+      { ask: opt('ask'), identity: opt('identity'), query: opt('query'), from: opt('from'), days: opt('days') },
+      { key, onDone: (done, total) => console.error(`  [${done}/${total}]`) });
+    reportSearch(rows, Number(opt('top') ?? 5));
+    if (opt('json')) {
+      fs.writeFileSync(opt('json'), JSON.stringify(rows, null, 2));
+      console.log(`hits written to ${opt('json')}`);
+    }
+  } catch (e) {
+    console.error(`jevmail: ${e.message}`);
+    process.exit(e.status === 2 ? 2 : 1);   // postman's 2 = credentials, carried through
+  }
+  process.exit(0);
+}
 
 const raw = opt('in') ? fs.readFileSync(opt('in'), 'utf8') : fs.readFileSync(0, 'utf8');
 const messages = JSON.parse(raw);

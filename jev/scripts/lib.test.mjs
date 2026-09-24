@@ -1,7 +1,7 @@
 // The network half of lib.mjs, with `fetch` replaced so nothing is spent.
 //   node scripts/jev-sweep/lib.test.mjs
 import assert from 'node:assert';
-import { askJev, isNoul } from './lib.mjs';
+import { askJev, isNoul, toText } from './lib.mjs';
 
 const realFetch = globalThis.fetch;
 try {
@@ -32,5 +32,36 @@ try {
 assert.deepStrictEqual([0, 0.5, 1].map(isNoul), [true, true, true]);
 assert.deepStrictEqual([NaN, Infinity, -0.01, 1.01, '0.5', null, undefined].map(isNoul),
   [false, false, false, false, false, false, false]);
+
+// toText, moved here from jevmail's selftest when jevmail stopped using it (postman sends text
+// since lm-tools #6). jevjd.mjs and exp-context.mjs still feed it raw bodies.
+// Quoted-printable, in the order that actually matters: a soft line break decoded after =XX
+// glues the words either side of it together.
+assert.strictEqual(toText('applic=\r\nation'), 'application');
+assert.strictEqual(toText('a=3Db'), 'a=b');
+// Markup goes, and the words inside it survive.
+assert.strictEqual(toText('<p>Thank you for <b>applying</b></p>'), 'Thank you for applying');
+assert.strictEqual(toText('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>Regret</body></html>'), 'Regret');
+// Script and style bodies are not prose. Stripping tags alone would leave the CSS behind as
+// "content" and it reads like text to a model.
+assert.strictEqual(toText('<style>body{color:red}</style>Hello'), 'Hello');
+assert.strictEqual(toText('<script>var x="apply now"</script>Hi'), 'Hi');
+assert.strictEqual(toText('<!-- hidden -->Visible'), 'Visible');
+// MIME scaffolding is not content. Real shapes from the 2026-09-22 window.
+assert.strictEqual(toText('--91ae4e6db3e694e7bbe369bdae65a8975dab85b2404766f66bf0923ccdf9\nHello'), 'Hello');
+assert.strictEqual(toText('Content-Transfer-Encoding: quoted-printable\nHello'), 'Hello');
+assert.strictEqual(toText('Content-Type: text/plain; charset="utf-8"\nHello'), 'Hello');
+assert.strictEqual(toText('------------------------------=\nHello'), 'Hello');
+// ...but a "Content-Type" mentioned mid-sentence must survive: the patterns are line-anchored
+// for exactly this reason.
+assert.strictEqual(toText('We discussed Content-Type: json in the call'), 'We discussed Content-Type: json in the call');
+// Entities, including the numeric ones Workday emits.
+assert.strictEqual(toText('Tom &amp; Jerry&#39;s'), "Tom & Jerry's");
+assert.strictEqual(toText('a&nbsp;b'), 'a b');
+// An unknown entity becomes a space rather than surviving as literal junk.
+assert.strictEqual(toText('a&zzz;b'), 'a b');
+// Plain text passes through untouched, which is the common case (median ratio was 1.00).
+assert.strictEqual(toText('Thanks for your application.'), 'Thanks for your application.');
+assert.strictEqual(toText(null), '');
 
 console.log('lib selftest OK');
