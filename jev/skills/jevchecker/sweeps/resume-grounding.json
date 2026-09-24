@@ -1,0 +1,11 @@
+{
+  "name": "resume-grounding",
+  "chunk": { "type": "jsonpath", "path": "$.sections..items[*].description", "then": "html-li" },
+  "state": { "include_source": true },
+  "checks": [
+    { "id": "no-emdash", "type": "regex", "pattern": "—", "must": "absent" },
+    { "id": "no-entities", "type": "regex", "pattern": "&(?!amp;|lt;|gt;)[a-z]+;", "must": "absent" },
+    { "id": "grounded", "type": "noul", "surface_below": 0.25,
+      "instructions": "This bullet is supported by the source resume: a reader holding only the source would agree it is true" }
+  ]
+}
