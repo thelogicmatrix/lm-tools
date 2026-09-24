@@ -101,6 +101,14 @@ format, revision checks, and controller ownership. These CLI operations use no m
 Set `GTG_HUB=<path>` (a git repo) and every gtg command stores its handoffs there
 instead of the repo you're working in — one list across all your projects.
 
+## Optional: store projects on a Forgejo or Gitea forge
+
+Add `.gtg/forge.json` to the repo (`{ "api": "https://forge.example/api/v1", "repo": "owner/name" }`,
+token from `FORGEJO_TOKEN` or a `tokenFile`) and each project becomes an open milestone, its handoffs
+become comments on one tracking issue in that milestone, and its tasks are the other issues there.
+Without the file gtg uses the git file store as always. Details, and the commands that change, in
+[the forge store reference](skills/gtg/references/forge-store.md).
+
 ## Extending gtg
 
 gtg has three tiers. You only ever touch the third.

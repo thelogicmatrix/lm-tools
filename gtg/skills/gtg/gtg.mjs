@@ -7,6 +7,7 @@ import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { readCollection, writeCollection } from './lib/store.mjs';
+import { forgeConfig, openForge } from './lib/forge.mjs';
 import { readProgress, renderProgress, renderProgressTaskList } from './lib/progress.mjs';
 
 // --- storage root -----------------------------------------------------------
@@ -176,13 +177,19 @@ function commit(paths, message) {
 // `which` is 'active' | 'backlog'. Order is NOT stored: sortByProject/displayOrder recompute
 // it at render, so a directory read (alphabetical by slug) renders identically to the packed
 // array it replaces.
+//
+// With <root>/.gtg/forge.json the records live on a forge instead (lib/forge.mjs). FORGE holds them
+// in memory for this one process, and the dispatcher flushes the difference when the command ends.
+let FORGE = null;
 function entries(which) {
+  if (FORGE) return FORGE.entries(which);
   return readCollection(ROOT, COLLECTIONS[which]);
 }
 // Returns the repo-relative paths touched, INCLUDING deletions, because commit() must name
 // every path on both `git add` and `git commit` or a removal is left for another session to
 // pick up as its own.
 function saveEntries(which, items) {
+  if (FORGE) return FORGE.save(which, items);
   const { written, deleted } = writeCollection(ROOT, COLLECTIONS[which], items);
   return [...written, ...deleted];
 }
@@ -556,15 +563,19 @@ Say: "gtg ${a.slug}"
     duration_min: a.checkpoint ? undefined : sessionDurationMin(),
     harness: (typeof a.harness === 'string' ? a.harness : undefined) ?? detectHarness(),
     eta: a.eta || prior?.eta,
-    next: String(a.next).slice(0, 150), file: relFile, updated: nowIso(),
+    // On the forge store the body is a comment, not a file, so there is no path to record.
+    next: String(a.next).slice(0, 150), file: FORGE ? undefined : relFile, updated: nowIso(),
   };
   if (a['dry-run']) {
     console.log(`--- DRY RUN: would write ${relFile} ---\n${doc}`);
     console.log(`--- ${COLLECTIONS[which]}/${a.slug}.json entry ---\n${JSON.stringify(entry, null, 2)}`);
     return;
   }
-  mkdirSync(dirname(join(ROOT, relFile)), { recursive: true });
-  writeFileSync(join(ROOT, relFile), doc);
+  if (FORGE) FORGE.queueHandoff(a.slug, doc);
+  else {
+    mkdirSync(dirname(join(ROOT, relFile)), { recursive: true });
+    writeFileSync(join(ROOT, relFile), doc);
+  }
   const items = entries(which).filter((e) => e.slug !== a.slug); // dedupe by slug
   items.push(entry);
   const paths = saveEntries(which, items);
@@ -589,8 +600,26 @@ Say: "gtg ${a.slug}"
   // relFile plus every record file the two saves touched, deletions included - the unpark
   // above REMOVES the slug's file from the other store, and an unnamed deletion stays in the
   // working tree for whichever session commits next.
-  commit([relFile, ...paths], subject);
-  console.log(relFile);
+  if (FORGE) {
+    // Flushed here rather than at dispatch end, so the hook below runs on a handoff that has landed.
+    // The body came from stdin, so a failed write must not lose it: it goes to the file it would
+    // have had on the file store, uncommitted, and the command fails.
+    try {
+      console.log((await FORGE.flush(verb))[0] ?? '(forge: no comment posted)');
+    } catch (e) {
+      mkdirSync(dirname(join(ROOT, relFile)), { recursive: true });
+      writeFileSync(join(ROOT, relFile), doc);
+      console.error(`gtg ${verb}: forge write failed - ${firstMeaningfulLine(e)}`);
+      console.error(`  the handoff body is saved, uncommitted, at ${relFile}`);
+      // exitCode, not process.exit: on Windows (Node 24) exiting right after a fetch POST trips a
+      // libuv assertion and the process dies with 0xC0000409 instead of the code asked for.
+      process.exitCode = 1;
+      return;
+    }
+  } else {
+    commit([relFile, ...paths], subject);
+    console.log(relFile);
+  }
   // After-handoff hook: <root>/.gtg/after-handoff.mjs, default export fn(ctx), runs once the
   // handoff is committed. This is where the ceremony that used to be prose steps for the model
   // to perform (a docs/sessions entry, a portfolio-row flip) goes, so it costs no model tokens
@@ -603,7 +632,7 @@ Say: "gtg ${a.slug}"
       if (typeof mod.default !== 'function') throw new Error('no default export function');
       // --checkpoint keeps the handoff write identical while allowing the home
       // hook to skip departure-only ceremony for an in-session milestone update.
-      await mod.default({ root: ROOT, entry, file: relFile, body: fullBody, worktree, checkpoint: !!a.checkpoint, readStore, writeStore, commit });
+      await mod.default({ root: ROOT, entry, file: FORGE ? null : relFile, body: fullBody, worktree, checkpoint: !!a.checkpoint, readStore, writeStore, commit });
     } catch (e) {
       console.error(`gtg: after-handoff hook failed - ${firstMeaningfulLine(e)}`);
       process.exitCode = 1;
@@ -830,6 +859,8 @@ After a move (back/active/remove/resume/undo) the updated list auto-prints when
 stdout is a terminal; it stays silent when piped (so an AI wastes no context).
 Force either way with --list / --no-list.
 Storage root: GTG_HUB env var if set, else the enclosing git repo.
+With <root>/.gtg/forge.json the store is Forgejo/Gitea milestones instead of files
+(skills/gtg/references/forge-store.md). log, undo, stats and report need the file store.
 stats/report ship bundled; unknown commands dispatch to <root>/.gtg/commands/<name>.mjs,
 which overrides a bundled one of the same name - see README "Extending gtg".`);
 }
@@ -1285,7 +1316,8 @@ async function resumeConsume(argv) {
   const a = parseFlags(argv);
   const t = argv.find((x) => !x.startsWith('--'));
   // Before the two reads below, deliberately. See syncHub: after them it is decoration.
-  syncHub();
+  // Not on the forge store, which is already the one shared copy.
+  if (!FORGE) syncHub();
   const act = entries('active');
   const bl = entries('backlog');
   let match = null;
@@ -1332,14 +1364,20 @@ async function resumeConsume(argv) {
   }
   reviewSkip = match.slug;
   const file = match.file ? join(ROOT, match.file) : null;
-  const body = file && existsSync(file) ? readFileSync(file, 'utf8').trim() : null;
+  const body = FORGE ? await FORGE.latestHandoff(match)
+    : file && existsSync(file) ? readFileSync(file, 'utf8').trim() : null;
   const progress = readProgress(ROOT, match.slug, { optional: true });
   const when = typeof match.updated === 'string' ? match.updated.slice(0, 16).replace('T', ' ') : '?';
-  console.log(`RESUME: "${match.project}" - handoff of ${when}${match.file ? ` (${match.file})` : ''}`);
+  const where = FORGE ? `tracking issue #${FORGE.issueOf(match)}` : match.file;
+  console.log(`RESUME: "${match.project}" - handoff of ${when}${where ? ` (${where})` : ''}`);
   if (progress) {
     console.log(`CURRENT PROGRESS (supersedes handoff snapshot)\n${renderProgress(progress)}`);
   }
-  console.log(body ?? `(no handoff file at ${match.file ?? 'none'}; the entry's next action is all there is: ${match.next})`);
+  console.log(body ?? `(no handoff ${FORGE ? 'comment on' : 'file at'} ${where ?? 'none'}; the entry's next action is all there is: ${match.next})`);
+  if (FORGE) {
+    const tasks = await FORGE.openTasks(match);
+    if (tasks.length) console.log(`Open issues in this milestone:\n${tasks.join('\n')}`);
+  }
   console.log(fromBacklog
     ? `Kept on backlog: ${match.project} (current handoff retained)`
     : `Kept: ${match.project} (current handoff retained)`);
@@ -1507,12 +1545,39 @@ const builtins = {
   back, active: activate, complete, remove, rm: remove, prune: remove, resume: resumeConsume, undo,
   rename, unparent, log, supersede, keep,
 };
+// Forge store: load before the command, flush after it. Commands that never read the records skip
+// the network. The refused ones read git history of the file store, which the forge store does
+// not write, so on a forge they would report an empty history as if it were the truth.
+const NO_STORE = new Set(['help', '--help', '-h', 'progress']);
+const FORGE_REFUSED = new Set(['log', 'undo', 'stats', 'report']);
+if (!NO_STORE.has(cmd)) {
+  let cfg;
+  try { cfg = forgeConfig(ROOT); } catch (e) { console.error(`gtg: ${e.message}`); process.exit(2); }
+  if (cfg && FORGE_REFUSED.has(cmd)) {
+    console.error(`gtg ${cmd}: not available on the forge store. The history is the milestone and issue timeline on ${cfg.repo}.`);
+    process.exit(2);
+  }
+  if (cfg) {
+    try { FORGE = await openForge(cfg); } catch (e) {
+      console.error(`gtg: cannot read the forge store - ${firstMeaningfulLine(e)}`);
+      process.exit(1);
+    }
+  }
+}
+const flushForge = async () => {
+  if (!FORGE) return;
+  try { await FORGE.flush(cmd); } catch (e) {
+    console.error(`gtg: forge write failed partway, re-run the command - ${firstMeaningfulLine(e)}`);
+    process.exitCode = 1; // not process.exit, see writeHandoff's forge branch
+  }
+};
 if (!cmd) { list([]); printReview('list', []); }
 // hasOwn, not truthiness: every inherited Object key resolved here, so `gtg constructor` and
 // `gtg toString` called something that is not a verb instead of falling through to the
 // extension lookup and then the unknown-command error.
 else if (Object.hasOwn(builtins, cmd)) {
   await builtins[cmd](rest);
+  await flushForge();
   if (MOVE_CMDS.has(cmd)) maybeAutoList(rest);
   if (REVIEW_CMDS.has(cmd)) printReview(cmd, rest);
 }
@@ -1550,6 +1615,7 @@ else {
         root: ROOT, args: rest, readStore, writeStore, commit, countHandoffFiles,
         ownEntries, ownParent, sessionId: PROGRESS_SESSION_ID || undefined,
       });
+      await flushForge();
     } catch (e) {
       console.error(`gtg: extension '${cmd}' failed: ${(e?.message || String(e)).split('\n')[0]}`);
       process.exit(1);
