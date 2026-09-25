@@ -6,9 +6,12 @@ as `OPENROUTER_API_KEY=...`, read by `scripts/lib.mjs`.
 Moved here 2026-09-24 from the home monorepo: `scripts/jev-sweep/` (now `scripts/`),
 `scripts/jev-calibrate/` (now `scripts/calibrate/`), `.claude/skills/jevchecker/` (now
 `skills/jevchecker/`) and `docs/runbooks/jevclassify.mjs` (now `scripts/jevclassify.mjs`).
-History before that date is in `nathan/home`.
+History before that date is in the author's private monorepo.
 
 Never run any of these on customer data: the whole body goes to OpenRouter.
+
+The runbook matcher prototype that used to live in `scripts/` is now the `runbooks` plugin
+(`../runbooks/README.md`), which routes runbooks per prompt at a 0.8 bar.
 
     node scripts/lib.test.mjs && node --test skills/jevchecker/jevchecker.test.mjs
     node scripts/jevgate.mjs --selftest
@@ -19,5 +22,5 @@ Never run any of these on customer data: the whole body goes to OpenRouter.
 and the link or passage that answers a question, after narrowing with postman's search. It refuses
 the `work` identity in code. Usage is in the file header.
 
-`jevgate`, `jevjd`, `titles`, `limits` and the `exp-*` scripts import orion's prefilter and run
-helpers from `C:/Users/thelo/.claude/skills/orion/lib/` by absolute path. They need that tree.
+`jevgate`, `jevjd`, `titles`, `limits` and the `exp-*` scripts import helpers from a private skill
+tree by absolute path and need it present.

@@ -15,6 +15,7 @@ jobs:
       # Learn's write-failure test uses a read-only sprint file. Its writer checks the mode
       # explicitly because Forgejo's ubuntu-latest runner may execute as root.
       - run: node learn/test/learn.test.mjs
+      - run: node --test runbooks/test/*.test.mjs
       - uses: actions/setup-python@v5
         if: github.server_url == 'https://github.com'
         with:

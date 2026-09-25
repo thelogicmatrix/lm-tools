@@ -1,6 +1,6 @@
 {
   "name": "jev",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "jev - Nathan's System One sweeps over the jev-latest model: jevchecker grounds generated text against its sources, jevclick picks a browser element from a snapshot, jevgate and jevjd screen job rows, jevmail tags a mailbox, jevclassify labels repos. One shared lib, one key in ~/.jev.env.",
   "author": { "name": "Nathan Wong" }
 }

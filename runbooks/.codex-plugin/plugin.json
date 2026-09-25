@@ -1,0 +1,17 @@
+{
+  "name": "runbooks",
+  "version": "1.0.0",
+  "description": "Typed runbooks routed per prompt over the jev-latest model, with a session-start index, a header lint and a purpose-line gate.",
+  "author": { "name": "Nathan Wong" },
+  "skills": "./skills/",
+  "hooks": "./.codex-plugin/hooks.json",
+  "interface": {
+    "displayName": "runbooks",
+    "shortDescription": "Only the runbooks a prompt needs, injected per prompt",
+    "longDescription": "The router asks one jev-latest call which runbook purpose lines apply to each prompt and injects the matches. The session-start index names residuals, postmortems and retired tombstones. The skill holds the format, the lifecycle and the purpose-line gate.",
+    "developerName": "Nathan Wong",
+    "category": "Developer Tools",
+    "capabilities": ["Read"],
+    "defaultPrompt": "Which runbooks apply to this task?"
+  }
+}

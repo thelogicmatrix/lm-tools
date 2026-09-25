@@ -20,6 +20,7 @@ Then install whichever tools you want — they're independent:
 /plugin install learn@lm-tools
 /plugin install postman@lm-tools
 /plugin install statusline@lm-tools
+/plugin install runbooks@lm-tools
 ```
 
 ## Install in Codex
@@ -35,6 +36,7 @@ codex plugin add projects@lm-tools
 codex plugin add learn@lm-tools
 codex plugin add postman@lm-tools
 codex plugin add statusline@lm-tools
+codex plugin add runbooks@lm-tools
 ```
 
 Each tool ships a `.codex-plugin/plugin.json` manifest. The skills and hooks remain shared with Claude Code, so the two harnesses run the same source rather than copied ports.
@@ -102,6 +104,18 @@ counts. No daemon or polling process runs in either harness.
 `CLAUDE_STATUSLINE_ACCOUNT`. Codex's small dated pricing table is explicit and easy to update
 when model prices change. → [statusline/README.md](statusline/README.md)
 
+### [runbooks](runbooks/README.md)
+Typed runbooks that find the session instead of waiting to be found. On every prompt one
+cheap model call scores each runbook's purpose line against the task and injects only the
+matches, and it fails loud with a short notice when it cannot. At session start an index names
+the residuals, postmortems and retired tombstones a prompt cannot route. A header lint and a
+purpose-line gate keep every file routable. Every prompt goes to OpenRouter, so no customer
+data belongs in a runbook.
+**Extend it:** set your folder and thresholds in `.runbooks/config.json`, and drop session-start
+lines in `.runbooks/nudges/`, lint rules in `.runbooks/lint/` and writing rules in
+`.runbooks/standard/`. A standard file overrides a bundled reference of the same name.
+→ [runbooks/README.md](runbooks/README.md)
+
 ## The shared contract
 
 Every lm-tools framework follows the same three-tier shape:
@@ -110,7 +124,7 @@ Every lm-tools framework follows the same three-tier shape:
 |---|---|---|
 | **Core** | the plugin | ships + updates with the tool |
 | **Bundled** | the plugin's defaults | on by default, updates with the tool |
-| **Yours** | a dot-dir in *your* repo (`.gtg/`, `.dd/`, `.lr/`, `.learn/`, `.postman/`, …) | never touched by updates — you own it |
+| **Yours** | a dot-dir in *your* repo (`.gtg/`, `.dd/`, `.lr/`, `.learn/`, `.postman/`, `.runbooks/`, …) | never touched by updates, you own it |
 
 The plugin only ever *reads* your tier, so a plugin update can't clobber your extensions.
 That's the point: a framework you add to and modify, not a black box.
