@@ -8,7 +8,7 @@ import { askJev, runPool } from '../../../scripts/lib.mjs';
 // why torn is reported as its own group instead of being folded into a pass.
 //
 // 0.25-0.75 IS A JUDGEMENT CALL AND NOTHING MEASURED IT. It is not derived from
-// scripts/jev-sweep/jevescalate.mjs, whose band (v in 0.1 to 0.9) answers a different question. Widen or
+// the JD escalation CLI in the author's private tree, whose band (v in 0.1 to 0.9) answers a different question. Widen or
 // narrow these two numbers on what the torn group actually turns out to contain.
 const TORN_LOW = 0.25;
 const TORN_HIGH = 0.75;
@@ -17,7 +17,7 @@ export const regexChecks = (sweep) => (sweep?.checks ?? []).filter((c) => c.type
 export const modelChecks = (sweep) => (sweep?.checks ?? []).filter((c) => c.type !== 'regex');
 
 // ⚠ A regex check NEVER reaches the model. Sending "does this contain an em dash" to a judgement
-// model is the mistake .claude/skills/orion/lib/prefilter.mjs documents at length: a rule with no
+// model is the mistake a job-board prefilter's header documents at length: a rule with no
 // judgement in it belongs in code, where it is free, exact and reproducible.
 export function runRegex(chunks, check) {
   // No flags knob on purpose. A `g` flag makes `re.test` stateful through `lastIndex`, so it would

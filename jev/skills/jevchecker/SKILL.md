@@ -31,7 +31,7 @@ node C:/dev/lm-tools/jev/skills/jevchecker/jevchecker.mjs --selftest
 Node 18 or newer, for global `fetch`. The self-check's CLI cases use `node --import` with a
 `data:` URL, which needs Node 20.6 or newer. No dependencies beyond that and no lockfile.
 
-The paths above are written from the repo root, `C:/Users/thelo` (or the root of a worktree of it).
+The paths above assume lm-tools is cloned at `C:/dev/lm-tools`. Substitute your own clone path.
 The working directory itself does not matter: the imports resolve relative to the file, so a full
 path to `jevchecker.mjs` runs from anywhere. What matters is where the skill sits in the tree, which
 the paragraph below states.

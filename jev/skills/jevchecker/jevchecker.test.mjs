@@ -180,7 +180,7 @@ export async function selftest() {
   // ⚠ A NOUL CARRIES NO CONFIDENCE FIELD AT ALL. The torn band is distance from 0.5, which says
   // the model is torn and NOT that it is unsure. Those are different things and the output must
   // not present them as a pass. 0.25-0.75 is a judgement call, pinned here by value so that moving
-  // it is a decision. It is not derived from jevescalate.mjs, whose band is a different one (v in
+  // it is a decision. It is not derived from the JD escalation CLI, whose band is a different one (v in
   // 0.1 to 0.9) chosen for a different question.
   assert.strictEqual(surface(noul, { noul: 0.40 }).band, 'torn');
   assert.strictEqual(surface(noul, { noul: 0.70 }).band, 'torn');

@@ -12,9 +12,9 @@ export const MODEL = 'jev-latest';
 // The key, from the environment first and then from ~/.jev.env.
 //
 // The file fallback exists because the only copy of this key used to live in a gitignored .env
-// inside the feat/orion WORKTREE, and a worktree is a thing someone deletes when its branch lands.
+// inside a feature-branch WORKTREE, and a worktree is a thing someone deletes when its branch lands.
 // It was deleted on 2026-09-22. ~/.jev.env is the home now, and it is the same file
-// .claude/hooks/jevrouter.mjs reads, so there is one key on this machine rather than a copy
+// the runbook router reads, so there is one key on this machine rather than a copy
 // per caller, each going stale on its own schedule.
 //
 // A caller that finds nothing gets null and prints its own message. Never throw from here: a sweep
@@ -65,7 +65,7 @@ export async function askJev(state, questions, key, { timeoutMs = TIMEOUT_MS } =
   return { answers: body.answers, cost: body.usage?.cost ?? 0 };
 }
 
-// One POST with the timeout and the status-first error, shared with jevescalate.mjs's second opinion.
+// One POST with the timeout and the status-first error, shared with the JD escalation CLI's second opinion.
 export async function postText(url, key, payload, timeoutMs = TIMEOUT_MS) {
   let res;
   try {

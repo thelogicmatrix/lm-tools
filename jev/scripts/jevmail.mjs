@@ -7,8 +7,8 @@
 // group and go in a WHERE clause.
 //
 // ⚠ THIS SENDS EMAIL CONTENT TO A THIRD PARTY (OpenRouter, then TypeSafe). Sender, subject and
-// snippet leave the machine. That is fine for Nathan's own job-hunt mailbox and was his explicit
-// call on 2026-09-22. It is NOT fine for anything with work or customer data in it, per AGENTS.md:
+// snippet leave the machine. That is fine for the author's own mailbox, an explicit
+// decision made on 2026-09-22. It is NOT fine for anything with work or customer data in it, per AGENTS.md:
 // customer PII never leaves the machine. The tag mode reads a pipe and cannot know which mailbox
 // it came from, so check what you are piping in. The search mode runs postman itself, so it knows
 // the identity and refuses `work` (the work mailbox) in code before anything is read or sent. A
@@ -32,7 +32,7 @@
 // out below. The generic version was specced (docs/superpowers/specs/2026-09-22-jevchecker-design.md)
 // and dropped until a second real sweep exists to extract it from: every chunker strategy in that
 // spec was a guess, and guessing structure before measuring is exactly what went wrong with the
-// Orion coefficients the same day.
+// job-board scoring coefficients the same day.
 
 import fs from 'node:fs';
 import assert from 'node:assert';
@@ -87,10 +87,10 @@ const FIRES_AT = 0.5;
 
 // The snippet arrives as clean text and goes in as-is. It used to be raw quoted-printable HTML for
 // 8% of a 2026-09-22 window, cut to 2000 bytes before any decoding, and was scrubbed here with
-// toText(). postman now extracts the text before the cut (nathan/home#11, lm-tools #6).
+// toText(). postman now extracts the text before the cut (fixed in postman, lm-tools #6).
 
 // What Jev judges. Sender, subject and the snippet, which is all postman's --json carries per
-// message anyway. Not the thread_id or attribution: those are Orion's own derived fields and
+// message anyway. Not the thread_id or attribution: those are a downstream pipeline's own derived fields and
 // feeding a pipeline's guesses back in as evidence is how a wrong attribution becomes
 // self-confirming.
 export function stateFor(m) {
@@ -185,7 +185,7 @@ export function postmanArgs({ identity, query, from, days }) {
   return ['inbox', identity, '--json', '--from', from, ...(days ? ['--days', String(days)] : [])];
 }
 
-// Same shape as orion's call: stderr inherited so postman's own errors show, 2 = credentials and
+// Same shape as the other postman callers: stderr inherited so postman's own errors show, 2 = credentials and
 // 1 = IMAP carried on the thrown error's status.
 const runPostman = (args) => execFileSync('python', [POSTMAN, ...args], {
   encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'],
@@ -399,7 +399,7 @@ export function selftest() {
   // "a=3Db" or "<b>" in a message that means it.
   assert.ok(stateFor({ snippet: 'rate is a=3Db <b>' }).endsWith('rate is a=3Db <b>'));
 
-  // The state carries the four fields Jev is meant to judge and none of Orion's derived ones.
+  // The state carries the four fields Jev is meant to judge and none of a pipeline's derived ones.
   const s = stateFor({ from: 'a@b.c', date: 'd', subject: 's', snippet: 'body',
     thread_id: 'LEAK', attribution: 'LEAK' });
   assert.ok(s.includes('a@b.c') && s.includes('s') && s.includes('body'));
@@ -419,7 +419,7 @@ if (flag('ask')) {
   try {
     checkIdentity(opt('identity'));       // first, so a refused search never needs a key either
     const key = readKey();
-    if (!key) throw new Error('no OPENROUTER_API_KEY in the environment or ~/.jev.env. Vault proj/jev.');
+    if (!key) throw new Error('no OPENROUTER_API_KEY in the environment or ~/.jev.env.');
     const rows = await searchMail(
       { ask: opt('ask'), identity: opt('identity'), query: opt('query'), from: opt('from'), days: opt('days') },
       { key, onDone: (done, total) => console.error(`  [${done}/${total}]`) });
@@ -442,9 +442,9 @@ if (!Array.isArray(messages)) {
   process.exit(1);
 }
 
-const key = process.env.OPENROUTER_API_KEY;
+const key = readKey();
 if (!key) {
-  console.error('OPENROUTER_API_KEY is not set. Vault proj/jev; see docs/runbooks/secret-courier.md.');
+  console.error('no OPENROUTER_API_KEY in the environment or ~/.jev.env (see jev/README.md)');
   process.exit(1);
 }
 

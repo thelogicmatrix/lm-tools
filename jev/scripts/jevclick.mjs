@@ -79,7 +79,7 @@ export function toCriteria(elements) {
 
 // --- asking the page more than one thing ---
 //
-// WHY THIS EXISTS. Asking only "what do I click" wastes the call. Measured in limits.mjs: 1
+// WHY THIS EXISTS. Asking only "what do I click" wastes the call. Measured by a limits probe: 1
 // question is 377ms and $0.000035, 30 questions are 336ms and $0.000051. Questions are free and
 // the STATE is what costs, so a loop that makes one call per decision is paying the page over and
 // over to learn one thing each time.

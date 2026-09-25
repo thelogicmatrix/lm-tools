@@ -1,12 +1,12 @@
 // Confidence-gated escalation, as a reusable module rather than a script.
 //
 // THE PATTERN (opportunity 10). Jev answers everything; only the uncertain tail reaches a full
-// model. Measured 2026-09-22 against Orion's own yearsAsked regex over 220 JDs: agreement was 98.4%
+// model. Measured 2026-09-22 against a job-board prefilter's own years-asked regex over 220 JDs: agreement was 98.4%
 // at confidence 0.95+, 88.9% at 0.80-0.95, and 58-67% below 0.80. So the expensive model never sees
 // the ~90% that is already settled, and cost lands only where the answer is genuinely close.
 //
-// This is not a product, it is a wrapper for the other sweeps. jevescalate.mjs is the JD-specific CLI
-// over it; anything else that produces {tags, extras} can call `selectUncertain` and `escalate`.
+// This is not a product, it is a wrapper for the other sweeps. The JD-specific CLI over it lives in the
+// author's private tree. Anything else that produces {tags, extras} can call `selectUncertain` and `escalate`.
 //
 // ⚠ THE VERIFIER IS NOT GROUND TRUTH. Asked the same question twice, Jev moved at most 0.08 while
 // headless Haiku moved 0.35. A disagreement means "a human should read this one", never "the big

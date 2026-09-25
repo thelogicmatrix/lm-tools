@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Turn the email tag sweep into a filing plan and a digest of only what needs a human.
 //
-// Builds on scripts/jev-sweep/jevmail.mjs, which tags a mailbox window for about $0.02 per 400
+// Builds on jevmail.mjs, which tags a mailbox window for about $0.02 per 400
 // messages. That produced numbers; this produces actions.
 //
 // ⚠ IT PROPOSES, IT DOES NOT FILE. Output is a plan plus a digest. Applying Gmail labels is a
@@ -24,12 +24,12 @@ import assert from 'node:assert';
 // Tag to label, in priority order: the FIRST rule that matches wins, so a rejection that also looks
 // automated files as a rejection. Order is the whole logic and it is why this is a list.
 const RULES = [
-  { tag: 'is_interview_invite', at: 0.7, label: 'Orion/Interview', act: 'reply needed' },
-  { tag: 'is_assessment', at: 0.7, label: 'Orion/Assessment', act: 'reply needed' },
-  { tag: 'is_rejection', at: 0.7, label: 'Orion/Rejected', act: 'log outcome' },
-  { tag: 'needs_reply', at: 0.6, label: 'Orion/Needs reply', act: 'reply needed' },
-  { tag: 'is_recruiter_outreach', at: 0.6, label: 'Orion/Recruiter', act: 'triage by hand' },
-  { tag: 'is_job_listing_alert', at: 0.8, label: 'Orion/Alerts', act: 'archive' },
+  { tag: 'is_interview_invite', at: 0.7, label: 'Jobs/Interview', act: 'reply needed' },
+  { tag: 'is_assessment', at: 0.7, label: 'Jobs/Assessment', act: 'reply needed' },
+  { tag: 'is_rejection', at: 0.7, label: 'Jobs/Rejected', act: 'log outcome' },
+  { tag: 'needs_reply', at: 0.6, label: 'Jobs/Needs reply', act: 'reply needed' },
+  { tag: 'is_recruiter_outreach', at: 0.6, label: 'Jobs/Recruiter', act: 'triage by hand' },
+  { tag: 'is_job_listing_alert', at: 0.8, label: 'Jobs/Alerts', act: 'archive' },
 ];
 
 // A message earns a human's attention only for these. Everything else is filed and forgotten,
@@ -57,12 +57,12 @@ export function suspicious(tags, snippetLen) {
 
 export function selftest() {
   // Priority: an interview invite that also needs a reply files as an interview.
-  assert.strictEqual(planFor({ is_interview_invite: 0.9, needs_reply: 0.9 }).label, 'Orion/Interview');
+  assert.strictEqual(planFor({ is_interview_invite: 0.9, needs_reply: 0.9 }).label, 'Jobs/Interview');
   // A rejection outranks the alert rule even when both fire.
-  assert.strictEqual(planFor({ is_rejection: 0.95, is_job_listing_alert: 0.99 }).label, 'Orion/Rejected');
+  assert.strictEqual(planFor({ is_rejection: 0.95, is_job_listing_alert: 0.99 }).label, 'Jobs/Rejected');
   // Thresholds are respected, and just below one must not file.
   assert.strictEqual(planFor({ is_interview_invite: 0.69 }).label, null);
-  assert.strictEqual(planFor({ is_interview_invite: 0.70 }).label, 'Orion/Interview');
+  assert.strictEqual(planFor({ is_interview_invite: 0.70 }).label, 'Jobs/Interview');
   // Alerts need a high bar because the tag fired on 87% of a real window.
   assert.strictEqual(planFor({ is_job_listing_alert: 0.79 }).label, null);
   // A failed sweep is skipped, never filed by default.

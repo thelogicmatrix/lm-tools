@@ -34,7 +34,7 @@ assert.deepStrictEqual([NaN, Infinity, -0.01, 1.01, '0.5', null, undefined].map(
   [false, false, false, false, false, false, false]);
 
 // toText, moved here from jevmail's selftest when jevmail stopped using it (postman sends text
-// since lm-tools #6). jevjd.mjs and exp-context.mjs still feed it raw bodies.
+// since lm-tools #6). The JD sweeps in the author's private tree still feed it raw bodies.
 // Quoted-printable, in the order that actually matters: a soft line break decoded after =XX
 // glues the words either side of it together.
 assert.strictEqual(toText('applic=\r\nation'), 'application');
