@@ -68,7 +68,9 @@ Fields in this order, and only these five:
     **Verified:** YYYY-MM-DD
 
 `Type` and `Purpose` are required. `Status` appears only on a retired or dormant file. `Run` is
-for procedures only. `Verified` records the last check against reality. The em dash in the
+for procedures only. `Verified` records the last check against reality. The router shows each
+routed runbook's age from it. Past 30 days, or with no date, it asks the agent to check a fact
+against the live system before acting on it and then set `Verified` to today. The em dash in the
 retired line is required by the lint.
 
 ## The commands

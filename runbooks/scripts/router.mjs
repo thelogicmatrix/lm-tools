@@ -94,7 +94,8 @@ export function parse(text, file) {
   const type = text.match(/^\*\*Type:\*\*\s*(\w+)/m)?.[1] ?? null;
   const purpose = text.match(/^\*\*Purpose:\*\*\s*([\s\S]*?)(?=\n\s*\n|\n\*\*|\n#|(?![\s\S]))/m)?.[1]
     ?.replace(/\s+/g, ' ').trim() ?? null;
-  return { file, type, purpose };
+  const verified = text.match(/^\*\*Verified:\*\*\s*(\d{4}-\d{2}-\d{2})/m)?.[1] ?? null;
+  return { file, type, purpose, verified };
 }
 
 export function loadCorpus(root, parseFn, prefix, keep) {
@@ -163,11 +164,27 @@ export function failNotice(why, attempts = 1) {
     + 'directly before starting.';
 }
 
-export function matchedBlock(hits) {
+// Freshness. The age rides the injected line only. The model never sees it, so routing scores
+// cannot move.
+export const STALE_DAYS = 30;
+export const STALE_LINE = `A runbook verified over ${STALE_DAYS} days ago, or never: before acting on one of its facts, `
+  + 'check that fact against the live system, fix the runbook if it is wrong, and set Verified to today.';
+// A missing or invalid date (2026-13-45 parses to NaN) reads as never verified.
+const daysSince = (d, now) => (d ? Math.floor((now - new Date(`${d}T00:00:00Z`)) / 86_400_000) : NaN);
+export function ageLabel(verified, now = new Date()) {
+  const d = daysSince(verified, now);
+  if (Number.isNaN(d)) return 'never verified';
+  return d <= 0 ? 'verified today' : `verified ${d} day${d === 1 ? '' : 's'} ago`;
+}
+
+export function matchedBlock(hits, now = new Date()) {
   if (!hits.length) return '';
+  // NaN fails every comparison, so a missing or invalid date counts as stale here.
+  const stale = hits.some((h) => !(daysSince(h.verified, now) <= STALE_DAYS));
   return 'Runbooks matched to this task (read before starting):\n'
     + hits.map((h) => `- ${h.file.replace(/\.md$/, '')} (${h.type}, `
-      + `${h.p.toFixed(2)}) — ${h.purpose}`).join('\n');
+      + `${h.p.toFixed(2)}, ${ageLabel(h.verified, now)}) — ${h.purpose}`).join('\n')
+    + (stale ? `\n${STALE_LINE}` : '');
 }
 
 // The Codex contract, as a function so the selftest checks the field names the hook actually
@@ -359,6 +376,30 @@ export async function selftest() {
 
   // An injected entry is labelled with its type.
   a.ok(matchedBlock([{ ...books[0], p: 0.9 }]).includes('standard'));
+
+  // Freshness: each routed runbook shows its age. A fixed now, so the case does not rot.
+  const NOW = new Date('2026-10-01T12:00:00Z');
+  a.strictEqual(parse('**Type:** reference\n**Purpose:** P.\n**Verified:** 2026-09-25\n', 'v.md').verified, '2026-09-25');
+  a.strictEqual(parse('**Type:** reference\n**Purpose:** P.\n', 'u.md').verified, null);
+  a.strictEqual(ageLabel('2026-09-25', NOW), 'verified 6 days ago');
+  a.strictEqual(ageLabel('2026-09-30', NOW), 'verified 1 day ago');
+  a.strictEqual(ageLabel('2026-10-01', NOW), 'verified today');
+  a.strictEqual(ageLabel(null, NOW), 'never verified');
+  const fresh = { file: 'f.md', type: 'reference', purpose: 'F.', verified: '2026-09-25', p: 0.9 };
+  const old = { file: 'o.md', type: 'reference', purpose: 'O.', verified: '2026-08-01', p: 0.9 };
+  const none = { file: 'n.md', type: 'reference', purpose: 'N.', verified: null, p: 0.9 };
+  a.ok(matchedBlock([fresh], NOW).includes('(reference, 0.90, verified 6 days ago)'));
+  a.ok(!matchedBlock([fresh], NOW).includes(STALE_LINE));
+  a.ok(matchedBlock([fresh, old], NOW).includes(STALE_LINE));
+  a.ok(matchedBlock([none], NOW).includes('never verified'));
+  a.ok(matchedBlock([none], NOW).includes(STALE_LINE));
+  // The cutoff, pinned by value: 30 days is still fresh, 31 is stale.
+  a.ok(!matchedBlock([{ ...fresh, verified: '2026-09-01' }], NOW).includes(STALE_LINE), '30 days is not stale');
+  a.ok(matchedBlock([{ ...fresh, verified: '2026-08-31' }], NOW).includes(STALE_LINE), '31 days is stale');
+  // An invalid date reads as never verified, never as NaN days.
+  a.strictEqual(ageLabel('2026-13-45', NOW), 'never verified');
+  a.ok(matchedBlock([{ ...fresh, verified: '2026-13-45' }], NOW).includes(STALE_LINE), 'an invalid date is stale');
+  a.ok(STALE_LINE.includes('verified over 30 days ago, or never'));
 
   // The walk itself is the thing under test here, so this runs against a real directory rather
   // than a mocked readdir. A retired fact must not route.
