@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { loadExtensions, settings } from "./config.mjs";
+import { loadConfig, loadExtensions, settings } from "./config.mjs";
 
 // The plugin root, so the lint's advisory names a command that runs from any cwd. The advisory
 // quotes it with forward slashes, so it pastes into bash and PowerShell alike on Windows.
@@ -41,7 +41,7 @@ export const DORMANT_RE = /^dormant\b/;
 // Verified joined 2026-09-24: a dated "checked against reality" stamp that nine runbooks already
 // carried, which this list rejected as unrecognised. It is the only freshness signal left, since the
 // 2026-09 sweeps put a September commit date on every file.
-const FIELDS = ["Type", "Status", "Purpose", "Run", "Verified"];
+const FIELDS = ["Type", "Status", "Project", "Purpose", "Run", "Verified"];
 // Only the first 800 bytes count as the header. One real runbook carries a second **Purpose:**
 // far down the body, and a whole-file regex would read that one instead.
 const HEAD_BYTES = 800;
@@ -60,10 +60,27 @@ export function parseHeader(head) {
   return {
     type: value("Type"),
     status: value("Status"),
+    project: value("Project"),
     purpose: value("Purpose"),
     run: value("Run"),
     order: [...found].sort((a, b) => a.at - b.at).map((f) => f.name),
   };
+}
+
+export const projectTags = (text) => (parseHeader(text).project ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+
+export function lintProject(slug, text, allowed) {
+  const value = parseHeader(text).project;
+  if (value === null) return [new RegExp("^\\*\\*Project:\\*\\*", "mi").test(text.slice(0, HEAD_BYTES))
+    ? `${slug}: empty **Project:** tag` : `${slug}: missing **Project:**`];
+  const tags = value.split(",").map((s) => s.trim());
+  const out = [];
+  if (tags.some((s) => !s)) out.push(`${slug}: empty **Project:** tag`);
+  for (const tag of tags.filter(Boolean)) {
+    if (tags.filter((s) => s === tag).length > 1 && !out.includes(`${slug}: duplicate project "${tag}"`)) out.push(`${slug}: duplicate project "${tag}"`);
+    if (!allowed.has(tag)) out.push(`${slug}: unknown project "${tag}"`);
+  }
+  return out;
 }
 
 const SPLIT_AT_WORDS = 2000;
@@ -290,12 +307,19 @@ async function runLint() {
     return;
   }
   const { dir, files } = runbookFiles(found);
+  const projects = loadConfig(root).projects;
+  const allowed = Array.isArray(projects) ? new Set(projects) : null;
   const rules = await loadExtensions(root, "lint");
   const problems = files.flatMap((f) => {
     const slug = f.slice(0, -3);
     const text = readFileSync(join(dir, f), "utf8");
-    return [...lintFile(slug, text), ...runLintExtensions(rules, { slug, text, header: parseHeader(text) })];
+    return [...lintFile(slug, text), ...(allowed ? lintProject(slug, text, allowed) : []), ...runLintExtensions(rules, { slug, text, header: parseHeader(text) })];
   });
+  if (allowed && existsSync(join(dir, "retired"))) {
+    for (const f of runbookFiles(join(dir, "retired")).files) {
+      problems.push(...lintProject(`retired/${f.slice(0, -3)}`, readFileSync(join(dir, "retired", f), "utf8"), allowed));
+    }
+  }
   const splits = problems.filter((p) => p.endsWith("consider splitting"));
   const violations = problems.filter((p) => !p.endsWith("consider splitting"));
   for (const p of violations) console.log(p);

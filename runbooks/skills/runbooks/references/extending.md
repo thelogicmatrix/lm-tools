@@ -36,6 +36,7 @@ empty.
 | `maxInject` | `6` | the most runbooks injected on one prompt |
 | `shortlist` | `30` | how many top-ranked runbooks the word match keeps, before every standard is added back |
 | `ledger` | `<runbooks folder>/.router-ledger.json` | where `check.mjs --record` writes |
+| `projects` | unset | allowed project slugs for lint, local packs, and retirement |
 
 A relative `dir` or `ledger` resolves from the folder that holds `.runbooks/`. A relative
 `RUNBOOKS_DIR` resolves from the working directory. A `writeBar` below `firesAt` counts as unset.

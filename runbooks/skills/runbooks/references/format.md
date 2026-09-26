@@ -31,11 +31,12 @@ Every file opens with this header, fields in this order:
     # <Name>
     **Type:** procedure | standard | reference | residual | postmortem
     **Status:** retired YYYY-MM-DD — what replaced it, or why it died
+    **Project:** one or more comma-separated project slugs
     **Purpose:** one line, what this is for and when it applies.
     **Run:** the single entry command
     **Verified:** YYYY-MM-DD
 
-`Type` and `Purpose` are required. The others appear only when they apply.
+`Type` and `Purpose` are required. When `.runbooks/config.json` lists `projects`, every live and retired runbook also needs `Project`. The lint rejects missing, empty, duplicate, and unknown slugs. The router does not use project tags.
 
 **`Status` is absence-based.** Only retired and dormant files carry it, in one of two forms:
 

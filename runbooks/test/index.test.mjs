@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { summarize, parseHeader, lintFile, retiredTail, missingPaths } from "../scripts/index.mjs";
+import * as projectIndex from "../scripts/index.mjs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const entry = (slug, type, purpose, status = null) => ({ slug, type, purpose, status });
 
@@ -197,6 +203,47 @@ test("parseHeader reads a retirement status", () => {
   assert.deepEqual(h.order, ["Type", "Status", "Purpose"]);
 });
 
+test("Project parses after Status and preserves comma-separated slugs", () => {
+  const source = "# Work\n**Type:** reference\n**Status:** retired 2026-09-24 \u2014 done\n**Project:** acme, project-b\n**Purpose:** Old work.\n";
+  const h = parseHeader(source);
+  assert.equal(h.project, "acme, project-b");
+  assert.deepEqual(h.order, ["Type", "Status", "Project", "Purpose"]);
+  assert.deepEqual(projectIndex.projectTags(source), ["acme", "project-b"]);
+  assert.deepEqual(lintFile("work", source), []);
+});
+
+test("project lint rejects missing, empty, duplicate, and unknown slugs", () => {
+  const allowed = new Set(["acme", "project-b"]);
+  const base = "# X\n**Type:** reference\n**Purpose:** Example.\n";
+  assert.match(projectIndex.lintProject("x", base, allowed).join(" "), /missing \*\*Project:\*\*/);
+  assert.match(projectIndex.lintProject("x", base.replace("**Purpose:**", "**Project:** \n**Purpose:**"), allowed).join(" "), /empty \*\*Project:\*\*/);
+  assert.match(projectIndex.lintProject("x", base.replace("**Purpose:**", "**Project:** acme, acme\n**Purpose:**"), allowed).join(" "), /duplicate project/);
+  assert.match(projectIndex.lintProject("x", base.replace("**Purpose:**", "**Project:** other\n**Purpose:**"), allowed).join(" "), /unknown project/);
+  assert.deepEqual(projectIndex.lintProject("x", base.replace("**Purpose:**", "**Project:** acme, project-b\n**Purpose:**"), allowed), []);
+});
+
+test("--lint checks Project in retired legacy notes without applying other header rules", (t) => {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "runbooks-project-lint-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  execFileSync("git", ["init", "-q", root]);
+  const dir = join(root, "docs", "runbooks");
+  mkdirSync(join(dir, "retired"), { recursive: true });
+  mkdirSync(join(root, ".runbooks"));
+  writeFileSync(join(root, ".runbooks", "config.json"), JSON.stringify({ dir, projects: ["acme"] }));
+  writeFileSync(join(dir, "live.md"), "# Live\n**Type:** reference\n**Project:** acme\n**Purpose:** Live.\n");
+  const old = join(dir, "retired", "old.md");
+  writeFileSync(old, "---\nname: old\n---\n**Status:** retired 2026-09-24 \u2014 done\n**Project:** acme\n");
+  const env = { ...process.env, HOME: root, USERPROFILE: root, LOCALAPPDATA: root, RUNBOOKS_DIR: "" };
+  const run = () => spawnSync(process.execPath, [fileURLToPath(new URL("../scripts/index.mjs", import.meta.url)), "--lint"], { cwd: root, env, encoding: "utf8" });
+  const good = run();
+  assert.equal(good.status, 0, good.stdout + good.stderr);
+  writeFileSync(old, "---\nname: old\n---\n**Status:** retired 2026-09-24 \u2014 done\n");
+  const bad = run();
+  assert.equal(bad.status, 1, bad.stdout + bad.stderr);
+  assert.match(bad.stdout, /retired\/old: missing \*\*Project:\*\*/);
+  assert.doesNotMatch(bad.stdout, /retired\/old: missing \*\*(Type|Purpose):\*\*/);
+});
+
 test("parseHeader matches a field label in any case", () => {
   // One runbook carried **STATUS:** in header position and a case-sensitive label match made
   // it invisible to both the index and the lint. A field that vanishes silently is the failure
@@ -223,7 +270,7 @@ test("a case-insensitive label does not loosen the retirement VALUE format", () 
 
 test("parseHeader returns nulls for a file with no header block", () => {
   const h = parseHeader("# Some Runbook\n\nJust prose, no fields.\n");
-  assert.deepEqual(h, { type: null, status: null, purpose: null, run: null, order: [] });
+  assert.deepEqual(h, { type: null, status: null, project: null, purpose: null, run: null, order: [] });
 });
 
 test("parseHeader ignores a **Purpose:** that appears past the header block", () => {
@@ -252,7 +299,7 @@ test("lintFile catches a missing purpose", () => {
 
 test("lintFile catches header fields out of canonical order", () => {
   const out = lintFile("x", "# X\n**Purpose:** p.\n**Type:** standard\n");
-  assert.deepEqual(out, ["x: header fields out of order (Purpose, Type), expected Type, Status, Purpose, Run, Verified"]);
+  assert.deepEqual(out, ["x: header fields out of order (Purpose, Type), expected Type, Status, Project, Purpose, Run, Verified"]);
 });
 
 test("lintFile catches a Status line that is not a retirement", () => {
@@ -334,15 +381,15 @@ test("lintFile accepts a Purpose that is the last line in the file", () => {
 test("lintFile catches an unrecognised field inside the header block", () => {
   const text = "# X\n**Type:** postmortem\n**Owner:** someone\n**Purpose:** p.\n";
   assert.deepEqual(lintFile("x", text), [
-    "x: unrecognised header field **Owner:**, expected one of Type, Status, Purpose, Run, Verified",
+    "x: unrecognised header field **Owner:**, expected one of Type, Status, Project, Purpose, Run, Verified",
   ]);
 });
 
 test("lintFile reports every unrecognised field, not just the first", () => {
   const text = "# X\n**Type:** postmortem\n**Source:** a discord export\n**Companion file:** other.md\n**Purpose:** p.\n";
   assert.deepEqual(lintFile("x", text), [
-    "x: unrecognised header field **Source:**, expected one of Type, Status, Purpose, Run, Verified",
-    "x: unrecognised header field **Companion file:**, expected one of Type, Status, Purpose, Run, Verified",
+    "x: unrecognised header field **Source:**, expected one of Type, Status, Project, Purpose, Run, Verified",
+    "x: unrecognised header field **Companion file:**, expected one of Type, Status, Project, Purpose, Run, Verified",
   ]);
 });
 

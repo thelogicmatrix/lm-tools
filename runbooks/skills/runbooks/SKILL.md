@@ -63,11 +63,12 @@ Fields in this order, and only these five:
     # <Name>
     **Type:** procedure | standard | reference | residual | postmortem
     **Status:** retired YYYY-MM-DD — why
+    **Project:** project slug, or comma-separated slugs when shared
     **Purpose:** one line, the tasks a reader is doing when they need this file.
     **Run:** the single entry command
     **Verified:** YYYY-MM-DD
 
-`Type` and `Purpose` are required. `Status` appears only on a retired or dormant file. `Run` is
+`Type` and `Purpose` are required. `Project` is required when config lists allowed `projects`, including in retired files. `Status` appears only on a retired or dormant file. `Run` is
 for procedures only. `Verified` records the last check against reality. The router shows each
 routed runbook's age from it. Past 30 days, or with no date, it asks the agent to check a fact
 against the live system before acting on it and then set `Verified` to today. The em dash in the
@@ -83,6 +84,8 @@ Run these from the repo that holds the runbooks. They find the folder the same w
 | `node <plugin>/scripts/check.mjs <runbook.md> "<prompt>" "<prompt>" "<prompt>" --not "<prompt>"` | Scores one purpose line through the live router. Add `--purpose "<text>"` to trial a rewrite, `--record` to save a passing run to the ledger. |
 | `node <plugin>/scripts/check.mjs --changed` | Re-scores only the purposes that moved since their ledger entry. Add `--dry` to list them free. |
 | `node <plugin>/scripts/router.mjs --selftest` | Checks the router offline, with no API call. |
+| `node <plugin>/scripts/projects.mjs pack --project <slug> --output <path.zip>` | Makes a local ZIP of tagged live and retired runbooks. Repeat `--exclude <relative-path>` to omit reviewed files. A scan finding stops the pack. |
+| `node <plugin>/scripts/projects.mjs retire --project <slug> [--apply]` | Previews moves and tag removals. `--apply` edits live runbooks after collision and dirty-file checks. |
 
 `check.mjs` makes one API call a prompt, about $0.0004 each. The lint and `--dry` are free.
 

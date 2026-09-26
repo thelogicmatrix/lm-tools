@@ -1,6 +1,6 @@
 {
   "name": "runbooks",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Typed runbooks routed per prompt over the jev-latest model, with a session-start index, a header lint and a purpose-line gate.",
   "author": { "name": "Nathan Wong" },
   "skills": "./skills/",

@@ -95,10 +95,19 @@ Every key is optional.
 | `maxInject` | `6` | the most runbooks injected on one prompt |
 | `shortlist` | `30` | how many top-ranked runbooks the word match keeps, before every standard is added back |
 | `ledger` | `<dir>/.router-ledger.json` | where `check.mjs --record` writes |
+| `projects` | unset | allowed `Project` slugs for runbook lint, packs, and retirement |
 
 Relative paths in `dir` and `ledger` resolve from the folder that holds `.runbooks/`.
 `RUNBOOKS_DIR` beats `dir`, and a relative one resolves from the working directory. A
 `writeBar` below `firesAt` counts as unset.
+
+## Project packs and retirement
+
+Add `**Project:** slug` after `Status`, if present, and before `Purpose`. Separate shared project slugs with commas. With a `projects` list in config, lint checks every top-level and retired runbook for a valid tag. Project tags do not affect routing.
+
+`node <plugin>/scripts/projects.mjs pack --project <slug> --output <path.zip> [--exclude <relative-path>]` creates a local ZIP of tagged live and retired runbooks and their same-slug companion folders. Its README lists the included runbooks, exclusions, and links outside the pack. The command refuses an existing ZIP, symbolic links in selected content, and scanner findings. It needs `gitleaks` and PowerShell on Windows or `zip` on Unix. The scan reports file and line, not matched values. Review the files and their audience before sharing a pack. The command never sends it.
+
+`node <plugin>/scripts/projects.mjs retire --project <slug>` previews the live files it would move or remove a tag from. Add `--apply` to edit them. Exclusive files receive a retired status and move to `retired/`. Shared files stay live and lose only that slug. Already retired files and companion folders stay in place. Commit the resulting edits in the runbook store after checking the diff and lint.
 
 ```json
 { "dir": "docs/ops", "maxInject": 4 }

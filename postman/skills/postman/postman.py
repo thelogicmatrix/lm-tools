@@ -916,7 +916,8 @@ def stamp_block(path, slug, when):
     throttle that leaves 1 to 6 already sent, and batching the writes loses every
     stamp in exactly the crash the stamp exists for.
     """
-    text = path.read_text(encoding="utf-8", newline="")
+    with path.open("r", encoding="utf-8", newline="") as source:
+        text = source.read()
     out, hit = [], False
     for line in text.splitlines(keepends=True):
         out.append(line)
@@ -927,7 +928,8 @@ def stamp_block(path, slug, when):
     if not hit:
         raise BatchError(f"stamp: no block named {slug!r} in {path}")
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text("".join(out), encoding="utf-8", newline="")
+    with tmp.open("w", encoding="utf-8", newline="") as dest:
+        dest.write("".join(out))
     tmp.replace(path)
 
 

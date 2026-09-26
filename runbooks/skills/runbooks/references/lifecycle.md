@@ -40,6 +40,8 @@ How to write the purpose line is in `purpose-lines.md`. This file is the process
 
 ## Parking a runbook
 
+For a whole project, run `node <plugin>/scripts/projects.mjs retire --project <slug>` first. Review its separate move and tag-removal lists. Add `--apply` to move exclusive live runbooks and remove the slug from shared live runbooks. Already retired files and companion folders stay in place. Check lint and commit the store edits with explicit paths.
+
 A live process that is not in use gets `**Status:** dormant YYYY-MM-DD, why`. It never routes and
 is named nowhere at session start. Delete the line to wake it. Use this instead of retiring a
 process that is only asleep.
