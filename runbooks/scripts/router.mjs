@@ -612,6 +612,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   } catch { prompt = ''; }
 
   // No runbooks folder: silent, and before the dedupe claim so a repo without runbooks writes nothing.
+  // ponytail: settings() spawns git rev-parse, so a duplicate copy pays that spawn before it exits.
+  // The first copy needs the folder to route at all, so moving it after the claim spares only the
+  // duplicate. Cache the git top per cwd in STATE_DIR if the spawn is ever measured to matter.
   const cfg = settings({ cwd: cwd || process.cwd() });
   if (!cfg.dir) process.exit(0);
 

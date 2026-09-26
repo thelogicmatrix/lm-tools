@@ -1,6 +1,6 @@
 {
   "name": "runbooks",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "runbooks - typed runbooks that find the session instead of waiting to be found: a per-prompt router that injects only the runbooks a task needs, a session-start index of the tails, a header lint, and a gate that tests a purpose line before it lands.",
   "author": { "name": "Nathan Wong" }
 }

@@ -5,7 +5,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadExtensions, settings } from "./config.mjs";
 
-// The plugin root, so the lint's advisory names a command that runs from any cwd.
+// The plugin root, so the lint's advisory names a command that runs from any cwd. The advisory
+// quotes it with forward slashes, so it pastes into bash and PowerShell alike on Windows.
 const PLUGIN = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 export const TYPES = new Set(["procedure", "standard", "reference", "postmortem", "residual"]);
@@ -241,14 +242,18 @@ export function summarize(entries, nudges = [], { pushed: withPushed = false } =
 }
 
 // .runbooks/nudges/*.mjs, all started at once under one shared deadline. A throw, a non-string
-// or a nudge still pending at the deadline drops that nudge only. The 1.2 s default keeps the
-// hook under 2 s wall: node spawn and teardown cost about 400 ms on the measuring laptop, and a
+// or a nudge still pending at the deadline drops that nudge only. `exts` may be the pending
+// loadExtensions() promise, and then the deadline covers the imports too. An import still
+// pending at the deadline drops every nudge, since loadExtensions imports them in turn.
+// ponytail: all-or-nothing on a slow import, per-file import races if one slow file ever costs
+// the others their line. The 1.2 s default keeps the hook under 2 s wall: node spawn and teardown cost about 400 ms on the measuring laptop, and a
 // nudge waiting on an unreachable server measured 1.84 to 2.10 s at a 1.5 s deadline.
 export async function runNudges(exts, ctx, deadlineMs = 1200) {
   let timer;
   const deadline = new Promise((r) => (timer = setTimeout(r, deadlineMs, null)));
+  const loaded = (await Promise.race([exts, deadline])) ?? [];
   const results = await Promise.all(
-    exts.map(({ fn }) => Promise.race([Promise.resolve().then(() => fn(ctx)).catch(() => null), deadline]))
+    loaded.map(({ fn }) => Promise.race([Promise.resolve().then(() => fn(ctx)).catch(() => null), deadline]))
   );
   clearTimeout(timer);
   return results.filter((s) => typeof s === "string" && s);
@@ -333,7 +338,7 @@ async function runLint() {
   if (t.changed.length || t.untested.length) {
     console.log(
       `\n${t.changed.length} purposes changed since their router check, ${t.untested.length} never checked ` +
-        `(advisory): node ${join(PLUGIN, "scripts", "check.mjs")} --changed`
+        `(advisory): node "${join(PLUGIN, "scripts", "check.mjs").replace(/\\/g, "/")}" --changed`
     );
     for (const f of t.changed) console.log(`  changed: ${f}`);
     for (const f of t.untested) console.log(`  never checked: ${f}`);
@@ -342,10 +347,24 @@ async function runLint() {
 }
 
 // A SessionStart hook gets a JSON payload on stdin. A TTY, an empty pipe or bad JSON reads as {}.
-function readInput() {
+// A sync read of fd 0 waits for EOF, so a pipe left open with nothing written hung the hook. The
+// read now has a deadline, and a caller that misses it resolves from the process cwd instead.
+// ponytail: 500 ms is headroom, not a measurement. A harness writes and closes at once, so only a
+// caller that never closes stdin ever waits it out.
+async function readInput(ms = 500) {
   if (process.stdin.isTTY) return {};
+  let raw = "";
+  await new Promise((done) => {
+    const timer = setTimeout(done, ms);
+    const finish = () => (clearTimeout(timer), done());
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (c) => (raw += c));
+    process.stdin.on("end", finish);
+    process.stdin.on("error", finish);
+  });
+  process.stdin.destroy();
   try {
-    return JSON.parse(readFileSync(0, "utf8") || "{}") ?? {};
+    return JSON.parse(raw || "{}") ?? {};
   } catch {
     return {};
   }
@@ -353,12 +372,9 @@ function readInput() {
 
 async function main() {
   if (process.argv.includes("--lint")) return runLint();
-  const input = readInput();
+  const input = await readInput();
   const { root, dir } = settings({ cwd: typeof input.cwd === "string" ? input.cwd : undefined });
   if (!dir) return; // no runbooks folder: silent, installing the plugin costs nothing
-  // Started before the runbook reads so the extension imports overlap them. The nudges
-  // themselves need `entries`, so they start once the reads are done.
-  const pendingExts = loadExtensions(root, "nudges");
   let files;
   try {
     ({ files } = runbookFiles(dir));
@@ -380,7 +396,10 @@ async function main() {
         return { slug, type: null, status: null, purpose: null, run: null, order: [] };
       }
     });
-  const nudges = await runNudges(await pendingExts, { root, dir, entries });
+  // The imports start here, after the reads, and runNudges holds them to its deadline. They used to
+  // start first on the theory that they overlapped the reads, but the reads are sync and block the
+  // loop, so nothing overlapped, and a slow import waited outside the deadline entirely.
+  const nudges = await runNudges(loadExtensions(root, "nudges"), { root, dir, entries });
   const out = summarize(entries, nudges, { pushed: process.argv.includes("--pushed") });
   // Exit explicitly once the output is flushed. A nudge dropped at the deadline can still hold
   // the process open: a half-open TCP connect measured keeping it alive to about 10.8 s.

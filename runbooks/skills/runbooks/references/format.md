@@ -51,9 +51,10 @@ Any other `Status` value is a lint violation.
 **`Verified`** records the date the runbook was last checked against reality. Commit dates stop
 meaning anything once a sweep has touched every file, so this is the freshness signal.
 
-**`Purpose` must be one physical line.** The parser reads a field to the end of its line and no
-further, so a purpose that wraps is silently truncated. Everything past the first line never
-reaches the index or the lint. Write it long if it needs to be long, but write it on one line. For
+**`Purpose` must be one physical line.** The index and the lint read a field to the end of its
+line and no further, so a purpose that wraps is silently truncated there. Everything past the
+first line never reaches the index or the lint. The router joins the wrapped lines, so a wrapped
+purpose routes on text the index never shows. Write it long if it needs to be long, but write it on one line. For
 standards and references the lint also fails a purpose over 25 words, because that line is the
 question the router asks. How to write one is in `purpose-lines.md`.
 

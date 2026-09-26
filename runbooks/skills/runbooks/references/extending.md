@@ -37,7 +37,8 @@ empty.
 | `shortlist` | `30` | how many top-ranked runbooks the word match keeps, before every standard is added back |
 | `ledger` | `<runbooks folder>/.router-ledger.json` | where `check.mjs --record` writes |
 
-A relative `dir` or `ledger` resolves from the folder that holds `.runbooks/`.
+A relative `dir` or `ledger` resolves from the folder that holds `.runbooks/`. A relative
+`RUNBOOKS_DIR` resolves from the working directory. A `writeBar` below `firesAt` counts as unset.
 
 ## 2. `nudges/<name>.mjs`
 
@@ -49,9 +50,12 @@ A line of your own at session start, printed after the tails. The default export
   `run` and `order`.
 - It returns a string to print, or null for nothing. It may be async.
 
-All nudges start at once under a shared 1.2 second deadline. A throw, a non-string or a nudge
-still pending at the deadline drops that nudge only. A file that throws on import, or whose
-default export is not a function, is skipped.
+All nudges start at once under a shared 1.2 second deadline, and the deadline counts their import
+time too. A throw, a non-string or a nudge still pending at the deadline drops that nudge only. So
+keep any timeout inside a nudge, a network call's included, well under 1.2 seconds, or the nudge is
+dropped before its own timeout can fire. An import still pending at the deadline drops every
+nudge, so keep slow work out of a module's top level. A file that throws on import, or whose
+default export is not a function, is skipped, and so is any `*.test.mjs`, here and in `lint/`.
 
 ## 3. `lint/<name>.mjs`
 

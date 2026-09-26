@@ -97,7 +97,8 @@ Every key is optional.
 | `ledger` | `<dir>/.router-ledger.json` | where `check.mjs --record` writes |
 
 Relative paths in `dir` and `ledger` resolve from the folder that holds `.runbooks/`.
-`RUNBOOKS_DIR` beats `dir`.
+`RUNBOOKS_DIR` beats `dir`, and a relative one resolves from the working directory. A
+`writeBar` below `firesAt` counts as unset.
 
 ```json
 { "dir": "docs/ops", "maxInject": 4 }
@@ -108,8 +109,9 @@ Relative paths in `dir` and `ledger` resolve from the folder that holds `.runboo
 A line of your own at session start. The default export takes `ctx` and returns a string, or
 null for nothing. It may be async. `ctx` is `{ root, dir, entries }`: the `.runbooks/` path,
 the runbooks folder and one parsed header per runbook (`slug`, `type`, `status`, `purpose`,
-`run`). All nudges run in parallel under a shared 1.2 second deadline. A throw or a timeout
-drops that nudge only.
+`run`). All nudges run in parallel under a shared 1.2 second deadline, import time included.
+A throw or a timeout drops that nudge only, so keep any timeout inside a nudge under 1.2
+seconds. A `*.test.mjs` beside it is skipped.
 
 ```js
 // .runbooks/nudges/no-purpose.mjs

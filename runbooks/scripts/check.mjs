@@ -28,7 +28,8 @@ const BAR = s.firesAt;
 const WRITE_BAR = s.writeBar;
 const ROUTE_OPTS = { firesAt: s.firesAt, maxInject: s.maxInject, shortlist: s.shortlist };
 
-if (!s.dir) { console.error('No runbooks folder found (RUNBOOKS_DIR, .runbooks/config.json dir, docs/runbooks).'); process.exit(2); }
+// Called after the usage parse, so a bad command line gets the usage line wherever it runs.
+const requireDir = () => { if (!s.dir) { console.error('No runbooks folder found (RUNBOOKS_DIR, .runbooks/config.json dir, docs/runbooks).'); process.exit(2); } };
 
 async function score(target, books, key, pos, neg) {
   const results = [];
@@ -53,6 +54,7 @@ const flag = (f) => { const i = args.indexOf(f); if (i < 0) return false; args.s
 const changedMode = flag('--changed'), dry = flag('--dry'), record = flag('--record');
 
 if (changedMode) {
+  requireDir();
   const books = J.loadAll(s.dir);
   const ledger = L.load(s.ledger);
   const t = L.triage(books, ledger);
@@ -84,6 +86,7 @@ if (changedMode) {
     else pos.push(args[i]);
   }
   if (!target || !pos.length) { console.error('usage: check.mjs <runbook.md> "<prompt>" ... [--not "<prompt>"] [--purpose "<text>"] [--record]  |  --changed [--dry]'); process.exit(2); }
+  requireDir();
 
   const key = J.readKey();
   if (!key) { console.error('no jev key, cannot score'); process.exit(2); }

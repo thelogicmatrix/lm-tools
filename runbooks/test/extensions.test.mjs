@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runNudges, runLintExtensions, summarize } from "../scripts/index.mjs";
+import { loadExtensions } from "../scripts/config.mjs";
 
 const INDEX = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "index.mjs");
 const ext = (name, fn) => ({ name, fn });
@@ -30,6 +31,20 @@ test("runNudges passes ctx through and keeps an async nudge that beats the deadl
   const ctx = { root: "r", dir: "d", entries: [{ slug: "x" }] };
   const out = await runNudges([ext("n", async (c) => `${c.dir} ${c.entries.length}`)], ctx, 50);
   assert.deepEqual(out, ["d 1"]);
+});
+
+test("runNudges holds the extension imports to the same deadline", async (t) => {
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "runbooks-imports-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const nudges = join(root, "nudges");
+  mkdirSync(nudges);
+  writeFileSync(join(nudges, "a.mjs"), 'export default () => "a";\n');
+  assert.deepEqual(await runNudges(loadExtensions(root, "nudges"), {}, 1000), ["a"]);
+  // A module whose top-level await outlasts the deadline. unref, so the test process can still exit.
+  writeFileSync(join(nudges, "slow.mjs"), 'await new Promise((r) => setTimeout(r, 5000).unref());\nexport default () => "slow";\n');
+  const started = Date.now();
+  assert.deepEqual(await runNudges(loadExtensions(root, "nudges"), {}, 100), []);
+  assert.ok(Date.now() - started < 1000, "the deadline, not the slow import, ends the wait");
 });
 
 test("runLintExtensions flattens rule arrays, ignores a non-array and drops a throw", () => {
@@ -65,7 +80,7 @@ function fixture() {
   const env = { ...process.env, HOME: base, USERPROFILE: base, RUNBOOKS_DIR: "" };
   const run = (...args) =>
     spawnSync(process.execPath, [INDEX, ...args], { input: JSON.stringify({ cwd: project }), env, encoding: "utf8" });
-  return { base, project, run };
+  return { base, project, env, run };
 }
 
 test("the hook appends a nudge extension's line and gives it the entries", () => {
@@ -89,4 +104,21 @@ test("the hook prints nothing and exits 0 when no runbooks folder resolves", () 
   rmSync(f.base, { recursive: true, force: true });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, "");
+});
+
+test("the hook does not hang on a stdin pipe that is never closed", async () => {
+  const f = fixture();
+  mkdirSync(join(f.project, "docs", "runbooks"), { recursive: true });
+  writeFileSync(join(f.project, "docs", "runbooks", "old-thing.md"), "# Old\n**Type:** postmortem\n**Purpose:** p.\n");
+  // stdin stays open and empty, so the hook falls back to its own cwd, which is the project.
+  const child = spawn(process.execPath, [INDEX], { cwd: f.project, env: f.env });
+  let out = "";
+  child.stdout.on("data", (c) => (out += c));
+  const killer = setTimeout(() => child.kill(), 5000);
+  const code = await new Promise((r) => child.on("exit", r));
+  clearTimeout(killer);
+  child.stdin.destroy();
+  rmSync(f.base, { recursive: true, force: true });
+  assert.equal(code, 0, "killed at 5 s means the stdin read blocked");
+  assert.match(out, /old-thing/);
 });

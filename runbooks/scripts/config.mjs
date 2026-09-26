@@ -44,9 +44,11 @@ export function loadConfig(rootDir) {
 // Relative paths in config.json are relative to the folder holding .runbooks/.
 const fromRoot = (root, p) => (isAbsolute(p) || !root ? resolve(p) : resolve(dirname(root), p));
 
-function dirFrom({ project, root, config, env, home }) {
+// A relative RUNBOOKS_DIR resolves from the cwd argument, not the process cwd, which for a hook is
+// wherever the harness happened to start it.
+function dirFrom({ cwd, project, root, config, env, home }) {
   const candidates = [
-    env.RUNBOOKS_DIR && resolve(env.RUNBOOKS_DIR),
+    env.RUNBOOKS_DIR && resolve(cwd, env.RUNBOOKS_DIR),
     typeof config.dir === 'string' && config.dir && fromRoot(root, config.dir),
     join(project, 'docs', 'runbooks'),
     join(home, 'docs', 'runbooks'),
@@ -58,7 +60,7 @@ function resolveAll({ cwd = process.cwd(), env = process.env, home = homedir() }
   const project = projectRoot(cwd);
   const root = rootFrom(project, cwd, home);
   const config = loadConfig(root);
-  return { root, config, dir: dirFrom({ project, root, config, env, home }) };
+  return { root, config, dir: dirFrom({ cwd, project, root, config, env, home }) };
 }
 
 export function resolveDir(opts) {
@@ -71,6 +73,8 @@ const num = (v, d) => (Number.isFinite(v) ? v : d);
 export function settings(opts) {
   const { root, config, dir } = resolveAll(opts);
   const firesAt = num(config.firesAt, DEFAULTS.firesAt);
+  // A writeBar under firesAt would pass a purpose the router never fires on, so it falls back too.
+  const writeBar = num(config.writeBar, -Infinity);
   const ledger = typeof config.ledger === 'string' && config.ledger
     ? fromRoot(root, config.ledger)
     : dir && join(dir, '.router-ledger.json');
@@ -78,7 +82,7 @@ export function settings(opts) {
     root,
     dir,
     firesAt,
-    writeBar: num(config.writeBar, +(firesAt + 0.05).toFixed(2)),
+    writeBar: writeBar >= firesAt ? writeBar : +(firesAt + 0.05).toFixed(2),
     maxInject: num(config.maxInject, DEFAULTS.maxInject),
     shortlist: num(config.shortlist, DEFAULTS.shortlist),
     ledger: ledger || null,
@@ -87,12 +91,13 @@ export function settings(opts) {
 
 const listFiles = (dir, ext) => (isDir(dir) ? readdirSync(dir).filter((f) => f.endsWith(ext)).sort() : []);
 
-// <root>/<kind>/*.mjs whose default export is a function. A file that throws on import is skipped.
+// <root>/<kind>/*.mjs whose default export is a function. A file that throws on import is skipped,
+// and so is a *.test.mjs, so an extension's own tests can sit beside it without running as one.
 export async function loadExtensions(root, kind) {
   if (!root) return [];
   const dir = join(root, kind);
   const out = [];
-  for (const file of listFiles(dir, '.mjs')) {
+  for (const file of listFiles(dir, '.mjs').filter((f) => !f.endsWith('.test.mjs'))) {
     try {
       const mod = await import(pathToFileURL(join(dir, file)).href);
       if (typeof mod.default === 'function') out.push({ name: basename(file, '.mjs'), fn: mod.default });
