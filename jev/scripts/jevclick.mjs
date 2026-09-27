@@ -16,6 +16,7 @@
 //   node jevclick.mjs --snapshot snap.txt --goal "..." --json   # machine-readable, for an agent loop
 //   node jevclick.mjs --snapshot snap.yml --goal "..." --ask            # + the standard page checks
 //   node jevclick.mjs --snapshot snap.yml --goal "..." --questions q.json # + your own vocabulary
+//   node jevclick.mjs --snapshot t3-snap.json --goal "..." --json  # T3 Code preview_snapshot JSON: adds selector, x, y
 //   node jevclick.mjs --selftest
 
 import fs from 'node:fs';
@@ -187,6 +188,31 @@ export async function askPage(snapshot, goal, key, opts = {}) {
 export const pickElement = (snapshot, goal, key, opts = {}) =>
   askPage(snapshot, goal, key, { ...opts, checks: {}, extra: {} });
 
+// T3 Code's browser (mcp__t3-code__preview_snapshot) returns JSON, not Playwright lines: an
+// `interactiveElements` list of {tag, role, name, selector, x, y, width, height} and a
+// `visibleText` string. Convert it to the line format above so everything downstream is unchanged,
+// and keep each element's selector so the caller can click the pick with preview_click. T3 leaves
+// `role` null for plain tags, so the tag stands in for it.
+const TAG_ROLE = { a: 'link', button: 'button', select: 'combobox', textarea: 'textbox', input: 'textbox', summary: 'button', option: 'option' };
+export function fromT3(text) {
+  let j;
+  try { j = JSON.parse(text); } catch { return null; }
+  if (!Array.isArray(j?.interactiveElements)) return null;
+  const targets = {};
+  const lines = j.interactiveElements.map((e, i) => {
+    const ref = `t${i}`;
+    targets[ref] = { selector: e.selector, x: e.x + (e.width ?? 0) / 2, y: e.y + (e.height ?? 0) / 2 };
+    // ponytail: an unmapped tag becomes a button so it stays a candidate, not dropped.
+    const role = e.role || TAG_ROLE[e.tag] || 'button';
+    // A name holding a literal `[ref=` would be read as the element's ref, so its brackets go.
+    const name = String(e.name ?? '').replace(/"/g, "'").replace(/\[/g, '(').replace(/\]/g, ')').replace(/\s+/g, ' ').trim();
+    return `- ${role}${name ? ` "${name}"` : ''} [ref=${ref}]`;
+  });
+  const textLines = String(j.visibleText ?? '').split('\n').filter((l) => l.trim())
+    .map((l) => `- text "${l.replace(/"/g, "'").trim()}"`);
+  return { snapshot: [...lines, ...textLines].join('\n'), targets };
+}
+
 export function selftest() {
   const snap = [
     '- generic [ref=e1]',
@@ -247,6 +273,29 @@ export function selftest() {
   // on a confidence that does not exist reads as 0 and would hold on every page.
   for (const [k, q] of Object.entries(PAGE_CHECKS)) assert.strictEqual(q.type, 'noul', `${k} must be a noul`);
   assert.ok(Object.keys(PAGE_CHECKS).length >= 4);
+
+  // --- T3 Code snapshots ---
+  const t3 = fromT3(JSON.stringify({
+    visibleText: 'Example Domain\n\nSay "hi"',
+    interactiveElements: [
+      { tag: 'a', role: null, name: 'Learn more', selector: 'body > a', x: 10, y: 20, width: 80, height: 20 },
+      { tag: 'div', role: 'button', name: 'Close "x"', selector: '#close', x: 0, y: 0, width: 10, height: 10 },
+      { tag: 'button', role: null, name: '', selector: '#icon', x: 0, y: 0, width: 0, height: 0 },
+      { tag: 'custom-el', role: null, name: 'Odd', selector: '#odd', x: 0, y: 0, width: 0, height: 0 },
+      { tag: 'a', role: null, name: 'see [ref=zz]', selector: '#trap', x: 0, y: 0, width: 0, height: 0 },
+    ],
+  }));
+  const t3els = parseSnapshot(t3.snapshot);
+  // Every element survives, a null role takes its tag's role, and an unknown tag stays a candidate.
+  assert.deepStrictEqual(t3els.map((e) => e.label),
+    ['link: Learn more', "button: Close 'x'", 'button: (no accessible name)', 'button: Odd', 'link: see (ref=zz)']);
+  // A literal `[ref=` in a name must not hijack the element's own ref.
+  assert.deepStrictEqual(t3els.map((e) => e.ref), ['t0', 't1', 't2', 't3', 't4']);
+  assert.deepStrictEqual(t3.targets.t0, { selector: 'body > a', x: 50, y: 30 });
+  assert.ok(snapshotText(t3.snapshot).includes("Say 'hi'"), 'visible text reaches the page state');
+  // Playwright YAML and non-snapshot JSON are not T3.
+  assert.strictEqual(fromT3('- button "Go" [ref=e1]'), null);
+  assert.strictEqual(fromT3('{"url":"x"}'), null);
   return 'jevclick selftest OK';
 }
 
@@ -264,8 +313,12 @@ if (!snapPath || !goal) { console.error('--snapshot <file> and --goal "..." requ
 // that wants only the click should not be charged for the page.
 const custom = opt('questions') ? JSON.parse(fs.readFileSync(opt('questions'), 'utf8')) : {};
 const wantsChecks = process.argv.includes('--ask') || Object.keys(custom).length > 0;
-const res = await askPage(fs.readFileSync(snapPath, 'utf8'), goal, key,
+const raw = fs.readFileSync(snapPath, 'utf8');
+const t3 = fromT3(raw);
+const res = await askPage(t3 ? t3.snapshot : raw, goal, key,
   { checks: wantsChecks ? PAGE_CHECKS : {}, extra: custom });
+// A T3 pick is clicked by selector (preview_click selector=..., or x/y), since T3 has no refs.
+if (t3 && res.candidate) Object.assign(res, t3.targets[res.candidate]);
 if (process.argv.includes('--json')) {
   console.log(JSON.stringify(res));
   // ⚠ exitCode, NEVER process.exit(), and this is not style. The HTTP socket from the call above is
@@ -290,7 +343,7 @@ for (const [k, v] of Object.entries(res.checks ?? {})) {
 console.log(`  state          ${res.stateChars} chars${res.textTruncated ? ' (page text truncated)' : ''}`);
 console.log(`  cost           $${(res.cost ?? 0).toFixed(6)}`);
 console.log(res.act
-  ? `\n  ACT: click ${res.ref}`
+  ? `\n  ACT: click ${res.selector ? `selector ${res.selector}` : res.ref}`
   : `\n  HOLD: confidence ${res.confidence.toFixed(2)} is below ${ACT_ABOVE}. Hand the snapshot to `
     + 'Claude rather than clicking — this is the ambiguous-page case the fixture could not cover.');
 }

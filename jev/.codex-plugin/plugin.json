@@ -1,6 +1,6 @@
 {
   "name": "jev",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "System One sweeps over the jev-latest model: ground text against sources, pick browser elements, tag mail and rows.",
   "author": { "name": "Nathan Wong" },
   "skills": "./skills/",
