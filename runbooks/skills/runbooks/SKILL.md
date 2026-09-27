@@ -95,4 +95,4 @@ Run these from the repo that holds the runbooks. They find the folder the same w
 - A standard or reference purpose is 25 words or fewer.
 - A new or changed purpose passes `check.mjs` before it is committed.
 - Retire, do not delete. The steps are in [references/lifecycle.md](references/lifecycle.md).
-- Never put customer data in a runbook. Every prompt and every purpose line is sent to OpenRouter.
+- Never put other people's personal details in a runbook. Every prompt and every purpose line is sent to OpenRouter.

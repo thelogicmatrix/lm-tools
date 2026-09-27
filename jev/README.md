@@ -8,7 +8,7 @@ Moved here 2026-09-24 from the home monorepo: `scripts/jev-sweep/` (now `scripts
 `skills/jevchecker/`) and `docs/runbooks/jevclassify.mjs` (now `scripts/jevclassify.mjs`).
 History before that date is in the author's private monorepo.
 
-Never run any of these on customer data: the whole body goes to OpenRouter.
+Never run any of these on other people's personal details: the whole body goes to OpenRouter.
 
 The runbook matcher prototype that used to live in `scripts/` is now the `runbooks` plugin
 (`../runbooks/README.md`), which routes runbooks per prompt at a 0.8 bar.

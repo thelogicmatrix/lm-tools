@@ -1,6 +1,6 @@
 ---
 name: jevchecker
-description: Sweeps a large body of text for a nuanced criterion and returns only the parts worth reading, so a Claude context sees the shortlist instead of the whole body. Use when the corpus is too big or too costly to read in full and the criterion is one a regex cannot express, such as grounding hundreds of generated bullets against the sources they came from. The shipped resume sweep is a calibration case, since one resume is small enough to read. Never use on customer data, because the whole body is posted to OpenRouter. Do not use when the body is small enough to just read, when the question compares one part against another, or when a verdict is wanted rather than a shortlist.
+description: Sweeps a large body of text for a nuanced criterion and returns only the parts worth reading, so a Claude context sees the shortlist instead of the whole body. Use when the corpus is too big or too costly to read in full and the criterion is one a regex cannot express, such as grounding hundreds of generated bullets against the sources they came from. The shipped resume sweep is a calibration case, since one resume is small enough to read. Never use on other people's personal details, because the whole body is posted to OpenRouter. Do not use when the body is small enough to just read, when the question compares one part against another, or when a verdict is wanted rather than a shortlist.
 ---
 
 # jevchecker
@@ -16,11 +16,11 @@ can, 140 characters at a time. A resume bullet runs 185 to 390 characters, so th
 three quarters of each one. Torn and unanswered rows print their path only. With `--json` the full
 text of every candidate, torn, unanswered and clean chunk is written to the file, untruncated.
 
-> **Never point this at customer PII.** The whole body is posted to OpenRouter, a third party, and
+> **Never point this at other people's personal details.** The whole body is posted to OpenRouter, a third party, and
 > there is no path-based refusal stopping you: this warning and the one in the description are the
 > control. Out of a Claude context is not off the machine, and per the paragraph above the terminal
 > and any `--json` file are not out of a Claude context either. Resumes, notes and public documents
-> are fine. Customer names, accounts, holdings, transactions and identifiers are not, in any file,
+> are fine. Other people's names, contact details, accounts and identifiers are not, in any file,
 > ever.
 
 ```

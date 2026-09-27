@@ -7,7 +7,7 @@ Tags: code, config, data-export. Any artifact containing source, configuration, 
 ## Attacks
 - Injection: untrusted input concatenated into a SQL query, shell command, file path, template, or eval (CWE-89/78/22).
 - Broken authorization: missing/incorrect access check, IDOR, privilege escalation, SSRF (OWASP 2025 A01).
-- Secrets & PII leakage: hardcoded credential/token/key; customer PII written to git, logs, cloud, or output. ENFORCES the org rule — no customer PII off-machine.
+- Secrets & PII leakage: hardcoded credential/token/key; PII written to git, logs, cloud, or output.
 - Unsafe defaults: security misconfiguration, verbose error leakage, permissive CORS, debug enabled in prod (OWASP 2025 A02).
 - Supply-chain: unpinned / known-vulnerable / typosquatted dependency (OWASP 2025 Software Supply Chain Failures).
 

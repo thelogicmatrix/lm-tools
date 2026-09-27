@@ -165,8 +165,7 @@ Do not hand-edit this file.*
 
 One row per active effort. Each project links to its narrative
 page in this folder, which is where its \`## Current state\` lives.
-This table carries pointers only. Work projects carry name and
-status only, never customer data or work content.
+This table carries pointers only.
 
 Change a row with \`projects status <slug> <status>\`, or its other
 fields with \`projects set <slug> --where W --repo R\`. Rename one with

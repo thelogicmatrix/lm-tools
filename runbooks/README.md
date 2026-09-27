@@ -6,7 +6,7 @@ document covered it never gets looked up. `runbooks` asks the question per promp
 cheap model call scores each runbook's purpose line against the task and injects only the
 matches.
 
-**Never put customer data in a runbook.** Every prompt and every purpose line is sent to
+**Never put other people's personal details in a runbook.** Every prompt and every purpose line is sent to
 OpenRouter.
 
 ## Install
