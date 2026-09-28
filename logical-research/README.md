@@ -1,4 +1,4 @@
-# logical-research: research you can hand to a model
+# logical-research: research once, keep it usable
 
 A summary gets read once and forgotten. logical-research reads your sources in full and writes context you can paste into a model later, with every claim graded and traced to where it came from.
 
@@ -31,11 +31,11 @@ An optional seventh phase turns the research into a permanent review lens pack f
 
 ## Install
 
-Add the lm-tools marketplace as the [root README](../README.md) shows, then:
+Add the logical-tools marketplace as the [root README](../README.md) shows, then:
 
 ```
-/plugin install logical-research@lm-tools        # Claude Code
-codex plugin add logical-research@lm-tools       # Codex
+/plugin install logical-research@logical-tools        # Claude Code
+codex plugin add logical-research@logical-tools       # Codex
 ```
 
 Or copy the skill folder into a project's or your user `.claude/skills/`. A copy does not update with the plugin.

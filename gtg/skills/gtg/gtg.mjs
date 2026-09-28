@@ -324,7 +324,7 @@ function firstHandoffDate(slug) {
 }
 
 // Family grouping. The parent already exists as a docs/projects/ page - the
-// projects skill owns that hierarchy, gtg only points at it.
+// logical-projects skill owns that hierarchy, gtg only points at it.
 // Resolution order: the flag the skill passes from session context, then a
 // slug-prefix match against INDEX.md page slugs. Never asks; an unresolved
 // parent just lists the project as standalone.

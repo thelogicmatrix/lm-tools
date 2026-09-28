@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// lm-tools statusline - two rows, built only from the payload Claude Code
+// logical-tools statusline - two rows, built only from the payload Claude Code
 // hands a status line command on stdin. No cache files, no side state.
 //
 // Row 1: model | effort | dir | context bar used% | account

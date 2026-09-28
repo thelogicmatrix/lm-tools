@@ -1,5 +1,5 @@
 ---
-description: Install the lm-tools status line into this account's settings.json
+description: Install the logical-tools status line into this account's settings.json
 ---
 
 Wire `scripts/statusline.js` from this plugin into the user's Claude Code settings.

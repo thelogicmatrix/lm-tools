@@ -1,4 +1,4 @@
-# gtg: leave mid-task, pick it up cold days later
+# gtg: todo list and handoffs for AI
 
 Walking away mid-task usually means re-explaining everything next session. Say "gtg" and the agent writes a handoff that a fresh session can resume from, with no re-explaining and no re-litigating.
 
@@ -21,11 +21,11 @@ Entries stay until the work is finished. The agent completes one itself when a d
 
 ## Install
 
-Add the lm-tools marketplace as the [root README](../README.md) shows, then:
+Add the logical-tools marketplace as the [root README](../README.md) shows, then:
 
 ```
-/plugin install gtg@lm-tools        # Claude Code
-codex plugin add gtg@lm-tools       # Codex
+/plugin install gtg@logical-tools        # Claude Code
+codex plugin add gtg@logical-tools       # Codex
 ```
 
 Or copy `skills/gtg/` into your project or user `.claude/skills/` as a frozen copy that never updates. You need Node 18 or later and git on PATH.

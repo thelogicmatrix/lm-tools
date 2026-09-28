@@ -1,4 +1,4 @@
-// The public tree names no person, machine or private address. lm-tools is worked on in a private
+// The public tree names no person, machine or private address. logical-tools is worked on in a private
 // repo and published to GitHub by hand, and this runs in CI on every push so a leak fails before
 // the publish instead of after it. On 2026-09-28 a hard-coded Tailscale address, two machine names
 // and an employer's name were found already public.
@@ -47,21 +47,21 @@ function scanTree() {
 }
 
 test('each rule catches its named case and leaves the near misses alone', () => {
-  assert.deepEqual(scanLine('jev/scripts/x.mjs', "// Classify Nathan's repos"), ['owner name']);
+  assert.deepEqual(scanLine('jevtools/scripts/x.mjs', "// Classify Nathan's repos"), ['owner name']);
   assert.deepEqual(scanLine('gtg/x.mjs', "const SYNC_REMOTE = 'obelisk-backup'"), ['machine name']);
   assert.deepEqual(scanLine('gtg/x.mjs', '// reborn is Windows'), ['machine name']);
   assert.deepEqual(scanLine('postman/x.py', '# Syfe logo, inline'), ['employer']);
-  assert.deepEqual(scanLine('jev/x.mjs', "const HOST = 'http://100.75.143.3:3300'"), ['Tailscale address']);
-  assert.deepEqual(scanLine('jev/x.mjs', 'http://100.64.0.1 and 100.127.255.255'), ['Tailscale address']);
+  assert.deepEqual(scanLine('jevtools/x.mjs', "const HOST = 'http://100.75.143.3:3300'"), ['Tailscale address']);
+  assert.deepEqual(scanLine('jevtools/x.mjs', 'http://100.64.0.1 and 100.127.255.255'), ['Tailscale address']);
   assert.deepEqual(scanLine('x.md', 'box.tail1234.ts.net'), ['Tailscale hostname']);
   assert.deepEqual(scanLine('x.md', '100.63.0.1 and 100.128.0.1 are public'), []);
 });
 
 test('the credit allowance is the full name in credit files only', () => {
   assert.deepEqual(scanLine('LICENSE', 'Copyright (c) 2026 Nathan Wong'), []);
-  assert.deepEqual(scanLine('jev/.codex-plugin/plugin.json', '"developerName": "Nathan Wong",'), []);
+  assert.deepEqual(scanLine('jevtools/.codex-plugin/plugin.json', '"developerName": "Nathan Wong",'), []);
   assert.deepEqual(scanLine('README.md', 'By [Nathan Wong](https://github.com/thelogicmatrix).'), []);
-  assert.deepEqual(scanLine('jev/README.md', 'By Nathan Wong'), ['owner name'], 'a plugin README is not a credit file');
+  assert.deepEqual(scanLine('jevtools/README.md', 'By Nathan Wong'), ['owner name'], 'a plugin README is not a credit file');
   assert.deepEqual(scanLine('LICENSE', 'Copyright (c) 2026 Nathan'), ['owner name'], 'the first name alone is not the credit');
   assert.deepEqual(scanLine('README.md', 'Nathan Wong runs this on obelisk'), ['machine name']);
 });

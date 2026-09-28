@@ -1,7 +1,7 @@
 {
-  "name": "lm-tools",
+  "name": "logical-tools",
   "interface": {
-    "displayName": "lm-tools"
+    "displayName": "logical-tools"
   },
   "plugins": [
     {
@@ -23,14 +23,14 @@
       "category": "Research"
     },
     {
-      "name": "projects",
-      "source": { "source": "local", "path": "./projects" },
+      "name": "logical-projects",
+      "source": { "source": "local", "path": "./logical-projects" },
       "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
       "category": "Productivity"
     },
     {
-      "name": "learn",
-      "source": { "source": "local", "path": "./learn" },
+      "name": "logical-learning",
+      "source": { "source": "local", "path": "./logical-learning" },
       "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
       "category": "Education"
     },
@@ -41,8 +41,8 @@
       "category": "Productivity"
     },
     {
-      "name": "jev",
-      "source": { "source": "local", "path": "./jev" },
+      "name": "jevtools",
+      "source": { "source": "local", "path": "./jevtools" },
       "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
       "category": "Developer Tools"
     },

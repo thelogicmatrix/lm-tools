@@ -1,7 +1,7 @@
 {
   "name": "due-diligence",
   "version": "1.5.3",
-  "description": "Adversarial pre-ship review and build-to-standard construction using a modular lens system.",
+  "description": "Your harshest critic. due-diligence sends a critic after your work before anyone else sees it, and cdd hands you the same checklists (lenses) before you start. Extend it by adding or replacing a lens in .dd/lenses/.",
   "author": { "name": "Nathan Wong" },
   "skills": "./skills/",
   "interface": {

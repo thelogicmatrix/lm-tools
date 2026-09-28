@@ -1,6 +1,6 @@
 {
   "name": "gtg",
   "version": "4.3.0",
-  "description": "Got to Go - pause/resume workflow for Claude Code sessions: say 'gtg' to write a handoff before you leave, 'gtg X' to resume cold days later.",
+  "description": "Todo list and handoffs for AI. Say 'gtg' and the agent writes a handoff a fresh session can resume from. Say 'gtg <project>' next time and it carries on from the next action. Extend it with your own subcommands and after-handoff steps in .gtg/.",
   "author": { "name": "Nathan Wong" }
 }

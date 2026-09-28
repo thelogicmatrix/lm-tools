@@ -1,6 +1,6 @@
 # Extending logical-research
 
-logical-research follows the lm-tools two-tier contract: a core you don't touch, and a tier you own.
+logical-research follows the logical-tools two-tier contract: a core you don't touch, and a tier you own.
 
 | Tier | Where | Updates? |
 |---|---|---|

@@ -9,15 +9,15 @@ By [Nathan Wong](https://github.com/thelogicmatrix).
 Add the marketplace, then install whichever plugins you want. They are independent.
 
 ```
-/plugin marketplace add thelogicmatrix/lm-tools
-/plugin install gtg@lm-tools
+/plugin marketplace add thelogicmatrix/logical-tools
+/plugin install gtg@logical-tools
 ```
 
 In Codex:
 
 ```
-codex plugin marketplace add thelogicmatrix/lm-tools
-codex plugin add gtg@lm-tools
+codex plugin marketplace add thelogicmatrix/logical-tools
+codex plugin add gtg@logical-tools
 ```
 
 Swap `gtg` for any plugin name below. Both harnesses run the same source, not copied ports. Most plugins are also a plain skill folder you can copy into `.claude/skills/` for a frozen copy that never updates.
@@ -29,19 +29,19 @@ Say "gtg" and the agent writes a handoff a fresh session can resume from. Say "g
 
 Functionally, just a todo list with notes attached, made smart by handoffs and git. Simple in concept, magical in practice. **Extend it** with your own subcommands and after-handoff steps in `.gtg/`.
 
-### [logical-projects](projects/README.md): basic project tracking
+### [logical-projects](logical-projects/README.md): basic project tracking
 A generated index of every project and one page each, and a `sync` that checks both against the repos so the table never quietly goes stale. No extension point yet, deliberately.
 
 ### [postman](postman/README.md): the ultimate email manager
 Sends cold email and threaded replies from your own mailbox. If any reply in a batch cannot find its thread, nothing sends. **Extend it** with one identity per mailbox, each with its own signature, voice and password command.
 
-### [jevtools](jev/README.md): primitive tools made for big work
+### [jevtools](jevtools/README.md): primitive tools made for big work
 A fast, cheap model reads a large body of text first and hands your agent only the parts worth its attention. **Extend it** with a new sweep, one JSON file each.
 
 ### [due-diligence](due-diligence/README.md): your harshest critic
 `due-diligence` sends a critic after your work before anyone else sees it, and `cdd` hands you the same checklists (lenses) before you start. **Extend it** by adding or replacing a lens in `.dd/lenses/`.
 
-### [logical-learning](learn/README.md): your personal tutor
+### [logical-learning](logical-learning/README.md): your personal tutor
 One subject, one project you want, one new concept per session, and a pass/fail gate at the end of each session that you don't get to mark yourself. **Extend it** with your own study tracks in `.learn/tracks/`.
 
 ### [runbooks](runbooks/README.md): immediate intelligent context injection

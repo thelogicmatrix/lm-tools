@@ -37,11 +37,11 @@ If the scoring call can't run (no API key, no internet), the plugin says so rath
 
 ## Install
 
-Add the lm-tools marketplace as the [root README](../README.md) shows, then:
+Add the logical-tools marketplace as the [root README](../README.md) shows, then:
 
 ```
-/plugin install runbooks@lm-tools        # Claude Code
-codex plugin add runbooks@lm-tools       # Codex
+/plugin install runbooks@logical-tools        # Claude Code
+codex plugin add runbooks@logical-tools       # Codex
 ```
 
 Codex may ask you to trust the plugin's hooks once before they fire.

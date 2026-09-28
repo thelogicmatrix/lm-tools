@@ -1,4 +1,4 @@
-# due-diligence: work that holds up under a hostile reviewer
+# due-diligence: your harshest critic
 
 Work that looks fine can still be wrong. This plugin sends a critic after it before anyone else sees it, and hands you the same checklists before you start, so there is less to find.
 
@@ -29,14 +29,14 @@ The review works out what the work is and picks only the lenses it needs. Any ge
 
 ## Install
 
-Add the lm-tools marketplace as the [root README](../README.md) shows, then:
+Add the logical-tools marketplace as the [root README](../README.md) shows, then:
 
 ```
-/plugin install due-diligence@lm-tools        # Claude Code
-codex plugin add due-diligence@lm-tools       # Codex
+/plugin install due-diligence@logical-tools        # Claude Code
+codex plugin add due-diligence@logical-tools       # Codex
 ```
 
-For a frozen copy that never updates, copy both skill folders side by side into `.claude/skills/`, from the root of an lm-tools clone:
+For a frozen copy that never updates, copy both skill folders side by side into `.claude/skills/`, from the root of a logical-tools clone:
 
 ```
 cp -r due-diligence/skills/due-diligence due-diligence/skills/cdd <your-repo>/.claude/skills/

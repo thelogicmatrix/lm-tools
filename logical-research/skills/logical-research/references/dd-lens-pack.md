@@ -3,7 +3,7 @@
 Read this only when phases 1–6 are done and the corpus produced durable principles worth turning
 into permanent review capability.
 
-Written against the [`due-diligence`](https://github.com/thelogicmatrix/lm-tools) plugin's lens
+Written against the [`due-diligence`](https://github.com/thelogicmatrix/logical-tools) plugin's lens
 format. If you use a different review framework, the mapping still holds — only the file shapes change.
 
 ## The mapping is direct

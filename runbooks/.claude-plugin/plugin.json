@@ -1,6 +1,6 @@
 {
   "name": "runbooks",
   "version": "1.2.1",
-  "description": "runbooks - typed runbooks that find the session instead of waiting to be found: a per-prompt router that injects only the runbooks a task needs, a session-start index of the tails, a header lint, and a gate that tests a purpose line before it lands.",
+  "description": "Immediate intelligent context injection. Short files of procedures, rules and lookup tables. On every prompt a cheap model picks the ones that apply and points the agent to them before it answers. Extend it with thresholds, lint rules and session-start lines in .runbooks/.",
   "author": { "name": "Nathan Wong" }
 }

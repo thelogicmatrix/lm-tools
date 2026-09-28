@@ -1,51 +1,51 @@
 {
-  "name": "lm-tools",
+  "name": "logical-tools",
   "owner": { "name": "Nathan Wong" },
   "plugins": [
     {
       "name": "gtg",
       "source": "./gtg",
-      "description": "Got to Go - pause/resume framework for Claude Code: say 'gtg' to write a handoff before you leave, 'let's continue X' to resume cold days later. Extend with your own commands and hooks."
+      "description": "Todo list and handoffs for AI. Say 'gtg' and the agent writes a handoff a fresh session can resume from. Say 'gtg <project>' next time and it carries on from the next action. Extend it with your own subcommands and after-handoff steps in .gtg/."
     },
     {
       "name": "due-diligence",
       "source": "./due-diligence",
-      "description": "Due Diligence — adversarial pre-ship review + build-to-standard construction (cdd): a modular 44-lens framework you extend with your own lenses to fit your work."
+      "description": "Your harshest critic. due-diligence sends a critic after your work before anyone else sees it, and cdd hands you the same checklists (lenses) before you start. Extend it by adding or replacing a lens in .dd/lenses/."
     },
     {
       "name": "logical-research",
       "source": "./logical-research",
-      "description": "Logical Research — Scan a question or Pack a corpus (a channel, a book, a doc set) into reusable context: evidence-graded claims, sources ranked by authority, per-item notes and a traceable bibliography at Pack. Extend it with your own reading angles."
+      "description": "Research once, keep it usable. Reads a question's sources, or a whole channel, book or doc set, in full, and writes context you can paste into a model later, with every claim graded and traced. Extend it with reading angles you reuse in .lr/angles/."
     },
     {
-      "name": "projects",
-      "source": "./projects",
-      "description": "projects — the portfolio layer: a generated index of everything you have going, one narrative page per project, and a sync that checks every row against reality instead of trusting a table a model maintained."
+      "name": "logical-projects",
+      "source": "./logical-projects",
+      "description": "Basic project tracking. A generated index of every project and one page each, and a sync that checks both against the repos so the table never quietly goes stale."
     },
     {
-      "name": "learn",
-      "source": "./learn",
-      "description": "learn — self-directed learning sprints on any subject: pick a track, build something real, and let a graded mastery gate decide whether you advance or repeat. Bring your own track for anything the built-in two do not cover."
+      "name": "logical-learning",
+      "source": "./logical-learning",
+      "description": "Your personal tutor. One subject, one project you want, one new concept per session, and a pass/fail gate at the end of each session that you don't get to mark yourself. Extend it with your own study tracks in .learn/tracks/."
     },
     {
       "name": "statusline",
       "source": "./statusline",
-      "description": "statusline - a two-row status line built only from the payload Claude Code hands it: model, effort, project, context fill, which login is driving the session, usage windows, and session cost. No cache, no background writer."
+      "description": "Usage and context at a glance. Context fill and usage limits in the footer of Claude Code and Codex, with nothing running in the background, plus an on-demand session cost estimate in Codex."
     },
     {
       "name": "postman",
       "source": "./postman",
-      "description": "postman - real outbound email from your own mailboxes: address verification before anything sends, byte-exact signatures it never regenerates, and replies resolved live against the mailbox so they thread onto the existing conversation. Bring your own identities and your own secret store."
+      "description": "The ultimate email manager. Sends cold email and threaded replies from your own mailbox. If any reply in a batch cannot find its thread, nothing sends. Extend it with one identity per mailbox, each with its own signature, voice and password command."
     },
     {
-      "name": "jev",
-      "source": "./jev",
-      "description": "jev - System One sweeps over the jev-latest model: jevchecker grounds generated text against its sources, jevclick picks a browser element from a snapshot, jevmail tags a mailbox, jevclassify labels repos."
+      "name": "jevtools",
+      "source": "./jevtools",
+      "description": "Primitive tools made for big work. A fast, cheap model reads a large body of text first and hands your agent only the parts worth its attention. Extend it with a new sweep, one JSON file each."
     },
     {
       "name": "runbooks",
       "source": "./runbooks",
-      "description": "runbooks - typed runbooks routed per prompt: one cheap model call scores each purpose line against the task and injects only the matches, a session-start index names the rest, and a lint and a purpose gate keep the headers honest. Extend it with your own config, nudges, lint rules and standard files."
+      "description": "Immediate intelligent context injection. Short files of procedures, rules and lookup tables. On every prompt a cheap model picks the ones that apply and points the agent to them before it answers. Extend it with thresholds, lint rules and session-start lines in .runbooks/."
     }
   ]
 }

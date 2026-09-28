@@ -12,11 +12,11 @@ jobs:
       - run: node --test test/*.test.mjs
       - run: node gtg/test/gtg.test.mjs
       - run: node gtg/test/issues.test.mjs
-      - run: node projects/test/projects.test.mjs
-      - run: node projects/test/projects-index-guard.test.mjs
+      - run: node logical-projects/test/projects.test.mjs
+      - run: node logical-projects/test/projects-index-guard.test.mjs
       # Learn's write-failure test uses a read-only sprint file. Its writer checks the mode
       # explicitly because Forgejo's ubuntu-latest runner may execute as root.
-      - run: node learn/test/learn.test.mjs
+      - run: node logical-learning/test/learn.test.mjs
       - run: node --test runbooks/test/*.test.mjs
       - uses: actions/setup-python@v5
         if: github.server_url == 'https://github.com'

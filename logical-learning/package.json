@@ -1,0 +1,11 @@
+{
+  "name": "logical-learning",
+  "version": "1.0.0",
+  "description": "Self-directed learning sprints: one concept a session, closed by a graded mastery gate.",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "private": true,
+  "scripts": {
+    "test": "node --test test/learn.test.mjs"
+  }
+}

@@ -1,4 +1,4 @@
-# statusline: your model, context and usage limits at a glance
+# statusline: usage and context at a glance
 
 Your context fill and usage limits in the footer of Claude Code and Codex, with nothing running in the background.
 
@@ -41,12 +41,12 @@ That is the API price, not your ChatGPT subscription cost. An unpriced model get
 
 ## Install
 
-Add the lm-tools marketplace as the [root README](../README.md) shows. You need Node.
+Add the logical-tools marketplace as the [root README](../README.md) shows. You need Node.
 
 Claude Code:
 
 ```
-/plugin install statusline@lm-tools
+/plugin install statusline@logical-tools
 /statusline-install
 ```
 
@@ -55,7 +55,7 @@ Re-run `/statusline-install` after each plugin update, because it installs a cop
 Codex:
 
 ```
-codex plugin add statusline@lm-tools
+codex plugin add statusline@logical-tools
 ```
 
 Then ask Codex `$statusline install`. Restart the session or Codex afterwards.

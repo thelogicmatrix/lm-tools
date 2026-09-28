@@ -170,7 +170,7 @@ assert.throws(
 
   const projectReadme = fs.readFileSync(path.join(root, '..', 'README.md'), 'utf8');
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-  assert.match(projectReadme, /codex plugin add statusline@lm-tools/);
+  assert.match(readme, /codex plugin add statusline@logical-tools/);
   assert.doesNotMatch(projectReadme, /no Codex equivalent/);
   assert.match(readme, /\$statusline cost/);
   assert.match(readme, /API-equivalent/);

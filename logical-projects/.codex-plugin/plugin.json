@@ -1,0 +1,22 @@
+{
+    "name":  "logical-projects",
+    "version": "2.0.0",
+    "description":  "Basic project tracking. A generated index of every project and one page each, and a sync that checks both against the repos so the table never quietly goes stale.",
+    "author":  {
+                   "name":  "Nathan Wong"
+               },
+    "skills":  "./skills/",
+    "interface":  {
+                      "displayName":  "Logical Projects",
+                      "shortDescription":  "Keep the project portfolio grounded in reality",
+                      "longDescription":  "Manage project transitions through a generated index, narrative pages, reality checks, and a guard against hand-editing generated state.",
+                      "developerName":  "Nathan Wong",
+                      "category":  "Productivity",
+                      "capabilities":  [
+                                           "Interactive",
+                                           "Read",
+                                           "Write"
+                                       ],
+                      "defaultPrompt":  "Show me the current project portfolio status."
+                  }
+}

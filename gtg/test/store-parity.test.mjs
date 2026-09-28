@@ -20,7 +20,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const MINE = join(HERE, '..', 'skills', 'gtg', 'lib', 'store.mjs');
 // Sibling plugin in the same repo. Absent when gtg is installed on its own out of the plugin
 // cache, which is the one case where there is no second copy to drift from.
-const THEIRS = join(HERE, '..', '..', 'projects', 'skills', 'projects', 'lib', 'store.mjs');
+const THEIRS = join(HERE, '..', '..', 'logical-projects', 'skills', 'logical-projects', 'lib', 'store.mjs');
 
 const code = (path, name) => readFileSync(path, 'utf8')
   .split(/\r?\n/)
@@ -28,7 +28,7 @@ const code = (path, name) => readFileSync(path, 'utf8')
   .join('\n')
   .split(`${name}:`).join('<plugin>:');
 
-test('the gtg and projects store.mjs copies have identical code', { skip: existsSync(THEIRS) ? false : 'projects plugin not checked out beside this one' }, () => {
+test('the gtg and logical-projects store.mjs copies have identical code', { skip: existsSync(THEIRS) ? false : 'logical-projects plugin not checked out beside this one' }, () => {
   assert.equal(code(MINE, 'gtg'), code(THEIRS, 'projects'),
     'lib/store.mjs has drifted between the two plugins - a fix landed in one copy and not the other');
 });

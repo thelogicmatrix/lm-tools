@@ -1,7 +1,7 @@
 {
   "name": "statusline",
   "version": "1.1.0",
-  "description": "Native Codex status-line setup with an optional API-equivalent session cost estimate.",
+  "description": "Usage and context at a glance. Context fill and usage limits in the footer of Claude Code and Codex, with nothing running in the background, plus an on-demand session cost estimate in Codex.",
   "author": { "name": "Nathan Wong" },
   "skills": "./skills/",
   "interface": {

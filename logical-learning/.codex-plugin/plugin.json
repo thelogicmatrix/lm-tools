@@ -1,0 +1,16 @@
+{
+  "name": "logical-learning",
+  "version": "1.0.0",
+  "description": "Your personal tutor. One subject, one project you want, one new concept per session, and a pass/fail gate at the end of each session that you don't get to mark yourself. Extend it with your own study tracks in .learn/tracks/.",
+  "author": { "name": "Nathan Wong" },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Logical Learning",
+    "shortDescription": "Run practical learning sprints",
+    "longDescription": "Study one concept at a time through a real project, then use an evidence-based mastery gate to advance or repeat.",
+    "developerName": "Nathan Wong",
+    "category": "Education",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": "Start a learning sprint for this subject."
+  }
+}

@@ -1,4 +1,4 @@
-# postman: real email from a batch file you can read
+# postman: the ultimate email manager
 
 Twelve venues to email, forty applications, or one reply that has to land on the right thread. postman sends them from your own mailbox, and it is built around what it refuses to send.
 
@@ -27,11 +27,11 @@ On the read side, `inbox` accounts for every message in the window, and its head
 
 ## Install
 
-Add the lm-tools marketplace as the [root README](../README.md) shows, then:
+Add the logical-tools marketplace as the [root README](../README.md) shows, then:
 
 ```
-/plugin install postman@lm-tools        # Claude Code
-codex plugin add postman@lm-tools       # Codex
+/plugin install postman@logical-tools        # Claude Code
+codex plugin add postman@logical-tools       # Codex
 ```
 
 You need Python 3.9 or newer and a Gmail account with an app password. Install the two dependencies with `pip install markdown dnspython`.

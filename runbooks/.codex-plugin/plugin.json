@@ -1,7 +1,7 @@
 {
   "name": "runbooks",
   "version": "1.2.1",
-  "description": "Typed runbooks routed per prompt over the jev-latest model, with a session-start index, a header lint and a purpose-line gate.",
+  "description": "Immediate intelligent context injection. Short files of procedures, rules and lookup tables. On every prompt a cheap model picks the ones that apply and points the agent to them before it answers. Extend it with thresholds, lint rules and session-start lines in .runbooks/.",
   "author": { "name": "Nathan Wong" },
   "skills": "./skills/",
   "hooks": "./.codex-plugin/hooks.json",
