@@ -19,6 +19,7 @@ import path from 'node:path';
 import { settings } from './config.mjs';
 import * as J from './router.mjs';
 import * as L from './ledger.mjs';
+import { PUSHED, PURPOSE_MAX_WORDS } from './index.mjs';
 
 const s = settings({ cwd: process.cwd() });
 const BAR = s.firesAt;
@@ -88,11 +89,16 @@ if (changedMode) {
   if (!target || !pos.length) { console.error('usage: check.mjs <runbook.md> "<prompt>" ... [--not "<prompt>"] [--purpose "<text>"] [--record]  |  --changed [--dry]'); process.exit(2); }
   requireDir();
 
-  const key = J.readKey();
-  if (!key) { console.error('no jev key, cannot score'); process.exit(2); }
   const books = J.loadAll(s.dir).map((b) => (b.file === target && purpose ? { ...b, purpose } : b));
   const doc = books.find((b) => b.file === target);
   if (!doc) { console.error(`${target} is not in the router corpus (missing, or no Type/Purpose line)`); process.exit(2); }
+  // The same cap the lint enforces, checked before any scoring: a line that passes the router but
+  // fails the lint used to get recorded as passed (claude-stack-latency, 55 words, 2026-09-28).
+  const words = doc.purpose.split(/\s+/).filter(Boolean).length;
+  if (PUSHED.has(doc.type) && words > PURPOSE_MAX_WORDS) { console.error(`${target}: purpose is ${words} words, keep it to ${PURPOSE_MAX_WORDS}`); process.exit(1); }
+
+  const key = J.readKey();
+  if (!key) { console.error('no jev key, cannot score'); process.exit(2); }
 
   const results = await score(target, books, key, pos, neg);
   const failed = results.filter((r) => !r.ok).length;

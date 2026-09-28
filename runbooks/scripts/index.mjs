@@ -84,7 +84,7 @@ export function lintProject(slug, text, allowed) {
 }
 
 const SPLIT_AT_WORDS = 2000;
-const PURPOSE_MAX_WORDS = 25;
+export const PURPOSE_MAX_WORDS = 25;
 // A header field line. `[^*]` keeps this from spanning two bold spans, so prose like
 // "**one** and **two:**" is not read as a field.
 const FIELD_LINE = /^\*\*([^*]+):\*\*/;
