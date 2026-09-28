@@ -862,7 +862,7 @@ Storage root: GTG_HUB env var if set, else the enclosing git repo.
 With <root>/.gtg/forge.json the store is Forgejo/Gitea milestones instead of files
 (skills/gtg/references/forge-store.md). log, undo, stats and report need the file store.
 stats/report ship bundled; unknown commands dispatch to <root>/.gtg/commands/<name>.mjs,
-which overrides a bundled one of the same name - see README "Extending gtg".`);
+which overrides a bundled one of the same name - see skills/gtg/references/extending.md.`);
 }
 
 // --- review: one completion question per command ------------------------------

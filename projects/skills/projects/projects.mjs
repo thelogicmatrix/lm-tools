@@ -20,8 +20,8 @@ export const STATUS_ORDER = ['active', 'ops', 'paused', 'done'];
 // 39 rows, not invented: fewer and citsim's worldbuilding rows sit somewhere that does not
 // describe them, more and a section holds one project.
 // Adding or renaming one? Markdown cannot interpolate this, so six prose statements go stale with
-// it: SKILL.md:18-19 and :30, README.md:34 and :51-52, plus the count word in each ("Six themes",
-// "deliberately six"). The CLI's own copies are derived (HELP and validateTheme both interpolate
+// it: SKILL.md:18-19 and :30, and README.md's themes paragraph under "What it is", plus the count
+// word in each ("Six themes", "one of six themes"). The CLI's own copies are derived (HELP and validateTheme both interpolate
 // THEME_ORDER) and need no edit. The inventory lives here so the edit and its fallout are adjacent.
 export const THEMES = {
   work: 'Work',

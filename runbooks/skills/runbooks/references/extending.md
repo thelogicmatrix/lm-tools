@@ -76,3 +76,11 @@ hides the core violations.
 Writing rules of your own. Read every `standard/*.md` alongside this skill's `references/`. A
 file with the same name as a bundled reference (`format`, `lifecycle`, `purpose-lines`,
 `extending`) overrides it. A new name adds to the set.
+
+## Project packs and retirement
+
+Add `**Project:** slug` after `Status`, if present, and before `Purpose`. Separate shared project slugs with commas. With a `projects` list in config, lint checks every top-level and retired runbook for a valid tag. Project tags do not affect routing.
+
+`node <plugin>/scripts/projects.mjs pack --project <slug> --output <path.zip> [--exclude <relative-path>]` creates a local ZIP of tagged live and retired runbooks and their same-slug companion folders. Its README lists the included runbooks, exclusions, and links outside the pack. The command refuses an existing ZIP, symbolic links in selected content, and scanner findings. It needs `gitleaks` and PowerShell on Windows or `zip` on Unix. The scan reports file and line, not matched values. Review the files and their audience before sharing a pack. The command never sends it.
+
+`node <plugin>/scripts/projects.mjs retire --project <slug>` previews the live files it would move or remove a tag from. Add `--apply` to edit them. Exclusive files receive a retired status and move to `retired/`. Shared files stay live and lose only that slug. Already retired files and companion folders stay in place. Commit the resulting edits in the runbook store after checking the diff and lint.

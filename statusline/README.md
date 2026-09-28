@@ -1,89 +1,69 @@
-# statusline
+# statusline: your model, context and usage limits at a glance
 
-One package with harness-native status lines for Claude Code and Codex.
+Your context fill and usage limits in the footer of Claude Code and Codex, with nothing running in the background.
 
-## Claude Code
+## What it shows
 
-Claude gets the original two-row renderer directly from the JSON payload supplied to its status
-line command. It has no cache file, background writer, or state of its own.
+Claude Code gets two rows:
 
 ```
 Opus 5 | hi | orion | █░░░░░░░░░ 12% | personal
-5h:42% ↻ 7:26p | 7d:8% | $3.46
+5h:42% ↺ 7:26p | 7d:8% | $3.46
 ```
 
-**Row 1** model, effort level, project directory, context fill, account. **Row 2** the
-5-hour usage window with its reset time, the 7-day window, and session cost. Optional data
-disappears instead of rendering dashes.
+Codex gets one row.
 
-Install it with:
+| Field | Claude Code | Codex |
+| --- | --- | --- |
+| Model and effort | Yes | Yes |
+| Project | Yes | Yes |
+| Context used | Bar and percent | Yes |
+| 5-hour limit | Percent and reset time | Yes |
+| Weekly limit | Percent | Yes |
+| Account | Yes | No |
+| Session cost | Yes | On demand |
 
-```
-/statusline-install
-```
+In Claude Code, context and the 5-hour limit go yellow at 50 percent, orange at 70 and blinking red at 80. The weekly limit stays grey. Missing data drops out rather than showing a dash.
 
-The command copies `scripts/statusline.js` to `<config-dir>/hooks/statusline-lm.js` and updates
-`settings.json`. Re-run it after plugin updates. `CLAUDE_STATUSLINE_ACCOUNT` overrides the account
-label. Otherwise the label comes from `CLAUDE_CONFIG_DIR` (`.claude` reads as `personal`).
+## How it works
 
-Context fill and the 5-hour window share pressure bands: green under 50 percent, yellow to 70,
-orange to 80, and blinking red above that. The 7-day window stays grey.
+Claude Code hands the script the session's details on each refresh. The script keeps no state of its own.
 
-## Codex
+Codex only allows built-in footer items, so the installer switches on five and leaves your other settings alone. It asks before replacing a different footer.
 
-Codex supports a native single-row footer made from predefined items. Install the plugin, then ask
-the skill to configure it:
-
-```powershell
-codex plugin add statusline@lm-tools
-```
-
-```text
-$statusline install
-```
-
-The installer surgically adds this to `$CODEX_HOME/config.toml` (normally
-`~/.codex/config.toml`) while preserving every other setting:
-
-```toml
-[tui]
-status_line = ["model-with-reasoning", "project-name", "context-used", "five-hour-limit", "weekly-limit"]
-status_line_use_colors = true
-```
-
-If a different status line already exists, the installer stops rather than replacing it without
-approval. Restart Codex after installation.
-
-### Vibes cost
-
-Codex does not support custom calculated footer items. Its native `estimated-thread-cost` item
-only renders on Enterprise workspaces (per the item description in codex-cli 0.156.1). The local
-rollout still contains the same
-model and cumulative token data used by `/status`. Get an on-demand estimate with:
-
-```text
-$statusline cost
-```
-
-Example:
+Codex's own cost item only shows on Enterprise workspaces, so `$statusline cost` gives a vibes cost from the session log, at OpenAI's API rates:
 
 ```
 ~$2.37 · gpt-5.6-sol · 193.9K uncached in + 3.33M cached in + 13.2K out · API-equivalent, not billed
 ```
 
-This is intentionally fun, not accounting. It applies the API token prices captured on 2026-08-27
-for GPT-5.6 Sol, Terra, or Luna, prices cache reads and cache writes separately, and does not count
-reasoning tokens twice. It is not the cost of a ChatGPT subscription session. Unknown future models
-fail clearly until the pricing snapshot is updated. The estimate uses the published base token rates.
-It does not reconstruct per-request long-context surcharges or tool fees. Pricing source:
-<https://developers.openai.com/api/docs/models/compare>. Cache-write multiplier source:
-<https://developers.openai.com/api/docs/guides/prompt-caching>.
+That is the API price, not your ChatGPT subscription cost. An unpriced model gets a clear error.
 
-## Test
+## Install
 
-```powershell
-npm test
+Add the lm-tools marketplace as the [root README](../README.md) shows. You need Node.
+
+Claude Code:
+
+```
+/plugin install statusline@lm-tools
+/statusline-install
 ```
 
-The suite covers the Claude renderer plus Codex config preservation, conflict handling, session
-selection, subagent exclusion, cache-aware cost arithmetic, and plugin packaging.
+Re-run `/statusline-install` after each plugin update, because it installs a copy.
+
+Codex:
+
+```
+codex plugin add statusline@lm-tools
+```
+
+Then ask Codex `$statusline install`. Restart the session or Codex afterwards.
+
+## Details
+
+- Claude's account label is `CLAUDE_STATUSLINE_ACCOUNT` if set, else the `CLAUDE_CONFIG_DIR` folder name (`.claude` reads as `personal`).
+- The Codex footer goes under `[tui]` in `$CODEX_HOME/config.toml`, normally `~/.codex/config.toml`.
+- Prices cover GPT-5.6 Sol, Terra and Luna as of 2026-08-27, in `scripts/statusline-codex.mjs`. Cache reads and writes are priced separately. Reasoning tokens count once. Long-context surcharges and tool fees are excluded. Sources: [model prices](https://developers.openai.com/api/docs/models/compare), [prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
+- The Enterprise-only limit is per the item description in codex-cli 0.156.1.
+- Tests: `npm test`.

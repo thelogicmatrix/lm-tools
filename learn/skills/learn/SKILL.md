@@ -19,6 +19,7 @@ or `.learn/tracks/<name>.md` for a learner override of the same name.
 | Trigger | Do this |
 |---|---|
 | "learn tracks" / "what tracks are there" | `learn tracks`, relay. **Stop.** |
+| "write my own track" / "change how a track works" | Follow [references/extending.md](references/extending.md). |
 | "I want to learn X" / "start a learning sprint" | Follow [references/starting-a-sprint.md](references/starting-a-sprint.md). |
 | `learn start` printed `GTG-NEW <slug>` | A directive to you; `learn` never spawns gtg. Create that gtg project with `--parent learning` per gtg's own skill. No gtg installed: say so once, carry on. |
 | "what week am I on" / "where did we get to" | `learn week`, relay. **Stop.** |

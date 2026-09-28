@@ -58,4 +58,4 @@ gone. A row with no `repo` is invisible to both.
 Set it on every project with its own checkout: `projects set <slug> --repo <path>`. Leave it
 blank on a docs-only, Notion-only or home-checkout project. Pointing such a row at the home
 repo would compare it against a repo that commits many times a day for unrelated reasons, so
-`STALE` could never fire and the check would be noise wearing the costume of a signal.
+`STALE` would fire on almost every sync and the check would be noise wearing the costume of a signal.

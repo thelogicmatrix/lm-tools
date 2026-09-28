@@ -15,7 +15,7 @@ Run everything from this skill's own directory.
 the working directory is never searched. Copy the plugin's
 `.postman/identities.example.json` to `~/.postman/identities.json` and put your own
 mailbox in it before anything else - not into the plugin's own directory, which updates
-overwrite. The README covers the fields.
+overwrite. `references/extending.md` covers the fields.
 
 The reason there is no search: `pw_cmd` is **executed**, and the same file names an
 `assets` directory that is concatenated into outbound mail. A config found by standing in

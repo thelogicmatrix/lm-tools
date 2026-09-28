@@ -173,7 +173,7 @@ one pass; don't. The strongest cross-cutting themes typically only become visibl
 the way through.
 
 If the repo has `.lr/angles/*.md`, read the ones matching the requested angle and let them shape
-the angle section — that's your own extension tier (see the plugin README).
+the angle section — that's your own extension tier (see `references/extending.md`).
 
 ### 5. Synthesise
 

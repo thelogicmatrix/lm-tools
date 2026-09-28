@@ -23,5 +23,8 @@ scorecard, and the escalation rule in SKILL.md reads the scorecard.
 2. If it needs a new knowledge base, add `references/res_<domain>.md` first, research-backed,
    and cite it.
 3. Add one row, or extend a tag row, in [lens-selection.md](lens-selection.md).
+4. Open a pull request against lm-tools.
+
+An override matches by filename only, so name an override after the shipped lens's file in `references/lenses/` (`security-secrets.md`, not `security.md`).
 
 Either way, no dispatcher code to touch.

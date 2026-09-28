@@ -1,77 +1,72 @@
-# learn — self-directed learning sprints for Claude Code
+# learn: learning sprints that test whether it stuck
 
-You want to learn something. Four weeks later you have read a lot, built nothing, and cannot tell whether any of it stuck. `learn` runs the other shape: a sprint anchored to a project you actually want, one new concept per session, and a **pass/fail mastery gate** at the end of every session that decides whether the next one moves on or takes another run at the same concept.
+You read about a subject for four weeks, build nothing, and can't tell whether any of it stuck. `learn` runs a sprint around a project you actually want, one new concept per session, with a pass/fail gate at the end of each session that you don't get to mark yourself.
 
-**The differentiator is that the gate is real and it is not yours to self-certify.** A model that agrees with everything is a mirror, not a feedback loop — so the gate is graded against the track's own criterion, a failed gate repeats the concept with a *different* worked example rather than a re-read, and a verify exercise has a floor so it cannot quietly get skipped forever. A CLI holds the week number, the concept, the gate history and that floor, so none of it depends on a model remembering what happened last Tuesday.
+## What a sprint is
+
+A sprint is a few weeks on one subject, anchored to something you want to build or write. Each session teaches one concept and ends on a **mastery gate**. A pass moves on to a new concept. A fail repeats the same concept next session with a different worked example, not a re-read. A short "spot the flaw" **verify exercise** is due at least every two weeks, so it can't quietly get skipped forever.
+
+A **track** sets how one kind of subject is studied, including how the gate is graded. Two ship:
+
+| Track | For subjects that | Examples |
+| --- | --- | --- |
+| `code` | produce working code | Python, SQL, APIs |
+| `concept` | don't | marketing, strategy, theory, design, history |
+
+## How it works
+
+Say "I want to learn X" and the skill fires. It scopes the sprint, picks a track and runs each session. A small CLI keeps the books: week number, concept, gate history and the verify floor. None of it depends on a model remembering last Tuesday.
+
+Two other lm-tools plugins pair with it, and it runs without either:
+
+- **[gtg](../gtg)** keeps the story between sessions: what got built and where you stopped. `learn` holds none of that, and `gtg learn` lists your sprints.
+- **[logical-research](../logical-research)** sources each week's concept and can gap-check your plan against real curricula. Link to the pack it returns, never copy it into the sprint. If it is unavailable, the sprint goes on with a "cross-check skipped" note.
 
 ## Install
 
+Add the lm-tools marketplace as the [root README](../README.md) shows, then:
+
 ```
-/plugin marketplace add thelogicmatrix/lm-tools
 /plugin install learn@lm-tools
 ```
 
-Node 18+. No dependencies, no second runtime.
+You need Node 18 or later and git. There are no other dependencies.
 
-## Use
+## Where things live
 
-Say "I want to learn X" and the skill fires. Everything below is also a plain CLI you can run yourself:
+Everything lives at the top of your current git repo. Set `LEARN_HUB` to keep one learning hub across many repos instead.
+
+- `.learn/sprints/<slug>.json` is each sprint's state.
+- `.learn/tracks/` holds your own tracks.
+- `.learn/profile.md` is your learner profile. `learn profile` reads it, and you write it.
+- `docs/learning/<slug>/` holds what you write: `sprint.md` for the goal and weekly milestones, then one page per week.
+
+## Commands
+
+`learn` is short for `node <plugin>/skills/learn/learn.mjs`, where `<plugin>` is the plugin's install folder.
 
 ```
 learn tracks                           list every track, bundled and your own
-learn start <subject> --track <name>   create the sprint, its content directory and its sprint.md
+learn start <subject> --track <name>   create the sprint and its sprint.md
 learn week                             what week, what concept, what is due
-learn gate <pass|fail> [--verified]    record the mastery gate and advance the week
-learn page [concept]                   stamp this week's reference page from the template
-learn brief [--for F] [--tier T]       write a corpus brief for logical-research (body on stdin)
+learn gate <pass|fail> [--verified]    record the gate and advance the week
+learn page [concept]                   stamp this week's page from the template
+learn brief [--for week|curriculum]    write a brief for logical-research (body on stdin)
 learn profile                          read the learner profile
 learn help                             print the verb list
+cd <plugin> && npm test                the plugin's tests
 ```
 
-`week`, `gate`, `page` and `brief` act on the one sprint in the tree. With more than one they refuse rather than guess, and take `--sprint <slug>`. `brief` also takes `--for <week|curriculum>` (default `week`), `--shape <synthesis|synthesis+notes|synthesis+notes+raw>` (default `synthesis+notes`), `--research-root <dir>` (default `docs/research`), and `--tier <scan|pack>` (optional, logical-research picks when absent). The weekly research pass writes one brief per week at `docs/learning/<slug>/corpus-brief-week-<N>.md`, and `--for curriculum` writes the cross-check's own `docs/learning/<slug>/corpus-brief-curriculum.md`.
+`--verified` records that a verify exercise ran. With more than one sprint, pass `--sprint <slug>`.
 
-**Upgrading from 0.3.x.** The corpus brief is now written per week and per target, not once per
-sprint: the weekly pass writes `corpus-brief-week-<N>.md` and the cross-check writes
-`corpus-brief-curriculum.md`. An existing `corpus-brief.md` is inert, nothing reads it. Rename it
-to `corpus-brief-week-1.md` if you want it back in play, or delete it.
+## Extend it
 
-Sprint state lives in `.learn/` inside the current git repo — `sprints/<slug>.json`, your own tracks in `tracks/`, the profile at `profile.md`. Set `LEARN_HUB` to keep one learning hub across many repos. Everything you write lives under `docs/learning/<slug>/`: `sprint.md`, scaffolded by `learn start` for the sprint goal and the weekly milestones, and then one week page per week. `page` and `brief` both refuse to overwrite a file that already exists, so a hand-edited one is never clobbered by a re-run. Nothing writes `profile.md` — `learn profile` reads it, and you write it.
+Write your own track, or replace `code` or `concept` with a file of the same name in `.learn/tracks/`. A track is six fixed headings, and the skill follows one it has never seen. See [extending.md](skills/learn/references/extending.md).
 
-`start`, `gate`, `page` and `brief` commit what they wrote, naming only their own paths, so a store that lives in a checkout shared with other work is never left dirty. The commit is skipped when the store root is not itself a git toplevel — an untracked `LEARN_HUB`, or one that merely sits inside somebody else’s repo — because there is nothing there that asked for the sprint. If the commit itself cannot go through — the commonest cause is a repo that gitignores `docs/`, so the week page can never be added — the write still stands on disk, nothing is left staged, and the verb exits 1 naming git's own reason.
+The defaults (session length, one concept per session, the two-week verify floor, the binary gate) are guesses. [pedagogy.md](skills/learn/references/pedagogy.md) keeps the five cited frameworks behind the design apart from those invented numbers.
 
-Exit `2` is a usage or environment error, exit `1` is a real operation that failed with nothing advanced, exit `0` is success.
+## Details
 
-## Tracks — and writing your own
-
-A **track** is how one *kind* of subject is studied. Two ship: `code`, for subjects that produce working code, and `concept`, for subjects that do not — marketing, strategy, theory, design, history. The skill never guesses which; it reads each track's `Pick this when` section and chooses from that.
-
-A track is a markdown file with six `##` headings, and the skill reads it by heading rather than by name, which is what lets it follow a track it has never seen:
-
-| Heading | What it answers |
-|---|---|
-| `Pick this when` | which subjects this track is for — read before choosing, never inferred from the subject name |
-| `Artifact floor` | the minimum a session must *produce* to count at all |
-| `Session shape` | how the working time divides — read, apply, build, consolidate |
-| `Mastery gate` | what counts as demonstrating the week's concept, since the gate is never self-certified |
-| `Verify exercise` | what a "spot the flaw" exercise looks like for this kind of material |
-| `Sequencing` | project-first, syllabus-first, or something else |
-
-**Your own tracks go in `.learn/tracks/<name>.md` in your repo, and a file there overrides a bundled track of the same name.** Copy `code.md` or `concept.md`, keep the six headings, change the bodies. Names are `[A-Za-z0-9_-]+`. `learn tracks` marks yours as overriding. `learn start` checks that all six headings are present and exits 2 naming any that are missing, and nothing here is validated beyond that, so a track that suits how you actually study beats the two shipped ones.
-
-## Pairs with
-
-[`gtg`](../gtg) — the session layer. The relationship is **soft and one-directional**: `learn start` prints a `GTG-NEW` line that asks the *skill* to create the gtg project, and `learn.mjs` itself never spawns gtg or reads its store. Each side owns a different half. `learn` holds the mechanics — week, concept, gate history, verify floor — and holds no narrative at all: no what-got-built, no where-we-stopped, no next action. That is the gtg handoff's job, and it is what makes a sprint resumable a week later. gtg ships a `gtg learn` view that lists your sprints. Without gtg installed the sprint still runs; you just lose the narrative between sessions.
-
-[`logical-research`](../logical-research) — the optional curriculum cross-check. `learn brief --for curriculum` writes `docs/learning/<slug>/corpus-brief-curriculum.md` and prints `BRIEF-WRITTEN <path>`; hand that to `logical-research`, which returns a pack path. **Link to the pack, never copy its contents into the sprint's own files** — one fact, one home. Anything sprint-specific goes in the brief's angle, because `logical-research` deliberately knows nothing about its caller. Every session's research pass goes the same way at Scan tier, see the skill's running-a-session reference. It is a gap-check against a plan you already made, not a replacement syllabus, and if it is unavailable the sprint proceeds with a disclosed "cross-check skipped" note rather than blocking.
-
-## Why it is shaped this way
-
-`skills/learn/references/pedagogy.md` gives the reasoning, in three deliberately separated parts: five cited frameworks (Knowles, Chi and Wylie, Sweller, Perkins and Salomon, Deci and Ryan), then this plugin's own **unvalidated** defaults — the session length, one concept per session, the two-week verify floor, the binary gate — and then the failure modes that feel like progress while they are happening. The research motivates the design; it does not endorse the numbers. Every number was picked because it seemed reasonable, which is exactly why the tracks are yours to override.
-
-## Test
-
-```
-cd learn && npm test
-```
+`start`, `gate`, `page` and `brief` commit only their own files. `page` and `brief` never overwrite an existing file. Exit `2` is a usage or environment error, `1` a failure with nothing advanced, `0` success. Commit rules, brief flags and the 0.3.x upgrade note are in [cli.md](skills/learn/references/cli.md).
 
 MIT.

@@ -1,96 +1,71 @@
-# logical-research
+# logical-research: research you can hand to a model
 
-One skill that turns a **bounded corpus** — a YouTube channel, a book, a podcast back catalogue, a
-docs site, a set of papers — into **reusable context** rather than a summary you read once.
+A summary gets read once and forgotten. logical-research reads your sources in full and writes context you can paste into a model later, with every claim graded and traced to where it came from.
 
-Two tiers: **Scan** answers a question or a handful of sources in one graded file, **Pack** turns a
-bounded corpus into a durable pack.
+## What it is
 
-A Pack's output: a synthesis doc with every significant claim graded by evidence strength, one note
-per item, and a traceable bibliography — shaped so you can paste the useful part into a model later
-as working context for a real task.
+One skill that turns a question, or a bounded corpus (a YouTube channel, a book, a podcast back catalogue, a docs site, a set of papers), into a reusable file rather than a summary. It picks one of two tiers and tells you which.
 
-## Two tiers
-
-| Tier | When | Output |
+| Tier | When | What you get |
 |---|---|---|
 | **Scan** (default) | a question, or under about eight sources | one graded file, `<root>/<slug>.md` |
-| **Pack** | a bounded corpus you will return to | the full synthesis, notes and bibliography |
+| **Pack** | a bounded corpus you will return to | a synthesis, one note per item, and a bibliography, in `<root>/<slug>/` |
 
-Both rank sources by authority before reading and keep the grounded / supported / speculative split. Scan escalates to Pack when the source count grows or you say you will come back to it.
+`<root>` defaults to `research/`. A Scan becomes a Pack when the source count passes the threshold or you say you will come back to the material.
 
-## How a Pack works
+Both tiers keep three rules:
 
-Six phases. 1–3 are mechanical (enumerate the corpus, pull it, normalise to clean prose and extract
-the bibliography). **Phase 4 is the one that matters and cannot be delegated**: read every item in
-full, in corpus order, one note each. Cross-item connections — the recurring citation, the argument
-that reverses later, the thesis restated three ways — only surface when one reader holds the whole
-corpus. Extraction scripts and subagents cannot produce them. Phase 5 synthesises, phase 6 verifies.
+- **Sources ranked by authority before reading.** A first-party statement beats commentary on it.
+- **Every significant claim graded** as well-grounded, reasonably supported or explicitly speculative. Without the split, speculation passes as fact, and the split has to survive into whatever you paste into a model.
+- **Every claim traceable** to the item it came from. Names are checked against citations, never transcripts, because auto-captions garble proper nouns.
 
-Two things are non-negotiable in the output:
+## How it works
 
-- **A grounded vs speculative split** on every significant claim. Without it the doc launders
-  speculation into fact, and it must survive into whatever you paste into a model.
-- **Traceability** — every claim attributable to the item it came from, names checked against
-  citations rather than transcripts (auto-captions garble proper nouns beyond recognition).
+A Scan ranks the sources, reads each one in full, and writes one file: the question, the graded answer, the ranked sources, and any principles as numbered instructions.
 
-**Optional phase 7** turns the research into a permanent review lens pack for the
-[`due-diligence`](../due-diligence/README.md) plugin — so principles become review capability
-instead of a doc you have to remember to re-read.
+A Pack runs six phases. The first three are mechanical: list the whole corpus, pull it, and clean it into prose while pulling out the bibliography. The fourth is the one that matters, and it is never handed to a script or a subagent. The agent reads every item in full, in corpus order, and writes one note each. Connections across items (the recurring citation, the argument that reverses later, the thesis restated three ways) only show up when one reader holds the whole corpus. Phase five writes the synthesis and phase six checks it.
+
+It handles two kinds of corpus. An **authored** corpus is one mind across many items, like a channel or a back catalogue, and the value is the author's method. An **authoritative** corpus is many first-party sources on one question, like regulations, specs or official docs, and the value is which source outranks which. The synthesis reads differently for each, and the skill says which kind it assumed.
+
+An optional seventh phase turns the research into a permanent review lens pack for the [due-diligence](../due-diligence/README.md) plugin, so the principles become review capability instead of a doc you have to remember to re-read.
 
 ## Install
 
-**Prerequisites:** nothing extra for books, PDFs, docs sites and papers. For YouTube or podcast
-corpora, Python 3 with the `yt-dlp` package installed (`python -m pip install yt-dlp`, the skill calls `python -m yt_dlp`).
+Add the lm-tools marketplace as the [root README](../README.md) shows, then:
 
-**As a plugin (auto-updating):**
 ```
-/plugin marketplace add thelogicmatrix/lm-tools
-/plugin install logical-research@lm-tools
+/plugin install logical-research@lm-tools        # Claude Code
+codex plugin add logical-research@lm-tools       # Codex
 ```
 
-**As a plain skill (static, no auto-update):** it's an ordinary skill folder — copy it into your
-project's or user `.claude/skills/`:
+Or copy the skill folder into a project's or your user `.claude/skills/`. A copy does not update with the plugin.
+
 ```
 cp -r logical-research/skills/logical-research <your-repo>/.claude/skills/
 ```
 
-## Use
+Books, PDFs, docs sites and papers need nothing extra. YouTube and podcast corpora need Python 3 with `yt-dlp` (`python -m pip install yt-dlp`), which the skill runs as `python -m yt_dlp`.
 
-*"research this channel for me"* · *"read all of these and synthesise"* · *"build me a knowledge
-pack on X"*. On a Pack it asks two scope questions (doc shape, and what the research is *for*),
-then runs. A Scan asks nothing.
+## Using it
 
-A single fact lookup with no synthesis is a search, not research. Anything that ranks sources or
-grades claims is Scan. Don't use it on a corpus you can't enumerate up front — scope it down
-until you can.
+Ask in plain words:
 
-It handles two kinds of corpus, and says which it assumed. An **authored** corpus is one mind
-across many items (a channel, a back catalogue) and the value is the author's method. An
-**authoritative** corpus is many first-party sources on one question (regulations, specs, official
-docs) and the value is which source outranks which. The synthesis skeleton reads differently for
-each, and getting the kind wrong is the most expensive mistake available here.
+```
+research this channel for me
+read all of these and synthesise
+build me a knowledge pack on X
+```
 
-## Called by another skill
+A Scan asks nothing. A Pack asks two questions before it starts reading, what shape the output should take and what the research is for, then runs on its own.
 
-Any skill can drive it instead of you, by writing a **corpus brief** (`slug`, `root`, `shape`, `tier`,
-`angle`, `corpus`) and handing it over — the same way a mail skill takes a batch file. A field the
-brief answers is never asked about, the output path is the return value, and this skill knows
-nothing about who called it. `SKILL.md` holds the format.
+A single fact lookup with no synthesis is a search, not research. Anything that ranks sources or grades claims is at least a Scan. A corpus you can't list up front gets scoped down until you can.
 
-That is what makes it a component rather than a destination: the caller keeps its own docs and
-links into the research pack, instead of copying the contents out and owning a second stale copy.
+## Extend it
 
-## Extending — your own reading angles
+The angle (what the research is for) becomes a section in every item note. Save one you reuse as `.lr/angles/<name>.md` in your repo and the skill reads it instead of you explaining it each run. See [extending.md](skills/logical-research/references/extending.md).
 
-logical-research follows the lm-tools two-tier contract: a core you don't touch, and a tier you own.
+## Details
 
-| Tier | Where | Updates? |
-|---|---|---|
-| **Core** | the plugin's `SKILL.md` + `references/` | with the tool |
-| **Yours** | `.lr/angles/*.md` in *your* repo | never touched by a plugin update |
+**Called by another skill.** Any skill can drive logical-research by handing it a corpus brief with the fields `slug`, `root`, `shape`, `tier`, `angle` and `corpus`. A field the brief answers is never asked about, and an incomplete brief only gets asked for its missing fields. The skill finishes by printing the output path, which is the return value. The caller links to that path rather than copying the contents out, so the research has one home. The skill knows nothing about who called it, so a caller that needs a different shape says so in `angle`. The brief format is in `SKILL.md`.
 
-The variable part of the pipeline is the **angle** — what the research is for, which becomes a named
-section in every item note. Drop a recurring one in `.lr/angles/<name>.md` (what to look for, what
-counts as relevant, how to phrase the section) and phase 4 reads it instead of you re-explaining the
-angle each run. Nothing else is required; an angle passed in conversation works fine without a file.
+**Working files** (raw transcripts, JSON, cleaner scripts) stay in a scratch folder outside the repo. Only the synthesis, notes and bibliography are kept.
