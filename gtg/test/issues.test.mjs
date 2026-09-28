@@ -98,7 +98,7 @@ const iso = (daysAgo) => new Date(Date.now() - daysAgo * 86400000).toISOString()
 const pkg = (over) => ({ parent: 'issues', next: 'Do the first thing', updated: iso(1), ...over });
 
 const P1 = pkg({ project: 'Issues P1: hook false positives', slug: 'issues-p1-hooks' });
-const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-obelisk-housekeeping', updated: iso(6) });
+const P3 = pkg({ project: 'Issues P3: Homelab housekeeping', slug: 'issues-p3-homelab-housekeeping', updated: iso(6) });
 
 // 1. A package lists its stamped members with effort, and rolls effort up by bucket.
 {
@@ -117,7 +117,7 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
 {
   const root = setup({}, [], [P3]);
   const { out } = run(root);
-  assert.match(out, /\[issues-p3-obelisk-housekeeping\] \(shelved 6d\)/);
+  assert.match(out, /\[issues-p3-homelab-housekeeping\] \(shelved 6d\)/);
 }
 
 // 3. A package with no stamped members says so instead of looking empty.
@@ -131,22 +131,22 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
 {
   const root = setup({
     '2026-07-06-memory-orphan-files.md': issue('**Area:** claude-stack · **Effort:** hour'),
-    '2026-07-28-reborn-audit.md': issue('No field line here at all.'),
+    '2026-07-28-laptop-audit.md': issue('No field line here at all.'),
   });
   const { out } = run(root);
   assert.match(out, /UNPACKAGED \(2\) - in no package, untriaged/);
   assert.match(out, /claude-stack \(1\):\n\s+• \[hour\] memory-orphan-files/);
-  assert.match(out, /unfiled \(1\):\n\s+• \[\?\] reborn-audit/);
+  assert.match(out, /unfiled \(1\):\n\s+• \[\?\] laptop-audit/);
 }
 
 // 5. Blocked members are flagged, and "none" counts as not blocked.
 {
   const root = setup({
-    '2026-07-25-sdd-review-tier.md': issue('**Area:** claude-stack · **Effort:** session · **Blocked on:** Nathan\'s call'),
-    '2026-07-02-dangling-volumes.md': issue('**Area:** obelisk · **Effort:** hour · **Blocked on:** none'),
+    '2026-07-25-sdd-review-tier.md': issue('**Area:** claude-stack · **Effort:** session · **Blocked on:** the user\'s call'),
+    '2026-07-02-dangling-volumes.md': issue('**Area:** homelab · **Effort:** hour · **Blocked on:** none'),
   });
   const { out } = run(root);
-  assert.match(out, /• \[session\] sdd-review-tier - BLOCKED: Nathan's call/);
+  assert.match(out, /• \[session\] sdd-review-tier - BLOCKED: the user's call/);
   assert.doesNotMatch(out, /dangling-volumes - BLOCKED/);
   assert.match(out, /· 1 blocked/);
 }
@@ -240,8 +240,8 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
 // directive is the SOLE output. gtg's router only acts on a directive it sees first.
 {
   const root = setup({}, [P1], [P3]);
-  const only = 'GTG-DIRECTIVE: run gtg.mjs resume issues-p3-obelisk-housekeeping --keep and follow the SKILL.md Resume Procedure. A package is never consumed (references/commands.md, "Working a package").';
-  assert.equal(run(root, ['issues-p3-obelisk-housekeeping']).out, only);
+  const only = 'GTG-DIRECTIVE: run gtg.mjs resume issues-p3-homelab-housekeeping --keep and follow the SKILL.md Resume Procedure. A package is never consumed (references/commands.md, "Working a package").';
+  assert.equal(run(root, ['issues-p3-homelab-housekeeping']).out, only);
   assert.equal(run(root, ['housekeeping']).out, only);
 }
 
@@ -259,8 +259,8 @@ const P3 = pkg({ project: 'Issues P3: Obelisk housekeeping', slug: 'issues-p3-ob
 
 const LOOSE = {
   '2026-07-03-rtk-grep-flag-mangle.md': issue('**Area:** claude-stack · **Effort:** minutes'),
-  '2026-07-28-reborn-audit.md': issue('No field line here at all.'),
-  '2026-07-02-dangling-volumes.md': issue('**Area:** obelisk · **Effort:** hour · **Package:** p1'),
+  '2026-07-28-laptop-audit.md': issue('No field line here at all.'),
+  '2026-07-02-dangling-volumes.md': issue('**Area:** homelab · **Effort:** hour · **Package:** p1'),
 };
 
 // 11. Bare `pack` hands back a directive to propose batches, as the FIRST line, then
@@ -307,11 +307,11 @@ const LOOSE = {
   const before = snapshot(root);
   const { out, commits } = run(root, [
     'pack', 'p9', '--name', 'Issues P9: DNS flakiness', '--next', 'Reproduce the timeout',
-    '--dry-run', 'rtk-grep-flag-mangle', 'reborn-audit',
+    '--dry-run', 'rtk-grep-flag-mangle', 'laptop-audit',
   ]);
   assert.match(out, /DRY RUN/);
   assert.match(out, /\*\*Area:\*\* claude-stack · \*\*Effort:\*\* minutes · \*\*Package:\*\* p9/);
-  assert.match(out, /reborn-audit\.md: \*\*Package:\*\* p9/);
+  assert.match(out, /laptop-audit\.md: \*\*Package:\*\* p9/);
   assert.match(out, /--slug issues-p9-dns-flakiness/);
   assert.match(out, /--parent issues/);
   assert.equal(commits.length, 0);
@@ -322,9 +322,9 @@ const LOOSE = {
 {
   const root = setup(LOOSE, [P1]);
   const { out } = run(root, [
-    'pack', 'p9', '--name', "Nathan's DNS + proxy mess!", '--next', 'x', '--dry-run', 'rtk-grep-flag-mangle',
+    'pack', 'p9', '--name', "The user's DNS + proxy mess!", '--next', 'x', '--dry-run', 'rtk-grep-flag-mangle',
   ]);
-  assert.match(out, /--slug issues-p9-nathan-s-dns-proxy-mess\b/);
+  assert.match(out, /--slug issues-p9-the-user-s-dns-proxy-mess\b/);
 }
 
 // 15. Re-running a pack whose files were stamped but whose entry never parked is
@@ -596,7 +596,7 @@ const LOOSE = {
     'Prose mentioning **Package:** p98 mid-sentence.',
     '',
     '```markdown',
-    '**Package:** p99 · **Area:** obelisk',
+    '**Package:** p99 · **Area:** homelab',
     '```',
   ].join('\n');
 

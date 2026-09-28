@@ -49,7 +49,7 @@ const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 // silently drops fields it does not know, so a marker field would survive exactly until the
 // next wrap. Same constraint that put issue-package membership in the issue file.
 //
-// DUPLICATED OUTSIDE THIS REPO, and it has to be. Nathan's SessionStart banner hook at
+// DUPLICATED OUTSIDE THIS REPO, and it has to be. The author's SessionStart banner hook at
 // .claude/hooks/gtg-active-summary.mjs announces the active count and must exclude the same
 // namespaces, or the banner disagrees with `gtg list` on the next line. A hook cannot import
 // from a plugin, so it carries its own copy of these values. Adding a namespace here means
@@ -199,8 +199,8 @@ function saveEntries(which, items) {
 // sync a few lines down runs at import time: syncHub is a hoisted function declaration and can be
 // called before its definition, but a `const` still in its temporal dead zone would throw the
 // moment syncTarget reached its fallback.
-const SYNC_REMOTE = 'obelisk-backup'; // fallback only: home's Forgejo mirror on Obelisk
-const SYNC_BRANCH = 'master';         // fallback only: the branch that mirror carries
+const SYNC_REMOTE = process.env.GTG_SYNC_REMOTE || 'origin'; // fallback only: the hub's mirror
+const SYNC_BRANCH = process.env.GTG_SYNC_BRANCH || 'main';   // fallback only: the branch that mirror carries
 // syncHub runs once per process, called from resumeConsume. The memo outlived the second caller
 // that needed it - an import-time sync ahead of the self-migration, removed in 3.3.0 with the
 // migration itself - and is kept because it is what makes the call idempotent for any future
@@ -1237,7 +1237,7 @@ function commandFileFor(t) {
 // entries() has read, the handoff has printed and the consume has committed - so home was
 // always one commit ahead and --ff-only aborted in exactly the case the sync exists for, a
 // mirror carrying the other machine's work. A fetch after the read cannot change what the
-// read returned. Handing entries between Obelisk and reborn is why this store is git at all.
+// read returned. Handing entries between two machines is why this store is git at all.
 // Background: docs/runbooks/git-parity.md.
 //
 // A convenience, NEVER a gate. Every git failure is swallowed and each call capped at 5s, so
@@ -1245,16 +1245,16 @@ function commandFileFor(t) {
 // exactly as it did before this existed. And stdout speaks only on a real fast-forward: a
 // line on every resume is noise, and noise on the hot path is how a real one goes unread.
 // WHERE to sync from is resolved per branch, not named (2026-09-01 fix round). The first cut
-// hardcoded obelisk-backup/master, which made the feature one-directional: Obelisk's clone calls
-// the same repo `origin` and may sit on `main`, so its every resume fetched nothing and said
+// hardcoded one remote/branch pair, which made the feature one-directional: the other machine's
+// clone calls the same repo `origin` and may sit on `main`, so its every resume fetched nothing and said
 // nothing - half of the two-machine handoff this plan exists for was simply not implemented.
 //
 // branch.<b>.remote + branch.<b>.merge rather than `rev-parse @{u}`: @{u} answers with
 // "<remote>/<branch>" as ONE string, and either half may itself contain a slash, so splitting it
 // guesses. The config keys hold the two halves already separated.
 //
-// No upstream falls back to the named pair, which is home's own situation today (nothing there
-// sets branch.*.remote) - and only on the branch that mirror carries. A feature branch with no
+// No upstream falls back to GTG_SYNC_REMOTE / GTG_SYNC_BRANCH (default origin/main), and only on
+// that branch. A feature branch with no
 // upstream must never be moved, gtg runs from feature worktrees, and a detached HEAD (mid-rebase,
 // mid-bisect) reports 'HEAD' and skips. Where an upstream DOES exist it is always the right
 // target, so the lookup carries the guard the branch comparison used to.
@@ -1298,7 +1298,7 @@ function syncHub() {
   } catch {
     // The fetch landed and the fast-forward was refused. Home being AHEAD of the mirror is the
     // normal state and says nothing. The mirror holding commits home does not have means a
-    // genuine fork or a dirty tree in the way, and resolving either is Nathan's call, not a
+    // genuine fork or a dirty tree in the way, and resolving either is the user's call, not a
     // resume's - auto-merging a divergence is what caused the 2026-08-02 fork. On stderr, so
     // "stdout speaks only on a real fast-forward" still holds.
     try { git('merge-base', '--is-ancestor', 'FETCH_HEAD', 'HEAD'); } catch {

@@ -4,7 +4,7 @@
 // This is the feasibility number for driving Playwright with Jev. The idea: instead of Claude
 // reading a whole accessibility snapshot to decide what to click, code extracts the interactive
 // elements, Jev picks one as a Choice, and the snapshot never enters a Claude context. Jev has no
-// image support today (confirmed by Nathan, planned for a later version), so the accessibility
+// image support today (confirmed by the author, planned for a later version), so the accessibility
 // tree is the input, and it is already text.
 //
 // Everything hinges on how many options a Choice tolerates. A real page has dozens of clickable

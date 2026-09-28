@@ -18,7 +18,7 @@ function slugFile(slug) {
   return `${slug}.json`;
 }
 
-// reborn is Windows (case-insensitive FS), Obelisk is Linux (case-sensitive). Two slugs
+// Windows is case-insensitive, Linux is case-sensitive. Two slugs
 // differing only in case are two records on one machine and one clobbered record on the
 // other. Refuse the write rather than lose a record on whichever machine syncs second.
 export function slugCollision(items) {
@@ -93,8 +93,8 @@ export function writeCollection(root, dir, items) {
     written.add(`${dir}/.gitkeep`);
   }
 
-  // A slug whose case changed (Alpha -> alpha) is TWO files on Obelisk and ONE on reborn.
-  // Rename the old casing onto the new one BEFORE writing: on reborn the write would
+  // A slug whose case changed (Alpha -> alpha) is TWO files on Linux and ONE on Windows.
+  // Rename the old casing onto the new one BEFORE writing: on Windows the write would
   // otherwise land in the old file and the delete pass below would then remove the record
   // we just wrote. rename never leaves a hole, so a crash here cannot lose the record.
   for (const f of stale) {

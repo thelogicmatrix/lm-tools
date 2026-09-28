@@ -2454,11 +2454,11 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   gtg(repo, HANDOFF_ARGS('alpha', 'Alpha'), { input: BODY });
   gtg(repo, HANDOFF_ARGS('beta', 'Beta'), { input: BODY });
 
-  const obelisk = gtg(repo, [...HANDOFF_ARGS('alpha', 'Alpha'), '--next', 'from obelisk'], { input: BODY });
-  assert.equal(obelisk.status, 0, obelisk.stderr);
+  const server = gtg(repo, [...HANDOFF_ARGS('alpha', 'Alpha'), '--next', 'from server'], { input: BODY });
+  assert.equal(server.status, 0, server.stderr);
   const aFiles = nameStatus(repo, 'HEAD');
-  const reborn = gtg(repo, [...HANDOFF_ARGS('beta', 'Beta'), '--next', 'from reborn'], { input: BODY });
-  assert.equal(reborn.status, 0, reborn.stderr);
+  const laptop = gtg(repo, [...HANDOFF_ARGS('beta', 'Beta'), '--next', 'from laptop'], { input: BODY });
+  assert.equal(laptop.status, 0, laptop.stderr);
   const bFiles = nameStatus(repo, 'HEAD');
 
   const records = (lines) => lines.map((l) => l.split('\t')[1])
@@ -2582,7 +2582,7 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
 // commit sitting on the mirror, which makes it resolvable if and only if the fetch already ran.
 // A fetch anywhere after the read cannot make this pass, which is exactly the property wanted.
 //
-// A local bare repo stands in for Obelisk's Forgejo: same git, no network, no Tailscale.
+// A local bare repo stands in for a Forgejo server: same git, no network.
 {
   const mirror = mkdtempSync(join(tmpdir(), 'gtg-mirror-'));
   execSync('git init -q --bare -b master', { cwd: mirror });
@@ -2594,11 +2594,13 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   execSync('git checkout -q -b master', { cwd: repo });
   assert.equal(gtg(repo, HANDOFF_ARGS('local-a', 'Local A'), { input: BODY }).status, 0);
   assert.equal(gtg(repo, HANDOFF_ARGS('local-c', 'Local C'), { input: BODY }).status, 0);
-  execSync(`git remote add obelisk-backup "${url}"`, { cwd: repo });
-  execSync('git push -q obelisk-backup master', { cwd: repo });
+  const FALLBACK = { GTG_SYNC_REMOTE: 'backup', GTG_SYNC_BRANCH: 'master' };
+  execSync(`git remote add backup "${url}"`, { cwd: repo });
+  execSync('git push -q backup master', { cwd: repo });
   // No -u, deliberately: this fixture is HOME's shape, where nothing sets branch.*.remote, so
-  // the whole case runs down the fallback to the obelisk-backup/master pair. Case 74 covers the
-  // upstream lookup that comes first. Asserted, not assumed - a push that quietly set an
+  // the whole case runs down the fallback pair, GTG_SYNC_REMOTE/GTG_SYNC_BRANCH set by FALLBACK
+  // to backup/master. Case 74 covers the upstream lookup that comes first. Asserted, not
+  // assumed - a push that quietly set an
   // upstream would move this case onto the other path and neither would be tested twice over.
   assert.throws(() => execSync('git config --get branch.master.remote', { cwd: repo, stdio: 'ignore' }),
     'fixture: master must have NO upstream here, or this stops testing the fallback');
@@ -2613,7 +2615,7 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   assert.ok(!active(repo).some((e) => e.slug === 'remote-b'),
     'fixture: the hub must not hold the record yet, or the case proves nothing');
 
-  const r = gtg(repo, ['resume', 'remote-b']);
+  const r = gtg(repo, ['resume', 'remote-b'], { env: FALLBACK });
   assert.equal(r.status, 0,
     `resume could not see a record that exists only on the mirror - the fetch ran after the read, or not at all: ${r.stderr}`);
   assert.match(r.stdout, /RESUME: "Remote B"/);
@@ -2621,7 +2623,7 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   assert.match(r.stdout, /fast-forward/i, 'a real fast-forward is the ONE case that speaks on stdout');
 
   // Up to date: silence. A line on every resume is noise, and noise is how a real one goes unread.
-  const q = gtg(repo, ['resume', 'local-a']);
+  const q = gtg(repo, ['resume', 'local-a'], { env: FALLBACK });
   assert.equal(q.status, 0, q.stderr);
   assert.doesNotMatch(q.stdout, /fast-forward/i, 'nothing to pull must say nothing');
 
@@ -2633,7 +2635,7 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   execSync('git commit -q -m "local only"', { cwd: repo });
   assert.equal(gtg(other, HANDOFF_ARGS('remote-d', 'Remote D'), { input: BODY }).status, 0);
   execSync('git push -q origin master', { cwd: other });
-  const d = gtg(repo, ['resume', 'local-c']);
+  const d = gtg(repo, ['resume', 'local-c'], { env: FALLBACK });
   assert.equal(d.status, 0, `a divergence must not fail the resume: ${d.stderr}`);
   assert.match(d.stdout, /RESUME: "Local C"/, 'and it resumes from local state');
   assert.doesNotMatch(d.stdout, /fast-forward/i, 'stdout stays silent when nothing moved');
@@ -2646,12 +2648,12 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
 }
 
 // --- 74. the sync target is the branch's own upstream, not a hardcoded pair ---
-// Obelisk's shape is a CLONE: its remote is `origin`, its branch can be `main`, and neither
-// half matches the obelisk-backup/master pair the first cut named. That made the sync
-// one-directional - home pulled Obelisk's work, Obelisk's every resume fetched nothing and said
+// The other machine's shape is a CLONE: its remote is `origin`, its branch can be `main`, and neither
+// half matches the backup/master pair the first cut named. That made the sync
+// one-directional - home pulled the server's work, the server's every resume fetched nothing and said
 // nothing - and handing entries BOTH ways is the whole reason the store is git. So the target
 // comes from branch.<b>.remote + branch.<b>.merge, and this case stands on the far side of the
-// exchange: nothing named obelisk-backup exists anywhere in it.
+// exchange: nothing named backup exists anywhere in it.
 {
   const mirror = mkdtempSync(join(tmpdir(), 'gtg-mirror2-'));
   execSync('git init -q --bare -b main', { cwd: mirror });
@@ -2670,36 +2672,36 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   execSync(`git remote add origin "${url}"`, { cwd: seed });
   execSync('git push -q origin main', { cwd: seed });
 
-  const obelisk = clone('gtg-obelisk-');
-  assert.equal(execSync('git config --get branch.main.remote', { cwd: obelisk, encoding: 'utf8' }).trim(),
+  const server = clone('gtg-server-');
+  assert.equal(execSync('git config --get branch.main.remote', { cwd: server, encoding: 'utf8' }).trim(),
     'origin', 'fixture: a clone tracks origin, which is precisely what the hardcoded pair missed');
-  assert.equal(execSync('git rev-parse --abbrev-ref HEAD', { cwd: obelisk, encoding: 'utf8' }).trim(),
+  assert.equal(execSync('git rev-parse --abbrev-ref HEAD', { cwd: server, encoding: 'utf8' }).trim(),
     'main', 'fixture: and it is not on master either');
-  assert.equal(execSync('git remote', { cwd: obelisk, encoding: 'utf8' }).trim(), 'origin',
-    'fixture: no obelisk-backup remote exists here at all');
+  assert.equal(execSync('git remote', { cwd: server, encoding: 'utf8' }).trim(), 'origin',
+    'fixture: no backup remote exists here at all');
 
-  // reborn wraps a project and pushes. Obelisk has never seen it.
-  const reborn = clone('gtg-reborn-');
-  assert.equal(gtg(reborn, HANDOFF_ARGS('from-reborn', 'From Reborn'), { input: BODY }).status, 0);
-  execSync('git push -q origin main', { cwd: reborn });
+  // The laptop wraps a project and pushes. The server has never seen it.
+  const laptop = clone('gtg-laptop-');
+  assert.equal(gtg(laptop, HANDOFF_ARGS('from-laptop', 'From Laptop'), { input: BODY }).status, 0);
+  execSync('git push -q origin main', { cwd: laptop });
 
-  const r = gtg(obelisk, ['resume', 'from-reborn']);
+  const r = gtg(server, ['resume', 'from-laptop']);
   assert.equal(r.status, 0,
     `the far side of the exchange saw nothing - the target was not resolved from its upstream: ${r.stderr}`);
-  assert.match(r.stdout, /RESUME: "From Reborn"/);
+  assert.match(r.stdout, /RESUME: "From Laptop"/);
   assert.match(r.stdout, /Synced origin\/main: fast-forwarded/,
     'and it names the upstream it actually used, not the fallback pair');
 
   // A feature branch with no upstream: nothing to resolve, nothing to fall back to, so the sync
   // skips. This is the guard the old branch comparison held, now carried by the lookup itself.
-  execSync('git checkout -q -b feat/y', { cwd: obelisk });
-  assert.equal(gtg(reborn, HANDOFF_ARGS('later-work', 'Later Work'), { input: BODY }).status, 0);
-  execSync('git push -q origin main', { cwd: reborn });
-  const f = gtg(obelisk, ['resume', 'seed-a']);
+  execSync('git checkout -q -b feat/y', { cwd: server });
+  assert.equal(gtg(laptop, HANDOFF_ARGS('later-work', 'Later Work'), { input: BODY }).status, 0);
+  execSync('git push -q origin main', { cwd: laptop });
+  const f = gtg(server, ['resume', 'seed-a']);
   assert.equal(f.status, 0, f.stderr);
   assert.doesNotMatch(f.stdout, /fast-forward/i, 'a branch with no upstream must not be moved');
   assert.equal(f.stderr, '', 'and must not be narrated either');
-  assert.ok(!active(obelisk).some((e) => e.slug === 'later-work'),
+  assert.ok(!active(server).some((e) => e.slug === 'later-work'),
     'nothing was pulled onto the feature branch');
   console.log('ok 74 - the sync target comes from the branch upstream, with the named pair as fallback');
 }

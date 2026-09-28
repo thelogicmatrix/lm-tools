@@ -91,7 +91,7 @@ All runs used model `jev-latest` as served on the date given. The version behind
 recorded, so a model update can move these numbers and the 0.25 line with them. Rerun the
 acceptance case after one.
 
-**Acceptance run, 2026-09-23.** `resume-grounding` on `generalist.json`, a tailored resume Nathan
+**Acceptance run, 2026-09-23.** `resume-grounding` on `generalist.json`, a tailored resume the user
 had reviewed and trusted, against `basis-1page.json`, the source it was copied from. 7 bullets swept
 and 2 empty descriptions dropped, 1 call, $0.000199. **1 candidate, and it was real**: bullet
 `experience.items[1].description[0]` (noul 0.23) adds "took the team to 100% compliance", which

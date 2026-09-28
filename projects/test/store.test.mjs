@@ -121,8 +121,8 @@ test('a case-colliding write is refused before any file is touched', () => {
   assert.equal(existsSync(join(root, 'd')), false);
 });
 
-// Alpha.json and alpha.json are two files on Obelisk and one file on reborn. Writing the
-// new casing on reborn lands in the old file, so a naive delete-what-is-not-kept pass
+// Alpha.json and alpha.json are two files on Linux and one file on Windows. Writing the
+// new casing on Windows lands in the old file, so a naive delete-what-is-not-kept pass
 // removes the record it just wrote.
 test('a slug whose case changed keeps the record and reports both paths', () => {
   const root = tmp();

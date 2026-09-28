@@ -1067,11 +1067,11 @@ small
     # are asserted rather than the rule that produced them.
     sizes = {
         "sig_logo_inline":     (965,     False),   # Outlook gif, inline + cid
-        "sig_logo_png":        (3_662,   False),   # Syfe logo, inline + cid
+        "sig_logo_png":        (3_662,   False),   # company logo, inline + cid
         "ooo_logo_attachment": (965,     False),   # inline logo wearing 'attachment'
-        "av_screenshot":       (79_677,  True),    # Connie's AV inclusions, inline
-        "room_photo":          (214_733, True),    # ACM 'Theatre Seating at RR.jpg'
-        "venue_photo_inline":  (496_029, True),    # ACM floorplan, inline + cid
+        "av_screenshot":       (79_677,  True),    # vendor's AV inclusions, inline
+        "room_photo":          (214_733, True),    # emailed room photo
+        "venue_photo_inline":  (496_029, True),    # venue floorplan, inline + cid
     }
     for label, (nbytes, keep) in sizes.items():
         raw = "\n".join([

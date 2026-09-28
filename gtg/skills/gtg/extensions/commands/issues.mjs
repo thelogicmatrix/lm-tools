@@ -156,7 +156,7 @@ const pkgHeader = (p, members) => {
 };
 
 // docs/issues/README.md's documented set, plus the sentinel an omitted Area reads as.
-const AREAS = new Set(['obelisk', 'claude-stack', 'jobhunt', 'work', 'misc', 'unfiled']);
+const AREAS = new Set(['homelab', 'claude-stack', 'jobhunt', 'work', 'misc', 'unfiled']);
 
 const RULE = '='.repeat(55);
 

@@ -196,8 +196,8 @@ const SAMPLE = { version: 1, projects: [
   // ops and done are here so all four words round-trip through RENDERED_TO_WORD, not just
   // the two the brief happened to sample. Listed in sortProjects order, since the round-trip
   // assertion compares against the rendered order. A separate test pins the sort itself.
-  { slug: 'obelisk', name: 'Obelisk', status: 'ops', where: ['Obelisk'],
-    page: 'obelisk.md', lastTouched: '2026-07-27' },
+  { slug: 'homelab', name: 'Homelab', status: 'ops', where: ['server'],
+    page: 'homelab.md', lastTouched: '2026-07-27' },
   { slug: 'fw16', name: 'Framework 16 Stutter', status: 'paused', where: ['home checkout'],
     page: null, lastTouched: '2026-07-28' },
   { slug: 'optin', name: 'OptIn Pipeline', status: 'done', where: [],

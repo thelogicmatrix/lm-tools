@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Classify Nathan's Forgejo repositories from metadata, never source content.
+// Classify your Forgejo repositories from metadata, never source content.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { askJev, readKey } from './lib.mjs'
 
-const HOST = 'http://100.75.143.3:3300'
+const HOST = (process.env.FORGEJO_URL ?? '').replace(/\/+$/, '')
 const CATEGORIES = {
   game: 'A game, game prototype, game engine experiment, or game asset project',
   world: 'Fictional setting, story, lore, or worldbuilding content',
@@ -48,6 +48,7 @@ if (process.argv.includes('--selftest')) {
   process.exit(0)
 }
 
+if (!HOST) throw new Error('Set FORGEJO_URL to your Forgejo base URL, e.g. http://forgejo.local:3000')
 const key = readKey()
 if (!key) throw new Error('Jev key missing from OPENROUTER_API_KEY or ~/.jev.env')
 const tokenFile = join(process.env.APPDATA, 'forgejo-cli', 'forgejo-cli', 'data', 'keys.json')
@@ -77,11 +78,11 @@ if (!repos.length) throw new Error('Forgejo returned no repositories')
 
 for (const [i, repo] of repos.entries()) {
   console.error(`[${i + 1}/${repos.length}] reading ${repo.name}`)
-  const entries = repo.empty ? [] : await api(`/repos/nathan/${encodeURIComponent(repo.name)}/contents`, true)
+  const entries = repo.empty ? [] : await api(`/repos/${encodeURIComponent(repo.owner.login)}/${encodeURIComponent(repo.name)}/contents`, true)
   repo.hints = hints(Array.isArray(entries) ? entries : [])
   const dirs = Array.isArray(entries) ? entries.filter(x => x.type === 'dir' && !x.name.startsWith('.')) : []
   if (!repo.hints.length && dirs.length === 1) {
-    const nested = await api(`/repos/nathan/${encodeURIComponent(repo.name)}/contents/${encodeURIComponent(dirs[0].name)}`, true)
+    const nested = await api(`/repos/${encodeURIComponent(repo.owner.login)}/${encodeURIComponent(repo.name)}/contents/${encodeURIComponent(dirs[0].name)}`, true)
     repo.hints = hints(Array.isArray(nested) ? nested : [])
   }
 }
@@ -108,5 +109,5 @@ for (const [i, repo] of repos.entries()) {
   const { category, confidence } = label(repo, answers?.[`r${i}`])
   const evidence = [repo.description, repo.language, ...repo.hints].filter(Boolean).join(', ')
   const clean = s => String(s ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ')
-  console.log(`| [${clean(repo.name)}](${HOST}/nathan/${encodeURIComponent(repo.name)}) | ${repo.original_url ? 'GitHub' : 'Forgejo'} | ${repo.private ? 'Private' : 'Public'} | ${category} | ${confidence} | ${clean(evidence)} |`)
+  console.log(`| [${clean(repo.name)}](${HOST}/${encodeURIComponent(repo.owner.login)}/${encodeURIComponent(repo.name)}) | ${repo.original_url ? 'GitHub' : 'Forgejo'} | ${repo.private ? 'Private' : 'Public'} | ${category} | ${confidence} | ${clean(evidence)} |`)
 }

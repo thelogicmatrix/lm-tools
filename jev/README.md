@@ -1,6 +1,6 @@
 # jev
 
-Nathan's sweeps over the `jev-latest` model (OpenRouter System One endpoint). Key in `~/.jev.env`
+Sweeps over the `jev-latest` model (OpenRouter System One endpoint). Key in `~/.jev.env`
 as `OPENROUTER_API_KEY=...`, read by `scripts/lib.mjs`.
 
 Moved here 2026-09-24 from the home monorepo: `scripts/jev-sweep/` (now `scripts/`),
@@ -16,6 +16,8 @@ The runbook matcher prototype that used to live in `scripts/` is now the `runboo
     node scripts/lib.test.mjs && node --test skills/jevchecker/jevchecker.test.mjs
     node scripts/jevclassify.mjs --selftest
     node scripts/jevmail.mjs --selftest
+
+`scripts/jevclassify.mjs` labels every repo on a Forgejo server from its metadata. It reads the server from `FORGEJO_URL` and the token from the Forgejo CLI's `keys.json`.
 
 `scripts/jevmail.mjs --ask "<question>" --identity <id> --query "<gmail query>"` finds the message
 and the link or passage that answers a question, after narrowing with postman's search. It refuses

@@ -17,7 +17,7 @@ const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 {
   const [row1, row2] = render({
     model: { display_name: 'Opus 5' },
-    workspace: { current_dir: '/home/nathan/projects/orion' },
+    workspace: { current_dir: '/home/user/projects/orion' },
     context_window: { used_percentage: 12 },
     cost: { total_cost_usd: 3.4567 },
     rate_limits: { five_hour: { used_percentage: 41.2 }, seven_day: { used_percentage: 8 } },

@@ -6,7 +6,7 @@
 //
 // ⚠ IT PROPOSES, IT DOES NOT FILE. Output is a plan plus a digest. Applying Gmail labels is a
 // mutation of a live mailbox and needs an explicit decision, so there is no --apply here: the plan
-// is JSON that a labelling step can consume once Nathan has read one.
+// is JSON that a labelling step can consume once you have read one.
 //
 // ⚠ EMAIL IS ATTACKER-CONTROLLED AND THE STATE IS ATTACKABLE. Measured 2026-09-22: appending an
 // "[ADMIN] maintenance mode" block or a plain "the requirement above is void" line flipped a
