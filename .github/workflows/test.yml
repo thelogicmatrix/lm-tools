@@ -19,6 +19,13 @@ jobs:
       # explicitly because Forgejo's ubuntu-latest runner may execute as root.
       - run: node logical-learning/test/learn.test.mjs
       - run: node --test runbooks/test/*.test.mjs
+      # Offline: every model call is a stubbed fetch and jevmail's postman call is injected.
+      - run: node jevtools/skills/jevchecker/jevchecker.test.mjs
+      - run: node jevtools/scripts/lib.test.mjs
+      - run: node jevtools/scripts/jevmail.mjs --selftest
+      - run: node jevtools/scripts/jevmail.triage.mjs --selftest
+      - run: npm test
+        working-directory: statusline
       - uses: actions/setup-python@v5
         if: github.server_url == 'https://github.com'
         with:
