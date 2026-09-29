@@ -36,7 +36,7 @@ rows = postman.verify(recs)
 postman.print_table(rows)
 
 print("\nthreading, read-only, the check that was missing on 11 Aug")
-M = imaplib.IMAP4_SSL(postman.IMAP_HOST)
+M = imaplib.IMAP4_SSL(postman.IMAP_HOST, timeout=postman.IMAP_TIMEOUT)
 M.login(ident["sender"], pw)
 unthreaded = []
 # replies only. A cold email has no thread to find by definition, so looping every

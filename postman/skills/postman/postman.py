@@ -662,13 +662,31 @@ def smtp_send(msg, password, conn=None):
         s.send_message(msg)
 
 
+# Socket timeouts in seconds. Without one a server that accepts and then stalls hangs
+# the command forever (#47). A send is never retried on a timeout, because the server
+# may already have the message (#48).
+IMAP_TIMEOUT = 60
+SMTP_TIMEOUT = 30
+
+
+@contextlib.contextmanager
+def read_failed(mode, note):
+    """A mailbox read that times out or drops ends in one line, not a traceback.
+    Never wrapped around a send: a send that fails this way may still have gone (#48).
+    """
+    try:
+        yield
+    except (OSError, imaplib.IMAP4.abort) as e:
+        raise SystemExit(f"{mode}: {type(e).__name__}: {e}. {note}") from None
+
+
 @contextlib.contextmanager
 def smtp_session(password, sender):
     """One authenticated SMTP session for a whole batch. A connect/login per
     recipient is 12 login cycles in a few seconds on the real run, which Gmail
     throttles, and a throttle at recipient 7 leaves 1 to 6 already sent.
     """
-    s = smtplib.SMTP("smtp.gmail.com", 587)
+    s = smtplib.SMTP("smtp.gmail.com", 587, timeout=SMTP_TIMEOUT)
     try:
         s.starttls(context=ssl.create_default_context())
         s.login(sender, password)
@@ -888,7 +906,7 @@ def gate_or_die(recs, today=None):
 @contextlib.contextmanager
 def imap_session(password, sender):
     """One authenticated IMAP session, for the same reason as smtp_session."""
-    M = imaplib.IMAP4_SSL(IMAP_HOST)
+    M = imaplib.IMAP4_SSL(IMAP_HOST, timeout=IMAP_TIMEOUT)
     try:
         M.login(sender, password)
         yield M
@@ -942,7 +960,7 @@ def bounce_sweep(password, since, sender):
     we sent is FROM mailer-daemon, so the wider scope adds no false positives.
     """
     hits = []
-    with imaplib.IMAP4_SSL(IMAP_HOST) as M:
+    with imaplib.IMAP4_SSL(IMAP_HOST, timeout=IMAP_TIMEOUT) as M:
         M.login(sender, password)
         typ, _ = M.select(ALL_MAIL, readonly=True)
         if typ != "OK":
@@ -976,7 +994,7 @@ def sweep_drafts(password, sender, match=None, purge=False):
     lands in Trash and is recoverable for 30 days, where an expunge would be final.
     """
     out = []
-    with imaplib.IMAP4_SSL(IMAP_HOST) as M:
+    with imaplib.IMAP4_SSL(IMAP_HOST, timeout=IMAP_TIMEOUT) as M:
         M.login(sender, password)
         typ, _ = M.select(DRAFTS, readonly=not purge)
         if typ != "OK":
@@ -2128,6 +2146,96 @@ Body.
         "to _real_hosts if it is genuine infrastructure:\n  " + "\n  ".join(_leaks[:20])
         + (f"\n  (+{len(_leaks) - 20} more)" if len(_leaks) > 20 else ""))
 
+    # #47: a server that accepts the connection and then says nothing must end in a
+    # timeout error, not a hang. The real imaplib and smtplib classes run against a local
+    # socket that accepts and never answers. Only the host is redirected, so the timeout
+    # under test is the one the code passes. Timeouts drop to 1 s for the run, on both
+    # copies of this module (inbox imports its own), and are pinned by value after.
+    import contextlib as _cl
+    import io
+    import socket
+    import threading
+    import inbox as _inbox
+    _srv = socket.create_server(("127.0.0.1", 0))
+    _held = []
+
+    def _stall():
+        # hold every accepted socket open so the client waits on a reply that never comes
+        while True:
+            try:
+                _held.append(_srv.accept()[0])
+            except OSError:
+                return
+    threading.Thread(target=_stall, daemon=True).start()
+    _port = _srv.getsockname()[1]
+    _real_imap, _real_smtp = imaplib.IMAP4_SSL, smtplib.SMTP
+    _boxes = [globals(), vars(_inbox.postman)]
+    _saved = [(b, b.get("IMAP_TIMEOUT"), b.get("SMTP_TIMEOUT")) for b in _boxes]
+    _pw_key = pw_env(work)
+    _env = {k: os.environ.get(k) for k in (_pw_key, "POSTMAN_NO_VAULT")}
+
+    def _timed(fn):
+        t0 = time.monotonic()
+        try:
+            fn()
+        except (OSError, imaplib.IMAP4.abort, SystemExit) as e:
+            took = time.monotonic() - t0
+            assert took < 10, f"{took:.1f} s against a 1 s timeout"
+            return e
+        raise AssertionError("a stalled server did not raise")
+    try:
+        imaplib.IMAP4_SSL = lambda host, **kw: _real_imap("127.0.0.1", _port, **kw)
+        smtplib.SMTP = lambda host, port, **kw: _real_smtp("127.0.0.1", _port, **kw)
+        for b in _boxes:
+            b["IMAP_TIMEOUT"], b["SMTP_TIMEOUT"] = 1, 1
+        # a dummy credential, and no vault: nothing here may reach a real login
+        os.environ[_pw_key], os.environ["POSTMAN_NO_VAULT"] = "x", "1"
+        # the send path is not caught and not retried: it raises the raw error (#48)
+        e = _timed(lambda: smtp_session("x", work["sender"]).__enter__())
+        assert isinstance(e, smtplib.SMTPServerDisconnected), repr(e)
+        assert "timed out" in str(e), str(e)
+        e = _timed(lambda: imap_session("x", work["sender"]).__enter__())
+        assert isinstance(e, OSError) and "timed out" in str(e), repr(e)
+        # the three read modes end in one line that names the mode
+        e = _timed(lambda: main(["--bounces", work["name"], "1"]))
+        assert isinstance(e, SystemExit), repr(e)
+        assert str(e).startswith("--bounces:") and "timed out" in str(e), str(e)
+        assert "not a clean result" in str(e) and "\n" not in str(e), str(e)
+        e = _timed(lambda: main(["--drafts", work["name"]]))
+        assert isinstance(e, SystemExit), repr(e)
+        assert str(e).startswith("--drafts:") and "timed out" in str(e), str(e)
+        with tempfile.TemporaryDirectory() as td:
+            bp = Path(td) / "batch.md"
+            bp.write_text(f"## @one | A B <a@b.example>\nSource: b.example/c, read "
+                          f"{date.today():%Y-%m-%d}\nSubject: s1\n\nHi.\n", encoding="utf-8")
+            _real_mx, globals()["has_mx"] = globals()["has_mx"], lambda domain: True
+            try:
+                e = _timed(lambda: main(["--draft", str(bp)]))
+            finally:
+                globals()["has_mx"] = _real_mx
+        assert isinstance(e, SystemExit), repr(e)
+        assert str(e).startswith("--draft:") and "timed out" in str(e), str(e)
+        # inbox already caught OSError. This proves a timeout reaches that catch.
+        t0 = time.monotonic()
+        with _cl.redirect_stderr(io.StringIO()) as err:
+            assert _inbox.inbox_main([work["name"]]) == 1
+        assert time.monotonic() - t0 < 10, "inbox took too long against a 1 s timeout"
+        assert "timed out" in err.getvalue(), err.getvalue()
+    finally:
+        imaplib.IMAP4_SSL, smtplib.SMTP = _real_imap, _real_smtp
+        for b, imap_t, smtp_t in _saved:
+            b["IMAP_TIMEOUT"], b["SMTP_TIMEOUT"] = imap_t, smtp_t
+        for k, v in _env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        _srv.close()
+        for c in _held:
+            c.close()
+    assert (IMAP_TIMEOUT, SMTP_TIMEOUT) == (60, 30), (IMAP_TIMEOUT, SMTP_TIMEOUT)
+    assert (_inbox.postman.IMAP_TIMEOUT, _inbox.postman.SMTP_TIMEOUT) == (60, 30)
+
     # the read path tests ride the same selftest - one command, no framework
     import inbox as inbox_mod
     inbox_mod.selftest()
@@ -2191,8 +2299,11 @@ def main(argv=None):
         ident = resolve_identity(args.drafts[0], None)
         match = args.drafts[1] if len(args.drafts) == 2 else None
         print(f"reading as: {ident['sender']}  (identity: {ident['name']})")
-        rows = sweep_drafts(gmail_password(ident), ident["sender"],
-                            match=match, purge=args.purge)
+        note = ("Some drafts may already be in Trash. Rerun --drafts to see what is left."
+                if args.purge else "Nothing was changed.")
+        with read_failed("--drafts", note):
+            rows = sweep_drafts(gmail_password(ident), ident["sender"],
+                                match=match, purge=args.purge)
         for uid, hdr in rows:
             print(f"  {uid:<8} {hdr}")
         scope = f"matching {match!r}" if match else "in the mailbox (no filter given)"
@@ -2251,7 +2362,8 @@ def main(argv=None):
         # same wording as the sending modes: the point is which account is on the wire
         print(f"sending as: {ident['sender']}  (identity: {ident['name']})")
         since = date.today() - timedelta(days=int(args.bounces[1]))
-        hits = bounce_sweep(gmail_password(ident), since, ident["sender"])
+        with read_failed("--bounces", "Nothing was swept, so this is not a clean result."):
+            hits = bounce_sweep(gmail_password(ident), since, ident["sender"])
         for h in hits:
             print(h)
         # zero bounces used to print nothing at all, which is the same output as a sweep
@@ -2283,6 +2395,11 @@ def main(argv=None):
         check_attachments(pending, Path(batch).parent)
         pw = gmail_password(ident)
         with contextlib.ExitStack() as stack:
+            if not args.send:
+                # entered first so it exits last, after imap_session has closed
+                stack.enter_context(read_failed(
+                    "--draft", "Drafts listed above were made. --draft does not stamp, "
+                               "so check Gmail Drafts before a rerun."))
             conn = stack.enter_context(smtp_session(pw, ident["sender"]) if args.send
                                       else imap_session(pw, ident["sender"]))
             # A --send batch of replies needs IMAP too, to read the Message-IDs it is
