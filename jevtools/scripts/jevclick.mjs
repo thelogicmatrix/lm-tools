@@ -21,12 +21,22 @@
 
 import fs from 'node:fs';
 import assert from 'node:assert';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { askJev, readKey } from './lib.mjs';
 
 // Confidence below this means "do not act". Chosen from the measured confidence-versus-agreement
 // curve: 0.95+ agreed 98.4% of the time, 0.80-0.95 was 88.9%, below 0.80 was a coin flip. A wrong
 // click is not a wrong tag — it can submit a form — so the bar sits at the top band.
 const ACT_ABOVE = 0.95;
+
+// Exit codes with --json: 0 ACT (click the ref), 2 HOLD (confidence under ACT_ABOVE, hand the
+// snapshot to the agent), 3 the Jev call failed after its retries (one line on stderr, no pick). 1 is
+// a usage error. A caller must never read an outage as a HOLD, so the two codes stay apart.
+const EXIT_CALL_FAILED = 3;
 
 // ⚠ CONFIDENCE DOES NOT PROTECT YOU FROM A VAGUE GOAL. Tested on the same 16-element basket page:
 // "complete the purchase and pay now" picked `Place order and pay` at 0.980, and the deliberately
@@ -156,7 +166,7 @@ export async function askPage(snapshot, goal, key, opts = {}) {
     ...extra,
   };
   const { answers, cost } = await askJev(state, questions, key);
-  const a = answers.click ?? {};
+  const a = answers?.click ?? {};
   const conf = a.confidence ?? 0;
   const chosen = elements.find((e) => e.ref === String(a.choice).replace(/_\d+$/, ''));
   const runnerUp = Object.entries(a.probabilities ?? {})
@@ -173,7 +183,7 @@ export async function askPage(snapshot, goal, key, opts = {}) {
     elements: elements.length,
     // Nouls only, so these are 0-1 with NO confidence field. A value near 0.5 means torn, which is
     // not the same as unsure — see system-one-models.md before routing on it.
-    checks: Object.fromEntries(named.map((k) => [k, answers[k]?.noul ?? answers[k] ?? null])),
+    checks: Object.fromEntries(named.map((k) => [k, answers?.[k]?.noul ?? answers?.[k] ?? null])),
     stateChars: state.length,
     textTruncated: truncated,
     textChars,
@@ -299,7 +309,55 @@ export function selftest() {
   return 'jevclick selftest OK';
 }
 
-if (process.argv.includes('--selftest')) { console.log(selftest()); process.exit(0); }
+// The failure paths, async because they need a socket. Invented data only, and the Jev endpoint is
+// redirected to a stub on localhost so nothing is sent or spent.
+export async function selftestFailure() {
+  const snap = '- button "Accept all cookies" [ref=e2]\n- button "Manage preferences" [ref=e3]';
+  // A 200 with no answers must not throw a TypeError: it is a pick with no confidence, so a hold.
+  const realFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({ usage: { cost: 0 } }), { status: 200 });
+    const r = await askPage(snap, 'accept', 'k', { checks: { q: { type: 'noul', instructions: 'i' } } });
+    assert.deepStrictEqual([r.ref, r.act, r.confidence, r.checks], [null, false, 0, { q: null }]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  // ⚠ A FAILED CALL IS ONE LINE AND EXIT 3, not a Node stack and not exit 2. Exit 2 is HOLD, and a
+  // caller that reads 2 as "look at the page yourself" must never get it for an outage.
+  const server = http.createServer((req, res) => { req.resume(); res.writeHead(503).end('upstream busy'); });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const stubUrl = `http://127.0.0.1:${server.address().port}/`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jevclick-'));
+  const snapFile = path.join(dir, 'snap.yml');
+  fs.writeFileSync(snapFile, snap);
+  const mock = `const real = globalThis.fetch;
+globalThis.fetch = (url, init) => {
+  if (!String(url).startsWith('https://openrouter.ai/')) throw new Error('unexpected host ' + url);
+  return real(${JSON.stringify(stubUrl)}, init);
+};`;
+  try {
+    for (const json of [false, true]) {
+      const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(mock)}`,
+        fileURLToPath(import.meta.url), '--snapshot', snapFile, '--goal', 'accept', ...(json ? ['--json'] : [])],
+      { env: { ...process.env, OPENROUTER_API_KEY: 'dummy-not-a-key' } });
+      let out = '';
+      let err = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.stderr.on('data', (d) => { err += d; });
+      const code = await new Promise((r) => child.on('close', r));
+      assert.strictEqual(code, EXIT_CALL_FAILED, `a 503 exits ${EXIT_CALL_FAILED}${json ? ' with --json' : ''}: ${err}`);
+      assert.match(err, /^jevclick: the Jev call failed: HTTP 503: upstream busy\r?\n$/, 'in one line, with no stack');
+      assert.strictEqual(out, '', 'and prints no pick');
+    }
+  } finally {
+    await new Promise((r) => server.close(r));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  return 'jevclick failure selftest OK';
+}
+
+if (process.argv.includes('--selftest')) { console.log(selftest()); console.log(await selftestFailure()); process.exit(0); }
 
 const opt = (n) => { const i = process.argv.indexOf(`--${n}`); return i < 0 ? null : process.argv[i + 1]; };
 const key = readKey();
@@ -315,11 +373,20 @@ const custom = opt('questions') ? JSON.parse(fs.readFileSync(opt('questions'), '
 const wantsChecks = process.argv.includes('--ask') || Object.keys(custom).length > 0;
 const raw = fs.readFileSync(snapPath, 'utf8');
 const t3 = fromT3(raw);
-const res = await askPage(t3 ? t3.snapshot : raw, goal, key,
-  { checks: wantsChecks ? PAGE_CHECKS : {}, extra: custom });
+// A failed call is one line and EXIT_CALL_FAILED, set as exitCode for the socket reason below.
+let res;
+try {
+  res = await askPage(t3 ? t3.snapshot : raw, goal, key,
+    { checks: wantsChecks ? PAGE_CHECKS : {}, extra: custom });
+} catch (e) {
+  console.error(`jevclick: the Jev call failed: ${e.message}`);
+  process.exitCode = EXIT_CALL_FAILED;
+}
 // A T3 pick is clicked by selector (preview_click selector=..., or x/y), since T3 has no refs.
-if (t3 && res.candidate) Object.assign(res, t3.targets[res.candidate]);
-if (process.argv.includes('--json')) {
+if (res && t3 && res.candidate) Object.assign(res, t3.targets[res.candidate]);
+if (!res) {
+  // The call failed. The line and the exit code above say so, and there is no pick to print.
+} else if (process.argv.includes('--json')) {
   console.log(JSON.stringify(res));
   // ⚠ exitCode, NEVER process.exit(), and this is not style. The HTTP socket from the call above is
   // still closing, and process.exit() tears the event loop down under it: on Windows libuv aborts

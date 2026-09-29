@@ -37,7 +37,7 @@
 
 import fs from 'node:fs';
 import assert from 'node:assert';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ATTEMPTS, askJev, runPool, noulsFrom, firedTags, readKey } from './lib.mjs';
 
@@ -429,6 +429,13 @@ export function selftest() {
   assert.ok(!s.includes('LEAK'), 'derived pipeline fields must not be fed back in as evidence');
   // A message missing every field must still produce a usable state rather than throwing.
   assert.strictEqual(typeof stateFor({}), 'string');
+
+  // The search path ends by exitCode, not process.exit, so it must not fall through into tag mode.
+  // A refused search exits 1 with one line and never reads the stdin that tag mode would sweep.
+  const refused = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--ask', 'x', '--identity', 'work'],
+    { input: '[]', encoding: 'utf8' });
+  assert.deepStrictEqual([refused.status, refused.stdout], [1, ''], `a refused search stops there: ${refused.stdout}`);
+  assert.match(refused.stderr, /^jevmail: refusing identity 'work'[^\n]*\r?\n$/, 'in one line');
   return 'jevmail selftest OK';
 }
 
@@ -453,10 +460,13 @@ if (flag('ask')) {
     }
   } catch (e) {
     console.error(`jevmail: ${e.message}`);
-    process.exit(e.status === 2 ? 2 : 1);   // postman's 2 = credentials, carried through
+    // ⚠ exitCode, never process.exit(), after a network call. A socket from the calls above may
+    // still be closing, and on Windows process.exit() then aborts in libuv and ends 127 (measured
+    // in jevclick, 2026-09-22). postman's 2 = credentials, carried through.
+    process.exitCode = e.status === 2 ? 2 : 1;
   }
-  process.exit(0);
-}
+} else {
+// Tag mode. Its process.exit calls all come before any socket opens.
 
 const raw = opt('in') ? fs.readFileSync(opt('in'), 'utf8') : fs.readFileSync(0, 'utf8');
 const messages = JSON.parse(raw);
@@ -481,4 +491,5 @@ report(rows);
 if (opt('json')) {
   fs.writeFileSync(opt('json'), JSON.stringify(rows.map(({ cost, ...r }) => r), null, 2));
   console.log(`\ntags written to ${opt('json')}`);
+}
 }
