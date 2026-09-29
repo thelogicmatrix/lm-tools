@@ -639,7 +639,8 @@ def inbox_main(argv):
     registry = load_registry(ident)
     sender = ident["sender"].lower()
     try:
-        with postman.imap_session(pw, ident["sender"]) as M:
+        with postman.imap_session(pw, ident["sender"], ident.get("imap_host")) as M:
+            all_mail = postman.special_folder(M, "\\All")
             if args.as_json:
                 # All Mail, not INBOX, for the same reason the render path uses it: an
                 # archived thread has left INBOX entirely and archiving is normal
@@ -651,14 +652,14 @@ def inbox_main(argv):
                 # the consumer's triage keys on the sender, so our own outbound would arrive as
                 # threads that can never match. No store is written: a sweep from the consumer
                 # must not eat inbox.md's 'new' markers.
-                msgs = fetch_window(M, postman.ALL_MAIL, args.days, with_snippets=True,
+                msgs = fetch_window(M, all_mail, args.days, with_snippets=True,
                                     from_addr=args.from_addr)
                 inbound = [m for m in msgs if m["from_addr"] != sender]
                 own = [m for m in msgs if m["from_addr"] == sender]
                 attribute(inbound, own, registry)
                 json.dump(to_json_stream(inbound), sys.stdout)
                 return 0
-            msgs = fetch_window(M, postman.ALL_MAIL, args.days,
+            msgs = fetch_window(M, all_mail, args.days,
                                 from_addr=args.from_addr)
             own = [m for m in msgs if m["from_addr"] == sender]
             inbound = [m for m in msgs if m["from_addr"] != sender]
@@ -724,7 +725,7 @@ def inbox_main(argv):
     # already exits non-zero on a bucket mismatch. The mailbox is named because a
     # reader cannot otherwise tell an INBOX-scoped pull from an All Mail one, and the
     # difference is whether "no reply" means anything (issue 2026-08-13)
-    print(f"read {postman.ALL_MAIL} | "
+    print(f"read {all_mail} | "
           f"{len(msgs)} messages | {len(own)} own | {len(inbound)} inbound | "
           f"{counts['attributed']} attributed | {counts['unaccounted']} unaccounted "
           f"| {counts['ignored']} ignored | {len(new_ids)} new | "
@@ -759,9 +760,10 @@ def search_mail(M, query, limit=SEARCH_LIMIT, out=sys.stdout):
     per message in the window, and a 400-day pull for one booking link was still
     running when it was killed on 2026-09-24. The same answer came back in seconds
     from X-GM-RAW (issue #23). Readonly SELECT, BODY.PEEK: nothing is marked read."""
-    typ, _ = M.select(postman.ALL_MAIL, readonly=True)
+    all_mail = postman.special_folder(M, "\\All")
+    typ, _ = M.select(all_mail, readonly=True)
     if typ != "OK":
-        raise InboxError(f"SELECT {postman.ALL_MAIL} failed: {typ}")
+        raise InboxError(f"SELECT {all_mail} failed: {typ}")
     # an IMAP quoted string: a Gmail phrase query ("exact words") carries its own
     # double quotes, and an unescaped one ends the string early
     quoted = '"%s"' % query.replace("\\", "\\\\").replace('"', '\\"')
@@ -770,7 +772,7 @@ def search_mail(M, query, limit=SEARCH_LIMIT, out=sys.stdout):
         raise InboxError(f"SEARCH X-GM-RAW failed: {typ} {data}")
     uids = (data[0] or b"").split()
     shown = uids[-limit:] if limit > 0 else uids     # UIDs ascend, so the newest hits
-    print(f"{len(uids)} match(es) for {query!r} in {postman.ALL_MAIL}"
+    print(f"{len(uids)} match(es) for {query!r} in {all_mail}"
           + (f", showing the newest {len(shown)}" if len(shown) < len(uids) else ""),
           file=out, flush=True)
     for n, uid in enumerate(shown, 1):
@@ -822,7 +824,7 @@ def search_main(argv):
     # stdout is cp1252 here and subjects carry curly quotes and accented names
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
-        with postman.imap_session(pw, ident["sender"]) as M:
+        with postman.imap_session(pw, ident["sender"], ident.get("imap_host")) as M:
             search_mail(M, args.query, args.limit)
     except (imaplib.IMAP4.error, InboxError, OSError) as e:
         print(f"postman search: {e}", file=sys.stderr)
@@ -976,6 +978,9 @@ def selftest():
         def __init__(self, hits, body):
             self.hits, self.body, self.calls = hits, body, []
 
+        def list(self):
+            return ("OK", [])                   # names nothing: the Gmail fallback
+
         def select(self, mailbox, readonly=False):
             self.calls.append(("SELECT", mailbox, readonly))
             return ("OK", None)
@@ -1015,6 +1020,15 @@ def selftest():
     S, buf = SearchIMAP(b"", link_mail), io.StringIO()
     assert search_mail(S, "nothing", out=buf) == 0
     assert buf.getvalue().startswith("0 match(es)") and len(S.calls) == 2
+    # #52: a German account's All Mail is "Alle Nachrichten". Search selects and names
+    # what LIST marked \All, never the English name, which SELECT refuses there.
+    class LocalSearchIMAP(SearchIMAP):
+        def list(self):
+            return ("OK", [b'(\\All \\HasNoChildren) "/" "[Gmail]/Alle Nachrichten"'])
+    S, buf = LocalSearchIMAP(b"", link_mail), io.StringIO()
+    search_mail(S, "nothing", out=buf)
+    assert S.calls[0] == ("SELECT", '"[Gmail]/Alle Nachrichten"', True), S.calls[0]
+    assert '"[Gmail]/Alle Nachrichten"' in buf.getvalue(), buf.getvalue()
     # the fence takes the PLAIN alternative, not the html one. get_body/get_content
     # are EmailMessage-only, so dropping policy=email.policy.default from
     # fetch_fence_text fails this assert instead of crashing on a real venue's reply.

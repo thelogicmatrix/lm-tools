@@ -1,0 +1,3 @@
+# postman's two runtime dependencies. The rest is the standard library.
+markdown>=3.0        # renders the batch body to HTML
+dnspython>=2.0       # the MX check. 2.0 is the first with dns.resolver.resolve

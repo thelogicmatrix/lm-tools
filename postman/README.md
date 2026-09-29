@@ -34,7 +34,7 @@ Add the logical-tools marketplace as the [root README](../README.md) shows, then
 codex plugin add postman@logical-tools       # Codex
 ```
 
-You need Python 3.9 or newer and a Gmail account with an app password. Install the two dependencies with `pip install markdown dnspython`.
+You need Python 3.9 or newer and a Gmail account with an app password. Install the two dependencies with `pip install -r skills/postman/requirements.txt`.
 
 ## First run
 

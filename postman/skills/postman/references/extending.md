@@ -34,6 +34,7 @@ A JSON object of identity name to identity. The shipped `.postman/identities.exa
 | `test_to` | | where `--test` sends. `POSTMAN_TEST_TO` overrides |
 | `pw_env` | | the env var holding the app password, `POSTMAN_PW_<NAME>` by default, with the identity name in capitals |
 | `pw_cmd` | | a command that prints the app password (below) |
+| `imap_host` | | the IMAP server every read connects to, `imap.gmail.com` by default. Sent, All Mail and Drafts are found by their SPECIAL-USE flags, so a mailbox in another language works. There is no `smtp_host` yet: sends always go through `smtp.gmail.com`, and an identity that sets one is refused |
 
 An identity missing a required field is refused by name rather than half-loaded. More than one `"default": true` is refused too. With no default and more than one identity, a batch with no `Identity:` line and no `--as` is refused rather than guessed.
 

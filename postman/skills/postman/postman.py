@@ -71,6 +71,15 @@ def load_identities():
         if missing:
             raise SystemExit(
                 f"{path}: identity {name!r} is missing {', '.join(missing)}.")
+        if "imap_host" in d and not (isinstance(d["imap_host"], str)
+                                     and d["imap_host"].strip()):
+            raise SystemExit(f"{path}: identity {name!r} has an empty imap_host. "
+                             f"Remove it to use {IMAP_HOST}.")
+        # refused, not ignored: the send path is held (#48, #49) and still dials Gmail,
+        # so an accepted smtp_host would send through a server the file never named
+        if "smtp_host" in d:
+            raise SystemExit(f"{path}: identity {name!r} sets smtp_host, which is not "
+                             f"supported yet. Sends go through smtp.gmail.com.")
         # html_sig is declared, never sniffed from the filesystem: inferring it from
         # "does SIGNATURE.html exist" means a typo'd assets path silently downgrades a
         # branded email to plain text and sends it anyway
@@ -398,7 +407,11 @@ def check_attachments(recs, base_dir):
 
 def has_mx(domain):
     """Layer 1. False on any resolver failure - a domain we cannot check is not usable."""
-    import dns.resolver
+    try:
+        import dns.resolver
+    except ImportError:
+        raise SystemExit("dnspython is not installed, so no MX check can run. "
+                         "pip install -r requirements.txt") from None
     try:
         return bool(dns.resolver.resolve(domain, "MX"))
     except Exception:
@@ -696,9 +709,36 @@ def smtp_session(password, sender):
 
 
 IMAP_HOST = "imap.gmail.com"
+# Gmail's English names. The fallback only: a non-English account names these folders in
+# its own language, so special_folder asks LIST for the SPECIAL-USE flag first (#52).
 DRAFTS = '"[Gmail]/Drafts"'
 SENT = '"[Gmail]/Sent Mail"'
 ALL_MAIL = '"[Gmail]/All Mail"'
+_SPECIAL_USE = {"\\Drafts": DRAFTS, "\\Sent": SENT, "\\All": ALL_MAIL}
+# (flags) delimiter name. The delimiter is a quoted char or NIL, the name a quoted string
+# or an atom. A name sent as a literal does not match and so falls back.
+LIST_RE = re.compile(rb'^\((?P<flags>[^)]*)\) (?:"(?:[^"\\]|\\.)*"|NIL) (?P<name>.+)$')
+
+
+def special_folder(M, flag):
+    """The mailbox LIST marks with SPECIAL-USE `flag` (RFC 6154), else Gmail's English
+    name. One LIST per session, kept on the connection. The name goes back to SELECT
+    exactly as LIST sent it, quoted and still in modified UTF-7.
+    """
+    found = getattr(M, "_postman_folders", None)
+    if found is None:
+        found = {}
+        typ, data = M.list()
+        for line in (data or []) if typ == "OK" else []:
+            m = LIST_RE.match(line) if isinstance(line, bytes) else None
+            if not m:
+                continue
+            name = m.group("name").decode("ascii", "replace")
+            name = name if name.startswith('"') else f'"{name}"'
+            for f in m.group("flags").decode("ascii", "replace").split():
+                found.setdefault(f.lower(), name)       # flags are case-insensitive
+        M._postman_folders = found
+    return found.get(flag.lower(), _SPECIAL_USE[flag])
 
 SUBJ_PREFIX_RE = re.compile(r"^(?:(?:re|fwd?|aw|antw|automatic reply)\s*:\s*)+", re.I)
 
@@ -785,11 +825,12 @@ def awaiting_reply(M, rec):
     since = (datetime.now(timezone.utc)
              - timedelta(days=THREAD_LOOKBACK_DAYS)).strftime("%d-%b-%Y")
     ours = theirs = None
+    sent, all_mail = special_folder(M, "\\Sent"), special_folder(M, "\\All")
     for addr in _to_addrs(rec):
-        mine = _newest_date(M, SENT, ("SINCE", since, "TO", f'"{addr}"'), subj)
+        mine = _newest_date(M, sent, ("SINCE", since, "TO", f'"{addr}"'), subj)
         if mine and (ours is None or mine > ours):
             ours = mine
-        back = _newest_date(M, ALL_MAIL, ("SINCE", since, "FROM", f'"{addr}"'), subj,
+        back = _newest_date(M, all_mail, ("SINCE", since, "FROM", f'"{addr}"'), subj,
                             skip_autoreply=True)
         if back and (theirs is None or back > theirs):
             theirs = back
@@ -875,7 +916,8 @@ def thread_headers(M, rec):
     # who wrote in the thread. ALL_MAIL is included because a reply that has been archived
     # leaves INBOX entirely, and reading the inbox is normal working behaviour.
     candidates = [(mb, key, addr)
-                  for mb, key in (("INBOX", "FROM"), (ALL_MAIL, "FROM"), (SENT, "TO"))
+                  for mb, key in (("INBOX", "FROM"), (special_folder(M, "\\All"), "FROM"),
+                                  (special_folder(M, "\\Sent"), "TO"))
                   for addr in _to_addrs(rec)]
     for mailbox, key, addr in candidates:
         hit = _newest_matching(M, mailbox, (key, f'"{addr}"'), subj)
@@ -904,9 +946,10 @@ def gate_or_die(recs, today=None):
 
 
 @contextlib.contextmanager
-def imap_session(password, sender):
-    """One authenticated IMAP session, for the same reason as smtp_session."""
-    M = imaplib.IMAP4_SSL(IMAP_HOST, timeout=IMAP_TIMEOUT)
+def imap_session(password, sender, host=None):
+    """One authenticated IMAP session, for the same reason as smtp_session. host is the
+    identity's imap_host, None for Gmail."""
+    M = imaplib.IMAP4_SSL(host or IMAP_HOST, timeout=IMAP_TIMEOUT)
     try:
         M.login(sender, password)
         yield M
@@ -921,7 +964,8 @@ def append_draft(msg, password, conn=None):
             append_draft(msg, password, conn=M)
         return
     # "\\Draft" so the message is a draft by flag, not only by which mailbox it landed in
-    typ, _ = conn.append(DRAFTS, "\\Draft", imaplib.Time2Internaldate(time.time()),
+    typ, _ = conn.append(special_folder(conn, "\\Drafts"), "\\Draft",
+                         imaplib.Time2Internaldate(time.time()),
                          msg.as_bytes())
     if typ != "OK":
         raise SystemExit(f"IMAP append failed for {msg['To']}: {typ}")
@@ -951,20 +995,21 @@ def stamp_block(path, slug, when):
     tmp.replace(path)
 
 
-def bounce_sweep(password, since, sender):
+def bounce_sweep(password, since, sender, host=None):
     """Layer 4. Bounce senders seen since a date. The only ground truth available.
 
     All Mail, not INBOX: a bounce that has been archived has left INBOX entirely, and
     this is the last gate on a batch that has already gone out, so a false clean is the
     one answer it must never give. All Mail excludes only Spam and Trash, and no message
     we sent is FROM mailer-daemon, so the wider scope adds no false positives.
+    Returns (hits, the folder swept).
     """
     hits = []
-    with imaplib.IMAP4_SSL(IMAP_HOST, timeout=IMAP_TIMEOUT) as M:
-        M.login(sender, password)
-        typ, _ = M.select(ALL_MAIL, readonly=True)
+    with imap_session(password, sender, host) as M:
+        folder = special_folder(M, "\\All")
+        typ, _ = M.select(folder, readonly=True)
         if typ != "OK":
-            raise SystemExit(f"--bounces: SELECT {ALL_MAIL} failed: {typ}. Nothing was "
+            raise SystemExit(f"--bounces: SELECT {folder} failed: {typ}. Nothing was "
                              f"swept, so this is not a clean result.")
         stamp = since.strftime("%d-%b-%Y")
         for who in ("mailer-daemon", "postmaster"):
@@ -975,10 +1020,10 @@ def bounce_sweep(password, since, sender):
             for uid in (data[0] or b"").split():
                 typ, d = M.fetch(uid, "(BODY[HEADER.FIELDS (SUBJECT FROM)])")
                 hits.append(d[0][1].decode("utf-8", "replace").strip())
-    return hits
+    return hits, folder
 
 
-def sweep_drafts(password, sender, match=None, purge=False):
+def sweep_drafts(password, sender, match=None, purge=False, host=None):
     """List drafts, optionally moving the matched ones to Trash.
 
     SKILL.md has always said "delete leftover drafts before sending the same batch",
@@ -992,13 +1037,16 @@ def sweep_drafts(password, sender, match=None, purge=False):
 
     Purge sets the Gmail \\Trash label rather than the IMAP \\Deleted flag: the draft
     lands in Trash and is recoverable for 30 days, where an expunge would be final.
+
+    Returns (rows, failed). failed counts the matched drafts still in Drafts after the
+    purge, 0 when listing.
     """
     out = []
-    with imaplib.IMAP4_SSL(IMAP_HOST, timeout=IMAP_TIMEOUT) as M:
-        M.login(sender, password)
-        typ, _ = M.select(DRAFTS, readonly=not purge)
+    with imap_session(password, sender, host) as M:
+        drafts = special_folder(M, "\\Drafts")
+        typ, _ = M.select(drafts, readonly=not purge)
         if typ != "OK":
-            raise SystemExit(f"--drafts: SELECT {DRAFTS} failed: {typ}. Nothing was "
+            raise SystemExit(f"--drafts: SELECT {drafts} failed: {typ}. Nothing was "
                              f"read or changed.")
         typ, data = M.uid("SEARCH", "ALL")
         if typ != "OK":
@@ -1011,19 +1059,25 @@ def sweep_drafts(password, sender, match=None, purge=False):
             if match and match.lower() not in hdr.lower():
                 continue
             out.append((uid.decode(), hdr))
-            if purge:
-                # Gmail-specific. +X-GM-LABELS (\Trash) moves it; the message survives
-                # in Trash, so a wrong match costs a restore rather than the draft.
-                # The label is ONE backslash and it is parenthesised. "\\\\Trash" in
-                # source emits a literal \\Trash and Gmail answers BAD Could not parse
-                # command, the same shape of failure as an unquoted multi-address SEARCH.
-                typ, _ = M.uid("STORE", uid, "+X-GM-LABELS", "(\\Trash)")
-                if typ != "OK":
-                    raise SystemExit(
-                        f"--drafts --purge: STORE \\Trash failed on uid {uid.decode()} "
-                        f"after {len(out)-1} draft(s) had already been moved. Re-run to "
-                        f"see what is left rather than assuming this one moved.")
-    return out
+        if not (purge and out):
+            return out, 0
+        # Gmail-specific. +X-GM-LABELS (\Trash) moves it, and the message survives
+        # in Trash, so a wrong match costs a restore rather than the draft.
+        # The label is ONE backslash and it is parenthesised. "\\\\Trash" in
+        # source emits a literal \\Trash and Gmail answers BAD Could not parse
+        # command, the same shape of failure as an unquoted multi-address SEARCH.
+        # One STORE on the whole matched set, not one per draft.
+        M.uid("STORE", ",".join(u for u, _ in out), "+X-GM-LABELS", "(\\Trash)")
+        # Its answer is not the count. A NO can come after some moved, so what failed is
+        # whatever matched and is still in Drafts. NOOP first, so the server can report
+        # what the STORE removed before the SEARCH looks.
+        M.noop()
+        typ, data = M.uid("SEARCH", "ALL")
+        if typ != "OK":
+            raise SystemExit(f"--drafts --purge: the STORE ran but the check after it "
+                             f"failed: {typ}. Re-run --drafts to see what is left.")
+        left = {u.decode() for u in (data[0] or b"").split()}
+        return out, sum(1 for u, _ in out if u in left)
 
 
 HUNTER_URL = "https://api.hunter.io/v2/email-verifier"
@@ -1085,7 +1139,8 @@ def fixture_home():
                         "store": str(Path(td) / "store"), "html_sig": True,
                         "default": True, "test_to": "ada+test@example.com"},
             "plain": {"sender": "ada.personal@example.com", "assets": str(assets),
-                      "store": str(Path(td) / "store2"), "html_sig": False},
+                      "store": str(Path(td) / "store2"), "html_sig": False,
+                      "imap_host": "imap.mail.example"},
         }), encoding="utf-8")
         prev = os.environ.get("POSTMAN_HOME")
         os.environ["POSTMAN_HOME"] = str(home)
@@ -1904,22 +1959,6 @@ Body.
         else:
             raise AssertionError("a missing attachment on an unstamped block must raise")
 
-    # Task 6: preflight must parse against the new return type, and its voice gate must
-    # actually see a planted banned phrase. r.get("body", "") returned "" on every block,
-    # so it printed clean on every batch ever run.
-    # Source read, never `import preflight`: preflight.py is a script, not a module - its
-    # module level reads sys.argv[1], resolves an app password through the identity's
-    # pw_cmd and opens an authenticated IMAP session. Importing it would log in to
-    # Gmail to run a unit test.
-    _src = (Path(__file__).parent / "preflight.py").read_text(encoding="utf-8")
-    _arg = re.search(r"check_voice\((.+?)\)\n", _src).group(1)
-    _, _, _vr = parse_batch(
-        "## @x | A B <a@b.example>\nSource: b.example/c, read 2026-08-13\n"
-        "Subject: I hope this email finds you well\n\nBody.\n")
-    r = _vr[0]
-    assert eval(f"check_voice({_arg})"), \
-        "preflight's voice gate sees nothing - it is passing a key parse_batch never sets"
-
     # a repeated Sent: must NOT kill the parse - it blocked resuming every other block
     _, _, _ds = parse_batch(
         "## @one | A B <a@b.example>\nSource: b.example/c, read 2026-08-13\n"
@@ -1961,6 +2000,9 @@ Body.
             self.msgs = {SENT: sent, ALL_MAIL: inbound}
             self.box = None
 
+        def list(self):
+            return "OK", []                     # names nothing: the Gmail fallbacks
+
         def select(self, mailbox, readonly=False):
             self.box = mailbox
             return "OK", [b"1"]
@@ -1996,6 +2038,208 @@ Body.
     assert awaiting_reply(_FakeBox(sent=(2, _S)),
                           dict(_rec, subject="Other enquiry")) is None, \
         "another thread's send is not this thread's"
+
+    # #52: folders by SPECIAL-USE flag (RFC 6154), not by Gmail's English names. A German
+    # account calls All Mail "Alle Nachrichten", and a SELECT on the English name fails
+    # there, which read back as "nothing found" or died. One LIST per session.
+    assert (DRAFTS, SENT, ALL_MAIL) == ('"[Gmail]/Drafts"', '"[Gmail]/Sent Mail"',
+                                        '"[Gmail]/All Mail"'), "the fallbacks moved"
+
+    class _LocalBox:
+        """A German Gmail account. LIST names its folders, every command is recorded."""
+        LISTING = [b'(\\HasNoChildren) "/" "INBOX"',
+                   b'(\\All \\HasNoChildren) "/" "[Gmail]/Alle Nachrichten"',
+                   b'(\\Drafts \\HasNoChildren) "/" "[Gmail]/Entw&APw-rfe"',
+                   b'(\\HasNoChildren \\Sent) "/" "[Gmail]/Gesendet"',
+                   b'(\\HasNoChildren \\Trash) "/" "[Gmail]/Papierkorb"']
+
+        def __init__(self, listing=LISTING, list_typ="OK"):
+            self.listing, self.list_typ, self.calls = listing, list_typ, []
+
+        def login(self, user, password):
+            self.calls.append(("LOGIN", user))
+
+        def logout(self):
+            self.calls.append(("LOGOUT",))
+
+        def noop(self):
+            self.calls.append(("NOOP",))
+            return "OK", [b""]
+
+        def list(self):
+            self.calls.append(("LIST",))
+            return self.list_typ, list(self.listing)
+
+        def select(self, mailbox, readonly=False):
+            self.calls.append(("SELECT", mailbox))
+            return "OK", [b"0"]
+
+        def search(self, charset, *criteria):
+            self.calls.append(("SEARCH",) + criteria)
+            return "OK", [b""]
+
+        def append(self, mailbox, flags, when, raw):
+            self.calls.append(("APPEND", mailbox))
+            return "OK", [b""]
+
+    _lb = _LocalBox()
+    assert special_folder(_lb, "\\All") == '"[Gmail]/Alle Nachrichten"'
+    assert special_folder(_lb, "\\Sent") == '"[Gmail]/Gesendet"'
+    # modified UTF-7 goes back to SELECT exactly as LIST sent it, never decoded
+    assert special_folder(_lb, "\\Drafts") == '"[Gmail]/Entw&APw-rfe"'
+    assert _lb.calls.count(("LIST",)) == 1, f"one LIST per session, got {_lb.calls}"
+    # every read path and the draft append use what LIST named, never the English name
+    _lb = _LocalBox()
+    thread_headers(_lb, {"to": "a@b.example, c@d.example", "subject": "RE: x"})
+    awaiting_reply(_lb, {"to": "a@b.example", "subject": "RE: x"})
+    append_draft(built, "x", conn=_lb)
+    _sel = {c[1] for c in _lb.calls if c[0] in ("SELECT", "APPEND")}
+    assert _sel == {"INBOX", '"[Gmail]/Alle Nachrichten"', '"[Gmail]/Gesendet"',
+                    '"[Gmail]/Entw&APw-rfe"'}, _sel
+    assert _lb.calls.count(("LIST",)) == 1, "the whole session costs one LIST"
+    # an unquoted atom and a NIL delimiter are both legal LIST replies
+    assert special_folder(_LocalBox([b"(\\Sent) NIL Sent"]), "\\Sent") == '"Sent"'
+    # a LIST that marks nothing, or fails, keeps the behaviour before #52
+    for _box in (_LocalBox([b'(\\HasNoChildren) "/" "INBOX"']), _LocalBox(list_typ="NO")):
+        assert [special_folder(_box, f) for f in ("\\All", "\\Sent", "\\Drafts")] \
+            == [ALL_MAIL, SENT, DRAFTS], _box.calls
+
+    # purge is ONE UID STORE on the matched set, and the failure count is what is still
+    # in Drafts afterwards, not a constant. Drafts 1 to 3 match, `stuck` never moves.
+    class _DraftBox(_LocalBox):
+        def __init__(self, stuck=(), store_typ="OK"):
+            super().__init__()
+            self.left, self.stuck, self.store_typ = {b"1", b"2", b"3"}, set(stuck), store_typ
+
+        def uid(self, cmd, *args):
+            self.calls.append((cmd,) + args)
+            if cmd == "SEARCH":
+                return "OK", [b" ".join(sorted(self.left))]
+            if cmd == "FETCH":
+                return "OK", [(b"1 (BODY[HEADER]", b"To: v@venue.example\r\n"
+                               b"Subject: Dinner " + args[0] + b"\r\n\r\n")]
+            assert cmd == "STORE", cmd
+            self.left -= {u.encode() for u in args[0].split(",")} - self.stuck
+            return self.store_typ, [b""]
+
+    import io
+    _real_ssl, _hosts = imaplib.IMAP4_SSL, []
+
+    def _connect(box):
+        def ssl(host, **kw):
+            _hosts.append(host)
+            return box
+        return ssl
+    try:
+        for _stuck, _typ, _failed in (((), "OK", 0), ((b"2",), "OK", 1),
+                                      ((b"1", b"2", b"3"), "NO", 3)):
+            _db = _DraftBox(_stuck, _typ)
+            imaplib.IMAP4_SSL = _connect(_db)
+            _rows, _f = sweep_drafts("x", "a@b.example", match="dinner", purge=True)
+            assert [u for u, _ in _rows] == ["1", "2", "3"], _rows
+            _stores = [c for c in _db.calls if c[0] == "STORE"]
+            assert _stores == [("STORE", "1,2,3", "+X-GM-LABELS", "(\\Trash)")], _stores
+            assert _f == _failed, f"stuck={_stuck} typ={_typ}: {_f} failed"
+            assert ("SELECT", '"[Gmail]/Entw&APw-rfe"') in _db.calls, _db.calls
+        # listing only: no STORE, nothing failed
+        _db = _DraftBox()
+        imaplib.IMAP4_SSL = _connect(_db)
+        assert sweep_drafts("x", "a@b.example")[1] == 0
+        assert not [c for c in _db.calls if c[0] == "STORE"]
+        # through main: the final line carries the real count and the exit is non-zero
+        os.environ[pw_env(work)] = "x"
+        imaplib.IMAP4_SSL = _connect(_DraftBox((b"3",)))
+        with contextlib.redirect_stdout(io.StringIO()) as _out:
+            assert main(["--drafts", work["name"], "dinner", "--purge"]) == 1
+        assert "2 draft(s) matching 'dinner' moved to Trash" in _out.getvalue(), \
+            _out.getvalue()
+        assert "1 failed" in _out.getvalue(), _out.getvalue()
+        # bounces read the localized All Mail, and the summary names that folder
+        imaplib.IMAP4_SSL = _connect(_LocalBox())
+        with contextlib.redirect_stdout(io.StringIO()) as _out:
+            main(["--bounces", work["name"], "1"])
+        assert '0 bounce(s) in "[Gmail]/Alle Nachrichten"' in _out.getvalue(), \
+            _out.getvalue()
+        # imap_host: absent is Gmail, present is used. "plain" declares one.
+        os.environ[pw_env(resolve_identity("plain", None))] = "x"
+        del _hosts[:]
+        for _name in (work["name"], "plain"):
+            imaplib.IMAP4_SSL = _connect(_DraftBox())
+            with contextlib.redirect_stdout(io.StringIO()):
+                main(["--drafts", _name])
+        assert _hosts == ["imap.gmail.com", "imap.mail.example"], _hosts
+    finally:
+        imaplib.IMAP4_SSL = _real_ssl
+        os.environ.pop(pw_env(work), None)
+        os.environ.pop(pw_env(resolve_identity("plain", None)), None)
+    # smtp_host is refused by name: the send path does not read it yet (#48, #49), and a
+    # silently ignored host would send through Gmail while the file says otherwise
+    with tempfile.TemporaryDirectory() as td:
+        _prev = os.environ["POSTMAN_HOME"]
+        os.environ["POSTMAN_HOME"] = td
+        try:
+            for _extra, _needle in (({"smtp_host": "smtp.mail.example"}, "smtp_host"),
+                                    ({"imap_host": ""}, "imap_host")):
+                (Path(td) / "identities.json").write_text(json.dumps(
+                    {"x": dict({"sender": "a@b.example", "assets": td, "store": td},
+                               **_extra)}), encoding="utf-8")
+                try:
+                    load_identities()
+                except SystemExit as e:
+                    assert _needle in str(e), str(e)
+                else:
+                    raise AssertionError(f"{_extra} was accepted")
+        finally:
+            os.environ["POSTMAN_HOME"] = _prev
+
+    # Task 6: preflight's voice gate must see a planted banned phrase. r.get("body", "")
+    # returned "" on every block, so it printed clean on every batch ever run.
+    # A real import since #52: preflight.py runs nothing until main(), so importing it
+    # reads no argv and logs in to nothing. It imports its own copy of this module (the
+    # same quirk as inbox), so the seams are patched on that copy.
+    import preflight
+    _pm, _opened = preflight.postman, []
+
+    @contextlib.contextmanager
+    def _fake_session(password, sender, host=None):
+        _opened.append((password, sender, host))
+        yield _LocalBox()                       # empty folders: every reply is unthreaded
+    _saved_pm = {k: getattr(_pm, k) for k in ("gmail_password", "imap_session", "has_mx")}
+    try:
+        _pm.gmail_password = lambda ident: "x"
+        _pm.imap_session, _pm.has_mx = _fake_session, lambda domain: True
+        with tempfile.TemporaryDirectory() as td:
+            _bp = Path(td) / "batch.md"
+            # the planted phrase: reported by the voice line, then refused by layer 2,
+            # which raises before any mailbox is opened
+            _bp.write_text(f"## @x | A B <a@b.example>\nSource: b.example/c, read "
+                           f"{date.today():%Y-%m-%d}\n"
+                           f"Subject: I hope this email finds you well\n\nBody.\n",
+                           encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()) as _out:
+                try:
+                    preflight.main([str(_bp)])
+                except _pm.BatchError as e:
+                    assert "finds you well" in str(e), str(e)
+                else:
+                    raise AssertionError("a banned phrase passed preflight's layer 2")
+            _voice = _out.getvalue().split("voice\n", 1)[1].splitlines()[0]
+            assert "finds you well" in _voice.lower() and "clean" not in _voice, \
+                "preflight's voice gate sees nothing - it is passing a key parse_batch " \
+                "never sets"
+            assert _opened == [], "a batch that fails its gates must not log in"
+            # a clean reply with no thread: HOLD and exit 1, over one shared session
+            _bp.write_text("## @y | C D <c@d.example>\nSubject: RE: Dinner\n\n"
+                           "```quoted\nC D, 1 Sep\nHi.\n```\n\nBody.\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()) as _out:
+                _rc = preflight.main([str(_bp)])
+    finally:
+        for _k, _v in _saved_pm.items():
+            setattr(_pm, _k, _v)
+    _o = _out.getvalue()
+    assert _rc == 1 and "HOLD: y would send unthreaded" in _o, _o
+    # the shared session helper, with the identity's host, and exactly one session
+    assert _opened == [("x", work["sender"], None)], _opened
 
     # credential resolution, offline. Never calls vault_password: POSTMAN_NO_VAULT is
     # what keeps this a unit test instead of a live secret-store round trip.
@@ -2302,13 +2546,17 @@ def main(argv=None):
         note = ("Some drafts may already be in Trash. Rerun --drafts to see what is left."
                 if args.purge else "Nothing was changed.")
         with read_failed("--drafts", note):
-            rows = sweep_drafts(gmail_password(ident), ident["sender"],
-                                match=match, purge=args.purge)
+            rows, failed = sweep_drafts(gmail_password(ident), ident["sender"],
+                                        match=match, purge=args.purge,
+                                        host=ident.get("imap_host"))
         for uid, hdr in rows:
             print(f"  {uid:<8} {hdr}")
         scope = f"matching {match!r}" if match else "in the mailbox (no filter given)"
         if args.purge:
-            print(f"{len(rows)} draft(s) {scope} moved to Trash, recoverable for 30 days.")
+            print(f"{len(rows) - failed} draft(s) {scope} moved to Trash, recoverable for "
+                  f"30 days. {failed} failed"
+                  + (". Rerun --drafts to see what is left." if failed else "."))
+            return 1 if failed else 0
         else:
             print(f"{len(rows)} draft(s) {scope}. Nothing was changed. "
                   f"Add --purge to move them to Trash.")
@@ -2363,14 +2611,15 @@ def main(argv=None):
         print(f"sending as: {ident['sender']}  (identity: {ident['name']})")
         since = date.today() - timedelta(days=int(args.bounces[1]))
         with read_failed("--bounces", "Nothing was swept, so this is not a clean result."):
-            hits = bounce_sweep(gmail_password(ident), since, ident["sender"])
+            hits, folder = bounce_sweep(gmail_password(ident), since, ident["sender"],
+                                        host=ident.get("imap_host"))
         for h in hits:
             print(h)
         # zero bounces used to print nothing at all, which is the same output as a sweep
         # that silently matched nothing for the wrong reason. Layer 4 is the last gate on
         # a batch that has already left, so "I cannot tell whether this ran" is the one
         # thing it must not say (issue 2026-08-13).
-        print(f"{len(hits)} bounce(s) in {ALL_MAIL} since "
+        print(f"{len(hits)} bounce(s) in {folder} since "
               f"{since.strftime('%d-%b-%Y')} for {ident['sender']}")
         return 0
     batch = args.draft or args.send
@@ -2401,11 +2650,12 @@ def main(argv=None):
                     "--draft", "Drafts listed above were made. --draft does not stamp, "
                                "so check Gmail Drafts before a rerun."))
             conn = stack.enter_context(smtp_session(pw, ident["sender"]) if args.send
-                                      else imap_session(pw, ident["sender"]))
+                                      else imap_session(pw, ident["sender"],
+                                                        ident.get("imap_host")))
             # A --send batch of replies needs IMAP too, to read the Message-IDs it is
             # threading onto. --draft is already on IMAP, so it reuses that one session.
             imap = conn if not args.send else stack.enter_context(
-                imap_session(pw, ident["sender"]))
+                imap_session(pw, ident["sender"], ident.get("imap_host")))
             # a reply that will not thread is a hard block BEFORE anything goes out, so
             # every thread is resolved first and the batch either sends whole or not at
             # all. On 11 Aug the post-hoc warning put 9 of 11 into new conversations,
