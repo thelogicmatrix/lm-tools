@@ -43,15 +43,32 @@ const describe = (rec, shelf, issue) =>
   `${rec.next ?? ''}\n\n\`\`\`json gtg\n${JSON.stringify({ ...rec, shelf, issue }, null, 2)}\n\`\`\`\n`;
 const copy = (r) => ({ ...JSON.parse(JSON.stringify(r)), [ID]: r[ID] });
 
+// Reads are retried, writes never are: a PUT or POST that timed out may have landed, and sending it
+// again would double it or trip the SHA check. 2026-09-29: with a dozen gtg processes starting at
+// once (session hooks, parallel sessions) one slow GET of 15 aborted the whole read. Three tries of
+// 8s each, since a healthy call takes under a second.
+const RETRIES = 3;
+async function send(fetchImpl, url, init) {
+  const read = init.method === 'GET';
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(read ? 8000 : 15000) });
+      if (!read || res.status < 500 || attempt === RETRIES) return res;
+    } catch (e) {
+      if (!read || attempt === RETRIES) throw e;
+    }
+    await new Promise((r) => setTimeout(r, 300 * attempt));
+  }
+}
+
 export async function openForge(cfg, fetchImpl = fetch) {
   if (cfg.store === 'files') return openFileForge(cfg, fetchImpl);
   // Errors name the method and path, never the headers, so the token cannot reach a transcript.
   const call = async (method, path, body) => {
-    const res = await fetchImpl(`${cfg.api}/repos/${cfg.repo}${path}`, {
+    const res = await send(fetchImpl, `${cfg.api}/repos/${cfg.repo}${path}`, {
       method,
       headers: { Authorization: `token ${cfg.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(15000),
     });
     if (!res.ok) throw new Error(`forge ${method} ${path} -> ${res.status} ${(await res.text()).slice(0, 200)}`);
     return res.status === 204 ? null : res.json();
@@ -175,11 +192,10 @@ async function openFileForge(cfg, fetchImpl) {
   const base = `${cfg.api}/repos/${cfg.repo}/contents/`;
   const records = 'docs/handoffs/records/';
   const call = async (method, path, body, missing = false) => {
-    const res = await fetchImpl(base + path, {
+    const res = await send(fetchImpl, base + path, {
       method,
       headers: { Authorization: `token ${cfg.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(15000),
     });
     if (missing && res.status === 404) return null;
     if (!res.ok) throw new Error(`forge ${method} ${path} -> ${res.status} ${(await res.text()).slice(0, 200)}`);
@@ -191,8 +207,8 @@ async function openFileForge(cfg, fetchImpl) {
   };
   const names = await call('GET', records.slice(0, -1), undefined, true);
   if (!names) {
-    const repo = await fetchImpl(`${cfg.api}/repos/${cfg.repo}`, {
-      headers: { Authorization: `token ${cfg.token}` }, signal: AbortSignal.timeout(15000),
+    const repo = await send(fetchImpl, `${cfg.api}/repos/${cfg.repo}`, {
+      method: 'GET', headers: { Authorization: `token ${cfg.token}` },
     });
     if (!repo.ok) throw new Error(`forge GET repo ${cfg.repo} -> ${repo.status}`);
   }

@@ -103,3 +103,52 @@ test('file store handoff, resume, shelf move and complete use versioned files on
   assert.equal(files.size, 0);
   assert.match((await run(['list'])).stdout, /No active gtg projects/);
 });
+
+test('file store retries a failed read, but never retries a write', async (t) => {
+  const record = JSON.stringify({ slug: 'alpha', project: 'Alpha', shelf: 'active', next: 'Ship it', handoff: 'x' });
+  let reads = 0, writes = 0, failReadsUntil = 0, failWrites = false;
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) { /* drain */ }
+    const path = decodeURIComponent(new URL(req.url, 'http://stub').pathname.replace('/api/v1/repos/o/r/contents/', ''));
+    const send = (status, data) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(data)); };
+    if (req.method !== 'GET') { writes++; return failWrites ? send(503, { message: 'busy' }) : send(200, { content: { sha: 'n' } }); }
+    reads++;
+    if (reads <= failReadsUntil) return send(503, { message: 'busy' });
+    if (path === 'docs/handoffs/records') return send(200, [{ name: 'alpha.json', sha: 's' }]);
+    return send(200, { sha: 's', content: Buffer.from(record).toString('base64') });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const root = mkdtempSync(join(tmpdir(), 'gtg-retry-'));
+  mkdirSync(join(root, '.gtg'));
+  writeFileSync(join(root, '.gtg', 'forge.json'), JSON.stringify({
+    api: `http://127.0.0.1:${server.address().port}/api/v1`, repo: 'o/r', store: 'files',
+  }));
+  const run = (args, input = '') => new Promise((resolve) => {
+    const child = spawn(process.execPath, [CLI, ...args], {
+      cwd: root,
+      env: { ...process.env, GTG_HUB: root, GTG_NO_SYNC: '1', GTG_SESSION_ID: 'retry-test', FORGEJO_TOKEN: 'tok' },
+    });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (x) => { stdout += x; });
+    child.stderr.on('data', (x) => { stderr += x; });
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end(input);
+  });
+  failReadsUntil = 2; // the listing fails once and the first record read fails once
+  const listed = await run(['list', '--no-list']);
+  assert.equal(listed.status, 0, listed.stderr);
+  failReadsUntil = 0;
+  reads = 0;
+  failReadsUntil = 1e9; // the server never recovers: give up with the usual message after a bounded number of tries
+  const dead = await run(['list', '--no-list']);
+  assert.equal(dead.status, 1);
+  assert.match(dead.stderr, /cannot read the forge store/);
+  assert.ok(reads <= 4, `gave up after ${reads} reads`);
+  failReadsUntil = 0;
+  failWrites = true;
+  const before = writes;
+  const write = await run(['handoff', '--project', 'Alpha', '--slug', 'alpha'], '## Next Action\nAgain\n');
+  assert.equal(write.status, 1);
+  assert.equal(writes - before, 1, 'a failed PUT is sent once');
+});
