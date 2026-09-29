@@ -1100,8 +1100,9 @@ const DELIBERATE = /^(projects: |invalid slug|unknown status|unknown theme)/;
 // shard, then upgrade. docs/runbooks/git-parity.md has the rollback.
 
 export function main(argv = process.argv.slice(2)) {
-  const root = resolveRoot();
   const [cmd, ...rest] = argv;
+  // help reads no store, so it skips the git spawn that finds one.
+  const root = ['help', '--help', '-h'].includes(cmd) ? '' : resolveRoot();
   try {
     if (!cmd) return builtins.list(root, []);
     // A theme reads as a filter, not a verb. Routed HERE rather than added to `builtins`,

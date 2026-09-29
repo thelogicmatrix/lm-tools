@@ -3,7 +3,7 @@
 // Storage root: GTG_HUB env var if set, else the current git repo's root.
 // Unknown subcommands dispatch to <root>/.gtg/commands/<name>.mjs (see README).
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync, renameSync } from 'node:fs';
-import { execSync, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { readCollection, writeCollection } from './lib/store.mjs';
@@ -15,14 +15,16 @@ import { readProgress, renderProgress, renderProgressTaskList } from './lib/prog
 function resolveRoot() {
   if (process.env.GTG_HUB) return process.env.GTG_HUB;
   try {
-    return execSync('git rev-parse --show-toplevel', { stdio: ['ignore', 'pipe', 'ignore'] })
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { stdio: ['ignore', 'pipe', 'ignore'] })
       .toString().trim();
   } catch {
     console.error('gtg: not inside a git repository and GTG_HUB is not set');
     process.exit(2);
   }
 }
-const ROOT = resolveRoot();
+// help reads no store, so it skips the git spawn, which was about 80 ms of a 137 ms `gtg help`.
+const HELP_ONLY = ['help', '--help', '-h'].includes(process.argv[2]);
+const ROOT = HELP_ONLY ? '' : resolveRoot();
 const DIR_ACTIVE = 'docs/handoffs/active';
 const DIR_BACKLOG = 'docs/handoffs/backlog';
 // `which` -> the directory that holds its records. One file per record, and the directory is the

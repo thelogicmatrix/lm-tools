@@ -2256,3 +2256,18 @@ test('the sync CLI still flags a row whose code moved after its status', () => {
   const sync = runCli(root, ['sync']);
   assert.match(sync.stdout, /STALE beacon: .*last commit 2099-01-01/, sync.stdout + sync.stderr);
 });
+
+// help needs no store, so it must not spawn git to find one. Outside any repo, with
+// PROJECTS_ROOT unset, the root lookup exits 2, which is what a help that resolved it would do.
+test('help, --help and -h print the usage outside any git repo', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'projects-norepo-'));
+  const env = { ...process.env, GIT_CEILING_DIRECTORIES: tmpdir() };
+  delete env.PROJECTS_ROOT;
+  for (const verb of ['help', '--help', '-h']) {
+    const r = spawnSync(process.execPath, [CLI, verb], { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(r.status, 0, `${verb}: ${r.stderr}`);
+    assert.match(r.stdout, /^projects: portfolio bookkeeping/);
+  }
+  const list = spawnSync(process.execPath, [CLI, 'list'], { cwd: dir, env, encoding: 'utf8' });
+  assert.equal(list.status, 2, 'a real verb still needs the root');
+});
