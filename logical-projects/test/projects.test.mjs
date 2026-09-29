@@ -2191,3 +2191,38 @@ test('INDEX.md is still rendered from the sharded store and still guards an empt
   assert.match(r.stderr, /[Mm]igrate it first/);
   assert.equal(readFileSync(join(root, REL_INDEX), 'utf8'), index, 'the table was rewritten');
 });
+
+// Issue #34. A commit that fails after its add must not leave the add staged in the shared
+// index, and a briefly held index.lock is waited out rather than failing the verb.
+import { chmodSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+
+function quietly(fn) {
+  const before = process.exitCode;
+  const orig = console.error;
+  console.error = () => {};
+  try { return fn(); } finally { console.error = orig; process.exitCode = before; }
+}
+
+test('a failed commit leaves nothing staged', () => {
+  const { root, git } = gitFixture();
+  writeFileSync(join(root, 'docs/projects/a.md'), 'a\n');
+  const hook = join(root, '.git', 'hooks', 'pre-commit');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+  chmodSync(hook, 0o755);
+  assert.equal(quietly(() => commit(root, ['docs/projects/a.md'], 'refused by the hook')), false);
+  assert.equal(git('diff', '--cached', '--name-only').toString().trim(), '',
+    'the failed commit must unstage what its add staged');
+});
+
+test('a commit waits out a briefly held index.lock', async () => {
+  const { root, git } = gitFixture();
+  writeFileSync(join(root, 'docs/projects/a.md'), 'a\n');
+  const lock = join(root, '.git', 'index.lock');
+  writeFileSync(lock, '');
+  const child = spawn(process.execPath, ['-e',
+    `setTimeout(() => require('fs').rmSync(${JSON.stringify(lock)}), 400)`], { stdio: 'ignore' });
+  assert.equal(commit(root, ['docs/projects/a.md'], 'after the lock'), true);
+  assert.equal(git('log', '--format=%s').toString().trim(), 'after the lock');
+  await new Promise((r) => (child.exitCode === null ? child.on('exit', r) : r()));
+});

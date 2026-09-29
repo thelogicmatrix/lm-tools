@@ -1012,3 +1012,33 @@ test('the repo-root gate ignores path case where the filesystem does', () => {
   assert.match(log, /learn start: learning-growth-marketing/);
   rmSync(dir, { recursive: true, force: true });
 });
+
+// Issue #34. commit() refuses an empty path list (a bare commit would take the whole shared
+// index), and a commit that fails after its add leaves nothing staged.
+import { commit } from '../skills/logical-learning/learn.mjs';
+
+const gitOut = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8' }).trim();
+
+test('commit with no paths commits nothing and leaves other staged work alone', () => {
+  const dir = repoRoot('learn-empty-');
+  writeFileSync(join(dir, 'other.md'), 'another session\n');
+  execFileSync('git', ['-C', dir, 'add', 'other.md']);
+  commit(dir, [], 'nothing asked for');
+  assert.notEqual(spawnSync('git', ['-C', dir, 'rev-parse', 'HEAD']).status, 0, 'no commit may be created');
+  assert.equal(gitOut(dir, 'diff', '--cached', '--name-only'), 'other.md');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('a failed commit leaves nothing staged', () => {
+  const dir = repoRoot('learn-hook-');
+  writeFileSync(join(dir, 'a.md'), 'a\n');
+  const hook = join(dir, '.git', 'hooks', 'pre-commit');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+  chmodSync(hook, 0o755);
+  const before = process.exitCode;
+  const orig = console.error;
+  console.error = () => {};
+  try { commit(dir, ['a.md'], 'refused by the hook'); } finally { console.error = orig; process.exitCode = before; }
+  assert.equal(gitOut(dir, 'diff', '--cached', '--name-only'), '', 'the failed commit must unstage what its add staged');
+  rmSync(dir, { recursive: true, force: true });
+});

@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdir
 import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { readCollection, writeCollection } from './lib/store.mjs';
+import { runGit, firstMeaningfulLine } from './lib/git.mjs';
 
 export const STATUSES = {
   active: '🟢 active',
@@ -488,21 +489,7 @@ export function today() {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 
-// The one line of a child-process failure that actually says what went wrong. Three traps, each
-// of which has printed a useless message here:
-//   - `e.stderr` under stdio:'pipe' is a BUFFER, and an EMPTY buffer is TRUTHY, so the usual
-//     `e.stderr || e.message` shadows the message entirely - a timeout kill printed a bare dash.
-//   - git leads with "warning: LF will be replaced by CRLF" on a Windows checkout, so the first
-//     line is git's line-ending advice rather than the cause.
-//   - a refused fast-forward leads with nine `hint:` lines.
-// So: coerce, prefer stderr only when it has content, and take the first line that is neither
-// blank nor advice. Falls back to the first line of whatever there is rather than to ''.
-// ponytail: the twin of gtg.mjs's firstMeaningfulLine, for the same reason the store is a copy.
-function firstMeaningfulLine(e) {
-  const raw = `${e?.stderr ?? ''}`.trim() || `${e?.message ?? ''}`.trim() || String(e ?? '');
-  const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
-  return lines.find((l) => !/^(warning|hint):/i.test(l)) || lines[0] || '';
-}
+// firstMeaningfulLine lives in lib/git.mjs beside runGit, one copy shared with gtg and learn.
 
 export function commit(root, paths, message) {
   // No paths means nothing was asked for. Falling through would be the exact disaster
@@ -511,13 +498,14 @@ export function commit(root, paths, message) {
   // reads as NO pathspec, sweeping the whole shared index and taking other sessions'
   // staged work. Verified by experiment. Callers build `paths` conditionally, so [] is ordinary.
   if (!paths.length) return true;
-  const opts = { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] };
+  const opts = { cwd: root };
   try {
     // `--` on the add too: the slug regex permits a leading '-', so a path could parse as a flag.
-    execFileSync('git', ['add', '--', ...paths], opts);
+    // runGit waits out another session's index.lock and times out a hung git.
+    runGit(['add', '--', ...paths], opts);
     // Name the paths on the COMMIT too. A pathspec-less commit takes the WHOLE shared
     // index, so a concurrent session's staged work rides along in ours.
-    execFileSync('git', ['commit', '-q', '-m', message, '--', ...paths], opts);
+    runGit(['commit', '-q', '-m', message, '--', ...paths], opts);
     return true;
   } catch (e) {
     const out = `${e.stdout || ''}\n${e.stderr || ''}`;
@@ -528,6 +516,9 @@ export function commit(root, paths, message) {
     // Anchored to line start so a real failure that merely QUOTES one of these phrases
     // (a pre-commit hook echoing `git status`, say) is not swallowed as success.
     if (/^(nothing (added )?to commit|no changes added)/im.test(out)) return true;
+    // `git add` is not atomic and may have staged some or all of the paths before the failure.
+    // Unstage them, as learn does, so nothing is left ownerless in the shared index.
+    try { runGit(['reset', '-q', '--', ...paths], opts); } catch { /* nothing staged */ }
     console.error(`projects: git commit failed, changes are on disk but uncommitted. ${firstMeaningfulLine(e)}`);
     // The `false` below is not enough on its own: saveAndRender discards it, and a batch
     // caller reads $? rather than our stderr. On 2026-08-11 a 39-call `projects set`

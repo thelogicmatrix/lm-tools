@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSy
 import { join, dirname, basename, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { runGit, firstMeaningfulLine } from './lib/git.mjs';
 
 export const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 const SAFE = /^[A-Za-z0-9_-]+$/;
@@ -94,12 +95,14 @@ export function isRepoRoot(root) {
 // staged rides along in ours. Explicit paths on BOTH add and commit is what gtg.mjs settled on
 // after exactly that happened (2026-07-27); this mirrors it rather than inventing a second
 // convention. `--` keeps a path starting with a dash from being read as a flag.
+// An EMPTY list is refused: `git commit --` with nothing after it takes the whole shared index.
+// runGit waits out another session's index.lock and times out a hung git.
 export function commit(root, rels, message) {
-  if (!isRepoRoot(root)) return;
-  const opts = { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] };
+  if (!rels.length || !isRepoRoot(root)) return;
+  const opts = { cwd: root };
   try {
-    execFileSync('git', ['add', '--', ...rels], opts);
-    execFileSync('git', ['commit', '-q', '-m', message, '--', ...rels], opts);
+    runGit(['add', '--', ...rels], opts);
+    runGit(['commit', '-q', '-m', message, '--', ...rels], opts);
   } catch (e) {
     const out = `${e.stdout || ''}${e.stderr || ''}`;
     if (/nothing to commit|no changes added/i.test(out)) return; // same content already committed
@@ -108,14 +111,12 @@ export function commit(root, rels, message) {
     // blocks every other session's merges, the same 2026-07-27 failure named above. A repo that
     // gitignores its docs tree is ordinary, so the failure path has to leave the tree no worse
     // than never having tried: written, uncommitted, unstaged.
-    try { execFileSync('git', ['reset', '-q', '--', ...rels], opts); } catch { /* nothing staged */ }
+    try { runGit(['reset', '-q', '--', ...rels], opts); } catch { /* nothing staged */ }
     // A write that landed but did not commit is a partial success, so say so on stderr AND in
     // the exit code: a batch caller reads $?, not our warnings.
-    // Skip git's warning and hint lines: `LF will be replaced by CRLF` precedes the real error
-    // on a default Windows checkout, and naming it sends the reader after a line-ending problem
-    // they do not have.
-    const why = `${e.stderr || e.message || ''}`.split('\n').map((l) => l.trim())
-      .find((l) => l && !/^(warning|hint):/i.test(l)) || 'no reason on stderr';
+    // firstMeaningfulLine skips git's warning and hint lines: `LF will be replaced by CRLF`
+    // precedes the real error on a default Windows checkout.
+    const why = firstMeaningfulLine(e) || 'no reason on stderr';
     console.error(`learn: git commit failed, changes are on disk but uncommitted - ${why}`);
     process.exitCode = 1;
   }
