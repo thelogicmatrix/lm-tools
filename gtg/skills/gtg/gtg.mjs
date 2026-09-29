@@ -2,7 +2,7 @@
 // gtg - zero-model bookkeeping CLI for the gtg pause/resume skill.
 // Storage root: GTG_HUB env var if set, else the current git repo's root.
 // Unknown subcommands dispatch to <root>/.gtg/commands/<name>.mjs (see README).
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync, renameSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -10,6 +10,9 @@ import { readCollection, writeCollection } from './lib/store.mjs';
 import { runGit, firstMeaningfulLine } from './lib/git.mjs';
 import { forgeConfig, openForge } from './lib/forge.mjs';
 import { readProgress, renderProgress, renderProgressTaskList } from './lib/progress.mjs';
+import { EXTENSIONS, REVIEW_ACTIVE_DAYS, REVIEW_BACKLOG_DAYS, REVIEW_CMDS, ago, c, displayOrder, localOffsetSuffix, nowIso,
+  parseFlags, printReview as printReviewFor, renderList as renderListFor, resolveEntry, sortByProject, userVisible } from './lib/view.mjs';
+import { resumeConsume as resumeFor } from './lib/resume.mjs';
 
 // --- storage root -----------------------------------------------------------
 // The repo the caller stands in, or null outside one. Looked up once: startup needs it for ROOT
@@ -32,9 +35,8 @@ function resolveRoot() {
   console.error('gtg: not inside a git repository and GTG_HUB is not set');
   process.exit(2);
 }
-// help reads no store, so it skips the git spawn, which was about 80 ms of a 137 ms `gtg help`.
-const HELP_ONLY = ['help', '--help', '-h'].includes(process.argv[2]);
-const ROOT = HELP_ONLY ? '' : resolveRoot();
+// Set by main(), so importing this file resolves nothing and spawns nothing.
+let ROOT = '';
 const DIR_ACTIVE = 'docs/handoffs/active';
 const DIR_BACKLOG = 'docs/handoffs/backlog';
 // `which` -> the directory that holds its records. One file per record, and the directory is the
@@ -52,25 +54,6 @@ const STORE_PATHSPEC = [PACKED_ACTIVE, PACKED_BACKLOG, DIR_ACTIVE, DIR_BACKLOG];
 const SLUG_OK = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 // Directory of this CLI file - bundled extensions ship alongside it under extensions/.
 const CLI_DIR = dirname(fileURLToPath(import.meta.url));
-
-// gtg add-ons come in two kinds. An EXTENSION owns entries in the handoff store and renders
-// its own separated list, so its entries are excluded from `list` and `backlog`. A MOD owns
-// no entries and only adds a view (stats, report), so mods are absent from this map.
-//
-// Command name -> the `parent` namespace it owns. Filtering is on the existing `parent` field
-// and adds no new one on purpose: writeHandoff rebuilds every entry as a fresh literal and
-// silently drops fields it does not know, so a marker field would survive exactly until the
-// next wrap. Same constraint that put issue-package membership in the issue file.
-//
-// DUPLICATED OUTSIDE THIS REPO, and it has to be. The author's SessionStart banner hook at
-// .claude/hooks/gtg-active-summary.mjs announces the active count and must exclude the same
-// namespaces, or the banner disagrees with `gtg list` on the next line. A hook cannot import
-// from a plugin, so it carries its own copy of these values. Adding a namespace here means
-// adding it there too.
-const EXTENSIONS = { issues: 'issues', learn: 'learning' };
-const EXTENSION_PARENTS = new Set(Object.values(EXTENSIONS));
-const isExtensionEntry = (e) => EXTENSION_PARENTS.has(e?.parent);
-const userVisible = (arr) => arr.filter((e) => !isExtensionEntry(e));
 
 // Who is mutating the store. Every gtg commit carries this as a trailer so `undo`
 // can tell its own change from a concurrent session's - two sessions sharing one
@@ -98,10 +81,6 @@ function detectHarness() {
   if (Object.keys(process.env).some((k) => k.startsWith('CODEX_'))) return 'codex';
   return undefined;
 }
-
-// --- color (TTY-gated, NO_COLOR-aware; raw ANSI, no dependency) ---------------
-const COLOR = process.stdout.isTTY && !process.env.NO_COLOR;
-const c = (code, s) => (COLOR ? `\x1b[${code}m${s}\x1b[0m` : String(s));
 
 // --- helpers (readStore/writeStore/commit are also the extension ctx) --------
 // readStore is a WHOLE-FILE JSON reader and stays one: it is published on the extension ctx,
@@ -198,19 +177,6 @@ function saveEntries(which, items) {
   return [...written, ...deleted];
 }
 
-// Fallback sync target, used only when the branch has no upstream - the reasoning lives at
-// syncTarget() below, beside the code that consults it. DECLARED HERE because the resume-path
-// sync a few lines down runs at import time: syncHub is a hoisted function declaration and can be
-// called before its definition, but a `const` still in its temporal dead zone would throw the
-// moment syncTarget reached its fallback.
-const SYNC_REMOTE = process.env.GTG_SYNC_REMOTE || 'origin'; // fallback only: the hub's mirror
-const SYNC_BRANCH = process.env.GTG_SYNC_BRANCH || 'main';   // fallback only: the branch that mirror carries
-// syncHub runs once per process, called from resumeConsume. The memo outlived the second caller
-// that needed it - an import-time sync ahead of the self-migration, removed in 3.3.0 with the
-// migration itself - and is kept because it is what makes the call idempotent for any future
-// caller: a second fetch costs another 5-second timeout with the hub unreachable.
-let synced = false;
-
 // NO import-time migration since 3.3.0. It read the packed stores and sharded them, and both
 // packed files are deleted, so there is nothing to migrate from: a tree with no record
 // directory is a fresh hub, and the first write creates it. What went with the migration:
@@ -222,65 +188,6 @@ let synced = false;
 //     readCollection now throws per RECORD instead, which is the same protection one level
 //     down: one unparseable record names itself rather than emptying a list.
 // A pre-shard tree needs the pre-shard plugin. docs/runbooks/git-parity.md has the rollback.
-// Local UTC-offset suffix e.g. "+08:00" for the given Date - shared by nowIso()
-// and firstHandoffDate() so both emit the same aware-datetime format (a bare
-// vs offset-suffixed stamp otherwise makes Python's fromisoformat raise when
-// comparing them).
-function localOffsetSuffix(d) {
-  const p = (n) => String(n).padStart(2, '0');
-  const off = -d.getTimezoneOffset();
-  return `${off >= 0 ? '+' : '-'}${p(Math.floor(Math.abs(off) / 60))}:${p(Math.abs(off) % 60)}`;
-}
-function nowIso() {
-  const d = new Date(); const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}${localOffsetSuffix(d)}`;
-}
-function ago(iso) {
-  const h = (Date.now() - Date.parse(iso)) / 3600000;
-  if (!Number.isFinite(h)) return '?';
-  return h < 48 ? `${Math.floor(h)}h ago` : `${Math.floor(h / 24)}d ago`;
-}
-// Ordering doubles as numbering: `gtg back <n>` and `gtg active b<n>` resolve a number
-// against the same order the rows were rendered in, so the extension exclusion belongs in
-// this one shared ordering helper rather than at each console.log. A number on screen then
-// cannot address a different entry than the one the user typed back. Slug and name lookups
-// are untouched, so an extension entry stays reachable by slug.
-//
-// ponytail: filtered at render, NOT at read. Extensions still need slug lookup and explicit
-// shelving even when their entries stay out of the default project list.
-function sortByProject(arr) {
-  return userVisible(arr).sort((a, b) => a.project.localeCompare(b.project));
-}
-// The exact top-to-bottom order `list` renders active entries in: each family
-// (parent) alphabetical, its members alphabetical within, then standalone. ONE
-// canonical order so a number on screen, `gtg back <n>`, and the "gtg back <hint>"
-// hints all mean the same row. (Backlog has no families - it stays sortByProject.)
-function displayOrder(arr) {
-  const sorted = sortByProject(arr);
-  const families = [...new Set(sorted.map((e) => e.parent).filter(Boolean))].sort();
-  return [...families.flatMap((f) => sorted.filter((e) => e.parent === f)),
-          ...sorted.filter((e) => !e.parent)];
-}
-// "<n>" resolves against the order the list was DISPLAYED in (pass displayOrder for
-// the grouped active list, default sortByProject for the flat backlog); else slug
-// exact, else fuzzy project.
-function resolveEntry(arr, t, order = sortByProject) {
-  if (/^\d+$/.test(t)) return order(arr)[Number(t) - 1] ?? null;
-  return arr.find((e) => e.slug === t)
-    ?? arr.find((e) => e.project.toLowerCase().includes(t.toLowerCase()))
-    ?? null;
-}
-function parseFlags(argv) {
-  const a = {};
-  for (let i = 0; i < argv.length; i++) {
-    if (!argv[i].startsWith('--')) continue;
-    const k = argv[i].slice(2);
-    if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) a[k] = argv[++i];
-    else a[k] = true;
-  }
-  return a;
-}
-
 // Legacy handoff docs are named YYYY-MM-DD-HHMM-<slug>.md. New work uses one
 // docs/handoffs/current/<slug>.md file whose git history carries each checkpoint.
 // File counts remain only a migration fallback for records that predate the
@@ -651,154 +558,6 @@ function backlog(argv) {
   if (parseFlags(argv).project) return writeHandoff(argv, { which: 'backlog', verb: 'backlog' });
   return backlogList();
 }
-// Live uncommitted-file count for a worktree. A SessionEnd hook that recorded
-// this was retired 2026-07-11 for MISSING dirty worktrees - it only fired on
-// exit behind narrow filters. Checking live at list time has neither flaw.
-// ponytail: 2s timeout per distinct worktree; a slow or absent one renders '?'
-// rather than hanging the list.
-function dirtyCount(dir) {
-  if (!dir || !existsSync(dir)) return null;
-  try {
-    const out = execFileSync('git', ['-C', dir, 'status', '--porcelain'],
-      { stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).toString().trim();
-    return out ? out.split('\n').length : 0;
-  } catch { return null; }
-}
-// Where an entry's checkout actually lives - the hub itself for 'repo root'/legacy
-// (undefined) entries, else the recorded worktree path. One definition, two call
-// sites (dirty-count grouping and per-entry rendering) - they must stay identical.
-function resolveDir(e) { return (!e.worktree || e.worktree === 'repo root') ? ROOT : e.worktree; }
-
-// Listing is observational. Work remains active until an explicit `back`,
-// `complete`/`remove`, or `supersede` command changes its state.
-function renderList(argv) {
-  const filter = argv.find((x) => !x.startsWith('--'));
-  // displayOrder, not sortByProject: numbering must run 1..N top-to-bottom in the
-  // order rows actually appear (see displayOrder), and `gtg back <n>` resolves
-  // against this same order.
-  const act = entries('active');
-  const allAct = displayOrder(act);
-  // userVisible, so the "+N backlogged" pointer counts the rows `gtg backlog` will show.
-  const blCount = userVisible(entries('backlog')).length;
-  // Decluttering is not lookup. The BARE listing hides extension entries, which is the whole
-  // point, but an explicit query is the user naming the thing they want, so it searches every
-  // entry (`act`, not `allAct`). SKILL.md's exit procedure probes with `list <candidate>` before
-  // slugifying and reuses the matched entry's slug, so a blind probe would mint a second entry
-  // beside a live issue package instead of updating it.
-  const matches = (e) => e.slug === filter || e.project.toLowerCase().includes(filter.toLowerCase());
-  const shown = filter
-    ? act.filter(matches).sort((a, b) => a.project.localeCompare(b.project))
-    : allAct;
-
-  // A targeted query has to reach a SHELVED extension entry too, or the reuse probe above is
-  // still blind. Explicit shelving is normal for an issue package between fix sessions, and
-  // `backlog` hides extension entries, so from
-  // that moment no builtin listing shows it and a departure mints the duplicate anyway.
-  // Rendered as its own line rather than as a row, because these are not active and the
-  // header counts active work.
-  // ponytail: extension entries only. A shelved NORMAL project is invisible to a query too,
-  // but that predates the extension model and `list` is documented as never showing backlog
-  // items, so widening it is a design call, not a fix. See README "Decluttering is not lookup".
-  const shelvedHits = filter
-    ? entries('backlog').filter((e) => isExtensionEntry(e) && matches(e))
-    : [];
-  const printShelved = () => {
-    for (const e of shelvedHits) {
-      console.log(`  ${c('33', 'shelved:')} ${c('1;36', e.project)} ${c('2', `(parked ${ago(e.updated)})`)}` +
-        ` - gtg active ${e.slug}`);
-    }
-  };
-
-  if (!shown.length) {
-    console.log(`No active gtg projects${filter ? ` matching '${filter}'` : ''}.` +
-      (blCount ? ` (+${blCount} backlogged - gtg backlog)` : ''));
-    printShelved();
-    return;
-  }
-
-  const families = [...new Set(shown.map((e) => e.parent).filter(Boolean))].sort();
-  console.log(`${shown.length} active gtg project${shown.length === 1 ? '' : 's'}` +
-    `${families.length ? ` in ${families.length + (shown.some((e) => !e.parent) ? 1 : 0)} group(s)` : ''}` +
-    `${filter ? ` matching '${filter}'` : ''}:`);
-
-  // Only entries with an explicit worktree of their own get a dirty flag - a
-  // 'repo root'/legacy-undefined entry resolves to the storage hub itself, which
-  // in real use carries 150+ uncommitted files unrelated to any one project;
-  // attributing that count to the entry would falsely implicate it.
-  const hasOwnWorktree = (e) => !!e.worktree && e.worktree !== 'repo root';
-
-  // One git call per distinct worktree, not per project - several projects
-  // commonly share one checkout, which is exactly what the warning below is for.
-  const dirty = new Map();
-  for (const e of shown) {
-    if (!hasOwnWorktree(e)) continue;
-    const dir = resolveDir(e);
-    if (!dirty.has(dir)) dirty.set(dir, dirtyCount(dir));
-  }
-
-  const printEntry = (e) => {
-    // Position in the FULL display-order list (allAct), so numbers run 1..N down
-    // the screen and `gtg back <n>` (resolveEntry over displayOrder) targets this
-    // same row even when a filter hides some entries.
-    const n = allAct.indexOf(e) + 1;
-    // A number is a position in the canonical list, and an extension entry has none: it only
-    // ever appears here via an explicit query, and allAct excludes it, so indexOf gives -1 and
-    // the `+ 1` above makes that a falsy 0. Label it with the slug that DOES address it rather
-    // than a number that would address a different row. This is what keeps a queried listing
-    // and `gtg back <n>` from ever disagreeing about what 3 means.
-    const label = n ? c('1', n + '.') : c('2', e.slug + ':');
-    const d = hasOwnWorktree(e) ? dirty.get(resolveDir(e)) : undefined;
-    // null = worktree unreachable / dirtyCount failed - render the '?' the spec
-    // promises, distinct from a genuinely clean (0) worktree, which renders nothing.
-    const dirtyTag = d === null ? c('33', ' ● ? uncommitted') : d ? c('33', ` ● ${d} uncommitted`) : '';
-    const loc = e.branch && e.branch !== '?' ? c('2', ` ${e.branch}`) : '';
-    const sessions = e.sessions ?? countHandoffFiles(e.slug); // legacy entries predate the field
-    const by = e.harness ? c('2', ` ·${e.harness}`) : ''; // who wrote the last handoff; absent on pre-1.11 entries
-    console.log(`  ${label} ${c('1;36', e.project)} ${c('2', 's' + sessions)} [${c('32', e.eta || '?')}] ${c('2', '(' + ago(e.updated) + ')')}${by}${loc}${dirtyTag}`);
-    console.log(`     → ${e.next}`);
-  };
-
-  for (const fam of families) {
-    const members = shown.filter((e) => e.parent === fam);
-    console.log(`\n${c('1;35', '▸ ' + fam)}`);
-    members.forEach(printEntry);
-  }
-  const solo = shown.filter((e) => !e.parent);
-  if (solo.length) {
-    if (families.length) console.log(`\n${c('1;35', '▸ standalone')}`);
-    solo.forEach(printEntry);
-  }
-
-  // Several active projects in one checkout on one branch is how work gets
-  // tangled. Nothing else in gtg could see this before worktree/branch existed.
-  // Tolerant migration: entries with no `worktree` at all (pre-Task-4) would
-  // otherwise all collapse onto one '? @ repo root' key and falsely "collide" -
-  // skip them, only entries with a real recorded location are compared.
-  const byLocation = new Map();
-  const BASE_BRANCHES = new Set(['master', 'main']);
-  for (const e of shown) {
-    if (!e.worktree) continue;
-    // master/main @ repo root is the SANCTIONED shared home for docs/meta work
-    // (home-repo doctrine - meta paths commit straight to master), not a tangle.
-    // Only a real feature-branch collision (or a shared non-root worktree) warns.
-    if (e.worktree === 'repo root' && BASE_BRANCHES.has(e.branch)) continue;
-    const key = `${e.branch || '?'} @ ${e.worktree}`;
-    byLocation.set(key, [...(byLocation.get(key) || []), e.project]);
-  }
-  for (const [key, names] of byLocation) {
-    if (names.length > 1) console.log(`\n${c('33', `⚠ ${names.length} projects share ${key} - ${names.join(', ')}`)}`);
-  }
-
-  // BOTH exits, not just the empty one. A query that matches active work AND a shelved extension
-  // entry takes this path, and printing only on the empty branch silently dropped the shelved hit
-  // exactly when the reuse probe is most likely to go wrong: SKILL.md reuses a slug only when
-  // EXACTLY ONE entry matches, so a dropped hit turns two matches into one wrong one.
-  if (shelvedHits.length) console.log('');
-  printShelved();
-
-  if (blCount) console.log(`\n+ ${blCount} backlogged - gtg backlog`);
-}
-
 function backlogList() {
   // Excluded up front, not just in the sortByProject call below, so the header count and the
   // empty-shelf message describe the rows actually rendered.
@@ -865,16 +624,17 @@ stats/report ship bundled; unknown commands dispatch to <root>/.gtg/commands/<na
 which overrides a bundled one of the same name - see skills/gtg/references/extending.md.`);
 }
 
-// --- review: one completion question per command ------------------------------
-// Entries persist until an explicit complete, so finished work nobody completed lingers, and
-// a parked entry never comes back by itself. Every command that reads or moves entries ends
-// with at most ONE question, so the check rides on gtg use in any harness rather than on a
-// session-start banner, which T3 Code and IDE threads never reliably see. `keep` answers
-// "still live" and restarts that entry's clock without pretending it was worked on.
-const REVIEW_ACTIVE_DAYS = 5;
-const REVIEW_BACKLOG_DAYS = 14;
-const REVIEW_CMDS = new Set(['handoff', 'list', 'backlog', 'resume', 'back', 'active', 'complete', 'remove', 'rm', 'prune', 'keep', 'supersede']);
 let reviewSkip = null; // the entry this command is working on, never the one asked about
+// What lib/view.mjs reads the store through. Getters, because main() sets ROOT and the running
+// command sets reviewSkip after this object exists.
+const view = {
+  get root() { return ROOT; },
+  entries,
+  countHandoffFiles,
+  get skip() { return reviewSkip; },
+};
+const renderList = (argv) => renderListFor(argv, view);
+const printReview = (cmd, argv) => printReviewFor(cmd, argv, view);
 
 function wakeFlag(v) {
   if (v === undefined) return undefined;
@@ -883,37 +643,6 @@ function wakeFlag(v) {
     process.exit(2);
   }
   return v;
-}
-
-// Priority: a backlog entry whose wake date has come, then the stalest active entry, then the
-// stalest undated backlog entry. A future wake date keeps an entry out of the review entirely.
-function reviewCandidate(now = Date.now()) {
-  const seen = (e) => Math.max(Date.parse(e.updated) || 0, Date.parse(e.reviewed) || 0);
-  const age = (e) => Math.floor((now - seen(e)) / 864e5);
-  const oldest = (arr) => arr.sort((x, y) => seen(x) - seen(y))[0];
-  const today = nowIso().slice(0, 10);
-  const bl = userVisible(entries('backlog')).filter((e) => e.slug !== reviewSkip);
-  const act = userVisible(entries('active')).filter((e) => e.slug !== reviewSkip);
-  const woke = bl.filter((e) => e.wake && e.wake <= today).sort((x, y) => x.wake.localeCompare(y.wake))[0];
-  if (woke) return `REVIEW: ${woke.project} [${woke.slug}] was parked until ${woke.wake}. Ask the user: pick it up (gtg active ${woke.slug}), done (gtg complete ${woke.slug}), or park again (gtg keep ${woke.slug} --wake YYYY-MM-DD).`;
-  const a = oldest(act.filter((e) => age(e) >= REVIEW_ACTIVE_DAYS));
-  if (a) return `REVIEW: ${a.project} [${a.slug}] untouched ${age(a)}d. Ask the user: done (gtg complete ${a.slug}), shelve (gtg back ${a.slug} [--wake YYYY-MM-DD]), or still live (gtg keep ${a.slug}).`;
-  const b = oldest(bl.filter((e) => !e.wake && age(e) >= REVIEW_BACKLOG_DAYS));
-  if (b) return `REVIEW: ${b.project} [${b.slug}] parked ${age(b)}d. Ask the user: done (gtg complete ${b.slug}), or still wanted (gtg keep ${b.slug} [--wake YYYY-MM-DD]).`;
-  return null;
-}
-
-// Quiet for a filtered list (SKILL.md's slug-reuse probe) and for an in-session checkpoint.
-function printReview(cmd, argv) {
-  const a = parseFlags(argv);
-  if (cmd === 'list' && argv.some((x) => !x.startsWith('--'))) return;
-  if (cmd === 'handoff' && a.checkpoint) return;
-  try {
-    const line = reviewCandidate();
-    if (line) console.log(line);
-  } catch (e) {
-    console.error(`gtg: review skipped - ${firstMeaningfulLine(e)}`); // never fails the command it rides on
-  }
 }
 
 function keep(argv) {
@@ -1226,173 +955,19 @@ function supersede(argv) {
 //
 // Exit codes: 0 resumed, 1 a choice is needed (candidates printed on stdout), 2 nothing to
 // resume.
+// lib/resume.mjs returns 1 or 2 for a choice or nothing to resume. It exits here at once, before
+// the dispatcher's flush, auto-list and review, which is where it used to call process.exit.
+async function resumeConsume(argv) {
+  const code = await resumeFor(argv, {
+    root: ROOT, forge: FORGE, entries, commandFileFor, readStore, writeStore, commit,
+    listAll: () => renderList([]), onPick: (slug) => { reviewSkip = slug; },
+  });
+  if (code !== undefined) process.exit(code);
+}
 function commandFileFor(t) {
   if (!/^[A-Za-z0-9_-]+$/.test(t)) return false;
   return existsSync(join(ROOT, '.gtg', 'commands', `${t}.mjs`))
     || existsSync(join(CLI_DIR, 'extensions', 'commands', `${t}.mjs`));
-}
-
-// Fast-forward the hub from whatever it tracks before anything reads the store. POSITION IS THE WHOLE
-// POINT (2026-09-01): this shipped first inside .gtg/after-resume.mjs, which runs AFTER
-// entries() has read, the handoff has printed and the consume has committed - so home was
-// always one commit ahead and --ff-only aborted in exactly the case the sync exists for, a
-// mirror carrying the other machine's work. A fetch after the read cannot change what the
-// read returned. Handing entries between two machines is why this store is git at all.
-// Background: docs/runbooks/git-parity.md.
-//
-// A convenience, NEVER a gate. Every git failure is swallowed and each call capped at 5s, so
-// a resume offline, off Tailscale, in a repo with no such remote, or mid-rebase behaves
-// exactly as it did before this existed. And stdout speaks only on a real fast-forward: a
-// line on every resume is noise, and noise on the hot path is how a real one goes unread.
-// WHERE to sync from is resolved per branch, not named (2026-09-01 fix round). The first cut
-// hardcoded one remote/branch pair, which made the feature one-directional: the other machine's
-// clone calls the same repo `origin` and may sit on `main`, so its every resume fetched nothing and said
-// nothing - half of the two-machine handoff this plan exists for was simply not implemented.
-//
-// branch.<b>.remote + branch.<b>.merge rather than `rev-parse @{u}`: @{u} answers with
-// "<remote>/<branch>" as ONE string, and either half may itself contain a slash, so splitting it
-// guesses. The config keys hold the two halves already separated.
-//
-// No upstream falls back to GTG_SYNC_REMOTE / GTG_SYNC_BRANCH (default origin/main), and only on
-// that branch. A feature branch with no
-// upstream must never be moved, gtg runs from feature worktrees, and a detached HEAD (mid-rebase,
-// mid-bisect) reports 'HEAD' and skips. Where an upstream DOES exist it is always the right
-// target, so the lookup carries the guard the branch comparison used to.
-// SYNC_REMOTE / SYNC_BRANCH are declared up beside the migration block, which calls syncHub()
-// at import time and would otherwise hit them in their temporal dead zone.
-function syncTarget(git) {
-  let branch;
-  try { branch = git('rev-parse', '--abbrev-ref', 'HEAD'); } catch { return null; }
-  if (!branch || branch === 'HEAD') return null;
-  try {
-    const remote = git('config', '--get', `branch.${branch}.remote`);
-    const merge = git('config', '--get', `branch.${branch}.merge`);
-    // Anchored: branch.<b>.merge is a full ref, so the prefix is only ever at the START. Unanchored,
-    // a branch legitimately named `x/refs/heads/y` gets mangled into `x/y`.
-    if (remote && merge) return { remote, branch: merge.replace(/^refs\/heads\//, '') };
-  } catch { /* --get exits 1 when unset: no upstream, try the fallback below */ }
-  return branch === SYNC_BRANCH ? { remote: SYNC_REMOTE, branch: SYNC_BRANCH } : null;
-}
-function syncHub() {
-  if (synced) return; // once per process - see `synced` up by the migration block
-  synced = true;
-  if (process.env.GTG_NO_SYNC) return; // isolated tests and explicit offline callers
-  // stderr piped, not inherited: execFileSync forwards a child's stderr to ours otherwise,
-  // and git narrates a refused fast-forward in nine hint: lines - five of git's own above every
-  // line of ours. The after-resume hook piped it for the same reason before this moved here.
-  const git = (...args) => execFileSync('git', args,
-    { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 }).toString().trim();
-  const target = syncTarget(git);
-  if (!target) return; // detached, or a branch with neither an upstream nor the fallback's name
-  const name = `${target.remote}/${target.branch}`;
-  let before;
-  try {
-    before = git('rev-parse', 'HEAD');
-    git('fetch', '--quiet', target.remote, target.branch);
-  } catch { return; } // no remote, host down, offline, not a repo: local state stands, silently
-  try {
-    // FETCH_HEAD, not <remote>/<branch>: the fetch above just set it to exactly what came down,
-    // so nothing here rests on the remote's refspec having updated a tracking ref - and a
-    // branch.<b>.remote holding a URL rather than a name has no tracking ref at all.
-    git('merge', '--ff-only', '--quiet', 'FETCH_HEAD');
-  } catch {
-    // The fetch landed and the fast-forward was refused. Home being AHEAD of the mirror is the
-    // normal state and says nothing. The mirror holding commits home does not have means a
-    // genuine fork or a dirty tree in the way, and resolving either is the user's call, not a
-    // resume's - auto-merging a divergence is what caused the 2026-08-02 fork. On stderr, so
-    // "stdout speaks only on a real fast-forward" still holds.
-    try { git('merge-base', '--is-ancestor', 'FETCH_HEAD', 'HEAD'); } catch {
-      console.error(`gtg: ${name} will not fast-forward (diverged, or local changes in the way) - resuming from local state`);
-    }
-    return;
-  }
-  try {
-    const after = git('rev-parse', 'HEAD');
-    if (after !== before) console.log(`Synced ${name}: fast-forwarded to ${after.slice(0, 7)}`);
-  } catch { /* the merge already succeeded; failing to name it is not worth a word */ }
-}
-
-async function resumeConsume(argv) {
-  const a = parseFlags(argv);
-  const t = argv.find((x) => !x.startsWith('--'));
-  // Before the two reads below, deliberately. See syncHub: after them it is decoration.
-  // Not on the forge store, which is already the one shared copy.
-  if (!FORGE) syncHub();
-  const act = entries('active');
-  const bl = entries('backlog');
-  let match = null;
-  let fromBacklog = false;
-  if (!t) {
-    // Bare `gtg` at session start: one open project is not a choice, several are.
-    const vis = userVisible(act);
-    if (vis.length === 1) match = vis[0];
-    else {
-      renderList([]);
-      console.log(vis.length ? '\nWhich? gtg <project>' : '\nNothing to resume.');
-      process.exit(vis.length ? 1 : 2);
-    }
-  } else {
-    match = resolveEntry(act, t, displayOrder);
-    // A name fragment that fits several projects is a question, not a guess. A number or an
-    // exact slug is never ambiguous.
-    const nameHits = act.filter((e) => e.project.toLowerCase().includes(t.toLowerCase()));
-    if (match && !/^\d+$/.test(t) && match.slug !== t && nameHits.length > 1) {
-      console.log(`'${t}' matches ${nameHits.length} active projects:`);
-      nameHits.forEach((e, i) => console.log(`  ${i + 1}. ${e.project} (${e.slug}) - ${e.next}`));
-      console.log('Which? gtg <slug>');
-      process.exit(1);
-    }
-    if (!match) {
-      match = resolveEntry(bl, t.replace(/^[bB](?=\d+$)/, ''));
-      fromBacklog = !!match;
-    }
-    if (!match) {
-      console.error(commandFileFor(t)
-        ? `No project matching '${t}'; '${t}' is a command - run gtg ${t}.`
-        : `No project matching '${t}'. Try 'gtg list' or 'gtg backlog'.`);
-      process.exit(2);
-    }
-    // Session-start collision: a project AND a command share the token (a project called
-    // `issues`, say). Both are real; picking silently made one of them unreachable.
-    if (!/^\d+$/.test(t) && commandFileFor(t)) {
-      console.log(`'${t}' is both a project and a command:`);
-      console.log(`  1. ${match.project} (${match.slug}) - ${match.next}`);
-      console.log(`  2. run the \`${t}\` command`);
-      console.log('Which?');
-      process.exit(1);
-    }
-  }
-  reviewSkip = match.slug;
-  const file = match.file ? join(ROOT, match.file) : null;
-  const body = FORGE ? await FORGE.latestHandoff(match)
-    : file && existsSync(file) ? readFileSync(file, 'utf8').trim() : null;
-  const progress = readProgress(ROOT, match.slug, { optional: true });
-  const when = typeof match.updated === 'string' ? match.updated.slice(0, 16).replace('T', ' ') : '?';
-  const where = FORGE ? FORGE.locationOf(match) : match.file;
-  console.log(`RESUME: "${match.project}" - handoff of ${when}${where ? ` (${where})` : ''}`);
-  if (progress) {
-    console.log(`CURRENT PROGRESS (supersedes handoff snapshot)\n${renderProgress(progress)}`);
-  }
-  console.log(body ?? `(no handoff at ${where ?? 'none'}; the entry's next action is all there is: ${match.next})`);
-  console.log(fromBacklog
-    ? `Kept on backlog: ${match.project} (current handoff retained)`
-    : `Kept: ${match.project} (current handoff retained)`);
-  // After-resume hook: <root>/.gtg/after-resume.mjs, the resume-side twin of after-handoff.
-  // Replaces the markdown on-resume.md the model used to probe for and read.
-  const hook = join(ROOT, '.gtg', 'after-resume.mjs');
-  if (existsSync(hook)) {
-    try {
-      const mod = await import(pathToFileURL(hook).href);
-      if (typeof mod.default !== 'function') throw new Error('no default export function');
-      // `kept` is now always true because resume never consumes. `resumed`
-      // preserves the old distinction hooks need: normal pickup versus an
-      // explicit --keep read that should not run pickup side effects.
-      await mod.default({ root: ROOT, entry: match, file: match.file ?? null, body: body ?? '', kept: true, resumed: !a.keep, readStore, writeStore, commit });
-    } catch (e) {
-      console.error(`gtg: after-resume hook failed - ${firstMeaningfulLine(e)}`);
-      process.exitCode = 1;
-    }
-  }
 }
 
 // undo = restore BOTH stores from before THIS SESSION'S last commit that touched
@@ -1534,107 +1109,116 @@ function maybeAutoList(argv) {
 const MOVE_CMDS = new Set(['back', 'active', 'complete', 'remove', 'rm', 'prune', 'resume', 'undo', 'rename', 'supersede', 'keep']);
 
 // --- dispatch -----------------------------------------------------------------
-const [cmd, ...rest] = process.argv.slice(2);
-const builtins = {
-  handoff, backlog, list: renderList, help, '--help': help, '-h': help,
-  back, active: activate, complete, remove, rm: remove, prune: remove, resume: resumeConsume, undo,
-  rename, unparent, log, supersede, keep,
-};
-// Forge store: load before the command, flush after it. Commands that never read the records skip
-// the network. The refused ones read git history of the file store, which the forge store does
-// not write, so on a forge they would report an empty history as if it were the truth.
-const NO_STORE = new Set(['help', '--help', '-h', 'progress']);
-const FORGE_REFUSED = new Set(['log', 'undo', 'stats', 'report']);
-// Commands that never write the store, so they may run on a stale cached read. undefined = bare gtg.
-const STALE_OK = new Set([undefined, 'list', 'resume', 'learn']);
-// A failed or refused forge read stops the command with exit 1. Not process.exit: on Windows
-// (Node 24) exiting while fetch sockets are open trips a libuv assertion, and the process dies
-// with 0xC0000409 instead of 1 (seen on a 401). See writeHandoff's forge branch.
-let stopped = false;
-if (!NO_STORE.has(cmd)) {
-  let cfg;
-  try { cfg = forgeConfig(ROOT); } catch (e) { console.error(`gtg: ${e.message}`); process.exit(2); }
-  if (cfg && FORGE_REFUSED.has(cmd)) {
-    console.error(`gtg ${cmd}: not available on the forge store. The history is the commit log of ${cfg.repo}.`);
-    process.exit(2);
-  }
-  if (cfg) {
-    try { FORGE = await openForge(cfg); } catch (e) {
-      console.error(`gtg: cannot read the forge store - ${firstMeaningfulLine(e)}`);
-      stopped = true;
+async function main(argv) {
+  const [cmd, ...rest] = argv;
+  // help reads no store, so it skips the git spawn, which was about 80 ms of a 137 ms `gtg help`.
+  ROOT = ['help', '--help', '-h'].includes(cmd) ? '' : resolveRoot();
+  const builtins = {
+    handoff, backlog, list: renderList, help, '--help': help, '-h': help,
+    back, active: activate, complete, remove, rm: remove, prune: remove, resume: resumeConsume, undo,
+    rename, unparent, log, supersede, keep,
+  };
+  // Forge store: load before the command, flush after it. Commands that never read the records skip
+  // the network. The refused ones read git history of the file store, which the forge store does
+  // not write, so on a forge they would report an empty history as if it were the truth.
+  const NO_STORE = new Set(['help', '--help', '-h', 'progress']);
+  const FORGE_REFUSED = new Set(['log', 'undo', 'stats', 'report']);
+  // Commands that never write the store, so they may run on a stale cached read. undefined = bare gtg.
+  const STALE_OK = new Set([undefined, 'list', 'resume', 'learn']);
+  // A failed or refused forge read stops the command with exit 1. Not process.exit: on Windows
+  // (Node 24) exiting while fetch sockets are open trips a libuv assertion, and the process dies
+  // with 0xC0000409 instead of 1 (seen on a 401). See writeHandoff's forge branch.
+  let stopped = false;
+  if (!NO_STORE.has(cmd)) {
+    let cfg;
+    try { cfg = forgeConfig(ROOT); } catch (e) { console.error(`gtg: ${e.message}`); process.exit(2); }
+    if (cfg && FORGE_REFUSED.has(cmd)) {
+      console.error(`gtg ${cmd}: not available on the forge store. The history is the commit log of ${cfg.repo}.`);
+      process.exit(2);
+    }
+    if (cfg) {
+      try { FORGE = await openForge(cfg); } catch (e) {
+        console.error(`gtg: cannot read the forge store - ${firstMeaningfulLine(e)}`);
+        stopped = true;
+      }
+    }
+    // #29: the hub was unreachable and the read came from the local cache. Read-only commands run on
+    // it, marked stale. handoff and backlog <idea> go on to the write guard in lib/forge.mjs, so the
+    // handoff body read from stdin is saved to a file as on any failed forge write. Every other
+    // command could write, so it stops here, before it prints anything that reads as done.
+    if (FORGE?.stale) {
+      const readOnly = STALE_OK.has(cmd) || (cmd === 'backlog' && !parseFlags(rest).project);
+      if (!readOnly && cmd !== 'handoff' && cmd !== 'backlog') {
+        console.error(`gtg ${cmd}: refused, the hub is unreachable. Only the cached store from ${FORGE.stale} could be read, and a write must start from the hub's copy. Re-run it when the hub is back.`);
+        stopped = true;
+      } else if (readOnly) console.log(`(stale, hub unreachable) cached store from ${FORGE.stale}`);
     }
   }
-  // #29: the hub was unreachable and the read came from the local cache. Read-only commands run on
-  // it, marked stale. handoff and backlog <idea> go on to the write guard in lib/forge.mjs, so the
-  // handoff body read from stdin is saved to a file as on any failed forge write. Every other
-  // command could write, so it stops here, before it prints anything that reads as done.
-  if (FORGE?.stale) {
-    const readOnly = STALE_OK.has(cmd) || (cmd === 'backlog' && !parseFlags(rest).project);
-    if (!readOnly && cmd !== 'handoff' && cmd !== 'backlog') {
-      console.error(`gtg ${cmd}: refused, the hub is unreachable. Only the cached store from ${FORGE.stale} could be read, and a write must start from the hub's copy. Re-run it when the hub is back.`);
-      stopped = true;
-    } else if (readOnly) console.log(`(stale, hub unreachable) cached store from ${FORGE.stale}`);
-  }
-}
-const flushForge = async () => {
-  if (!FORGE) return;
-  try { await FORGE.flush(cmd); } catch (e) {
-    console.error(`gtg: forge write failed partway, re-run the command - ${firstMeaningfulLine(e)}`);
-    process.exitCode = 1; // not process.exit, see writeHandoff's forge branch
-  }
-};
-if (stopped) process.exitCode = 1;
-else if (!cmd) { renderList([]); printReview('list', []); }
-// hasOwn, not truthiness: every inherited Object key resolved here, so `gtg constructor` and
-// `gtg toString` called something that is not a verb instead of falling through to the
-// extension lookup and then the unknown-command error.
-else if (Object.hasOwn(builtins, cmd)) {
-  await builtins[cmd](rest);
-  await flushForge();
-  if (MOVE_CMDS.has(cmd)) maybeAutoList(rest);
-  if (REVIEW_CMDS.has(cmd)) printReview(cmd, rest);
-}
-else {
-  // Extension dispatch, in resolution order: user <root>/.gtg/commands/<cmd>.mjs FIRST
-  // (user overrides bundled), then the plugin's own extensions/commands/<cmd>.mjs
-  // (bundled, ships active). cmd becomes a path segment - constrain it the same way
-  // --slug is, so it can't traverse paths. ctx is a STABILITY CONTRACT (additive-only).
-  const safe = /^[A-Za-z0-9_-]+$/.test(cmd);
-  const userExt = safe ? join(ROOT, '.gtg', 'commands', `${cmd}.mjs`) : null;
-  const bundledExt = safe ? join(CLI_DIR, 'extensions', 'commands', `${cmd}.mjs`) : null;
-  const ext = (userExt && existsSync(userExt)) ? userExt
-    : (bundledExt && existsSync(bundledExt)) ? bundledExt
-    : null;
-  if (ext) {
-    try {
-      const mod = await import(pathToFileURL(ext).href);
-      if (typeof mod.default !== 'function') throw new Error('no default export function');
-      const ownParent = EXTENSIONS[cmd] ?? null;
-      // Both stores, always: a shelved package is still live, so an active-only read would
-      // report it as missing.
-      //
-      // Through `entries`, NOT `readStore`: readStore is a whole-file JSON reader, kept at its
-      // packed shape for the published extension context, so reading records through it here
-      // would name a file that no longer exists and serve issues.mjs and learn.mjs a silent
-      // empty list - every live entry reported as missing, at exit 0.
-      const ownEntries = () => {
-        const grab = (which) => (ownParent ? entries(which).filter((e) => e.parent === ownParent) : []);
-        return { active: grab('active'), shelved: grab('backlog') };
-      };
-      // ownParent rides the ctx as well as being closed over by ownEntries: an extension that
-      // WRITES an entry needs the same namespace its reader filters on, and deriving it a
-      // second time on the writer side is exactly the drift class this closes.
-      await mod.default({
-        root: ROOT, args: rest, readStore, writeStore, commit, countHandoffFiles,
-        ownEntries, ownParent, sessionId: PROGRESS_SESSION_ID || undefined,
-      });
-      await flushForge();
-    } catch (e) {
-      console.error(`gtg: extension '${cmd}' failed: ${(e?.message || String(e)).split('\n')[0]}`);
-      process.exit(1);
+  const flushForge = async () => {
+    if (!FORGE) return;
+    try { await FORGE.flush(cmd); } catch (e) {
+      console.error(`gtg: forge write failed partway, re-run the command - ${firstMeaningfulLine(e)}`);
+      process.exitCode = 1; // not process.exit, see writeHandoff's forge branch
     }
-  } else {
-    console.error(`gtg: unknown command '${cmd}' - try 'gtg help'`);
-    process.exit(2);
+  };
+  if (stopped) process.exitCode = 1;
+  else if (!cmd) { renderList([]); printReview('list', []); }
+  // hasOwn, not truthiness: every inherited Object key resolved here, so `gtg constructor` and
+  // `gtg toString` called something that is not a verb instead of falling through to the
+  // extension lookup and then the unknown-command error.
+  else if (Object.hasOwn(builtins, cmd)) {
+    await builtins[cmd](rest);
+    await flushForge();
+    if (MOVE_CMDS.has(cmd)) maybeAutoList(rest);
+    if (REVIEW_CMDS.has(cmd)) printReview(cmd, rest);
+  }
+  else {
+    // Extension dispatch, in resolution order: user <root>/.gtg/commands/<cmd>.mjs FIRST
+    // (user overrides bundled), then the plugin's own extensions/commands/<cmd>.mjs
+    // (bundled, ships active). cmd becomes a path segment - constrain it the same way
+    // --slug is, so it can't traverse paths. ctx is a STABILITY CONTRACT (additive-only).
+    const safe = /^[A-Za-z0-9_-]+$/.test(cmd);
+    const userExt = safe ? join(ROOT, '.gtg', 'commands', `${cmd}.mjs`) : null;
+    const bundledExt = safe ? join(CLI_DIR, 'extensions', 'commands', `${cmd}.mjs`) : null;
+    const ext = (userExt && existsSync(userExt)) ? userExt
+      : (bundledExt && existsSync(bundledExt)) ? bundledExt
+      : null;
+    if (ext) {
+      try {
+        const mod = await import(pathToFileURL(ext).href);
+        if (typeof mod.default !== 'function') throw new Error('no default export function');
+        const ownParent = EXTENSIONS[cmd] ?? null;
+        // Both stores, always: a shelved package is still live, so an active-only read would
+        // report it as missing.
+        //
+        // Through `entries`, NOT `readStore`: readStore is a whole-file JSON reader, kept at its
+        // packed shape for the published extension context, so reading records through it here
+        // would name a file that no longer exists and serve issues.mjs and learn.mjs a silent
+        // empty list - every live entry reported as missing, at exit 0.
+        const ownEntries = () => {
+          const grab = (which) => (ownParent ? entries(which).filter((e) => e.parent === ownParent) : []);
+          return { active: grab('active'), shelved: grab('backlog') };
+        };
+        // ownParent rides the ctx as well as being closed over by ownEntries: an extension that
+        // WRITES an entry needs the same namespace its reader filters on, and deriving it a
+        // second time on the writer side is exactly the drift class this closes.
+        await mod.default({
+          root: ROOT, args: rest, readStore, writeStore, commit, countHandoffFiles,
+          ownEntries, ownParent, sessionId: PROGRESS_SESSION_ID || undefined,
+        });
+        await flushForge();
+      } catch (e) {
+        console.error(`gtg: extension '${cmd}' failed: ${(e?.message || String(e)).split('\n')[0]}`);
+        process.exit(1);
+      }
+    } else {
+      console.error(`gtg: unknown command '${cmd}' - try 'gtg help'`);
+      process.exit(2);
+    }
   }
 }
+
+// Real paths on both sides. Through a junction argv[1] keeps the link while node resolves this
+// module to its target, and a plain compare would never run main (runbooks #32).
+const isMain = () => { try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } };
+if (isMain()) await main(process.argv.slice(2));

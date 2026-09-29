@@ -32,10 +32,10 @@ function edit(root, which, slug, patch) {
 }
 const reviewLine = (r) => r.stdout.split('\n').find((l) => l.startsWith('REVIEW:'));
 
-test('thresholds are 5 days active and 14 days backlog', () => {
-  const src = readFileSync(CLI, 'utf8');
-  assert.match(src, /const REVIEW_ACTIVE_DAYS = 5;/);
-  assert.match(src, /const REVIEW_BACKLOG_DAYS = 14;/);
+test('thresholds are 5 days active and 14 days backlog', async () => {
+  // Pinned by value from lib/view.mjs, where they moved in #30, rather than grepped out of source.
+  const { REVIEW_ACTIVE_DAYS, REVIEW_BACKLOG_DAYS } = await import('../skills/gtg/lib/view.mjs');
+  assert.deepEqual([REVIEW_ACTIVE_DAYS, REVIEW_BACKLOG_DAYS], [5, 14]);
 });
 
 test('no review line when everything is fresh', () => {
