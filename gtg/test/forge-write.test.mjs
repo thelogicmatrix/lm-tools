@@ -12,6 +12,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openForge } from '../skills/gtg/lib/forge.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'gtg', 'gtg.mjs');
 const PATH = 'docs/handoffs/records/alpha.json';
@@ -22,11 +23,13 @@ const ALPHA = { slug: 'alpha', project: 'Alpha', shelf: 'active', next: 'Ship it
 // What another session's handoff leaves in the record.
 const THEIRS = { ...ALPHA, next: 'Their next', updated: '2026-09-28T12:00:00+00:00', sessions: 2, handoff: '## Next Action\nTheir next\n' };
 
-// onWrite(method, path, stub) runs before each write is applied. It may edit stub.files (another
+// onWrite(stub, method, path) runs before each write is applied. It may edit stub.files (another
 // session) and may return 'drop-before' (the write never lands) or 'drop-after' (it lands and the
-// answer is lost).
+// answer is lost). Status codes are the ones the live Forgejo gave on 2026-09-29 (a scratch repo):
+// a stale sha is 409 on PUT and 400 on DELETE, a POST over an existing file 422, a PUT to a deleted
+// path 500, a DELETE of a missing file 404.
 async function stubStore(t, initial = {}) {
-  const stub = { files: new Map(Object.entries(initial)), commits: 0, attempts: [], onWrite: null };
+  const stub = { files: new Map(Object.entries(initial)), commits: 0, attempts: [], writes: [], onWrite: null };
   const server = createServer(async (req, res) => {
     let raw = '';
     for await (const part of req) raw += part;
@@ -51,16 +54,18 @@ async function stubStore(t, initial = {}) {
         : send(404, { message: 'not found' });
     }
     stub.attempts.push(req.method);
-    const fate = stub.onWrite?.(req.method, path, stub);
+    stub.writes.push(`${req.method} ${path}`);
+    const fate = stub.onWrite?.(stub, req.method, path);
     if (fate === 'drop-before') return req.socket.destroy();
     const old = files.get(path);
     let status = 200; let out = {};
     if (req.method === 'DELETE') {
       if (!old) status = 404;
-      else if (body.sha !== sha(old)) status = 409;
+      else if (body.sha !== sha(old)) status = 400;
       else { files.delete(path); stub.commits++; }
     } else if (req.method === 'POST' && old) status = 422;
-    else if (req.method === 'PUT' && (!old || body.sha !== sha(old))) status = 409;
+    else if (req.method === 'PUT' && !old) status = 500;
+    else if (req.method === 'PUT' && body.sha !== sha(old)) status = 409;
     else {
       const text = Buffer.from(body.content, 'base64').toString('utf8');
       files.set(path, text); stub.commits++;
@@ -89,11 +94,14 @@ async function stubStore(t, initial = {}) {
     child.stdin.end(input);
   });
   stub.record = () => JSON.parse(stub.files.get(PATH));
+  stub.cfg = { api: `http://127.0.0.1:${server.address().port}/api/v1`, repo: 'o/r', token: 'tok', store: 'files' };
   return stub;
 }
 // Runs fn on the first write only.
 const first = (fn) => { let done = false; return (...args) => { if (done) return undefined; done = true; return fn(...args); }; };
-const theirHandoffLands = first((m, p, s) => { s.files.set(PATH, file(THEIRS)); });
+// Another session's handoff lands between this command's read and its first write. A fresh one per
+// test, since first() keeps state.
+const theirHandoffLands = () => first((s) => { s.files.set(PATH, file(THEIRS)); });
 const handoff = (stub, next) => stub.run(['handoff', '--project', 'Alpha', '--slug', 'alpha'], `## Next Action\n${next}\n`);
 const savedBody = (stub) => readFileSync(join(stub.root, 'docs', 'handoffs', 'current', 'alpha.md'), 'utf8');
 
@@ -134,12 +142,13 @@ test('a write that never lands is sent at most twice, and the handoff body is ke
   assert.equal(r.status, 1);
   assert.deepEqual(stub.attempts, ['PUT', 'PUT']);
   assert.equal(stub.commits, 0);
+  assert.match(r.stderr, /PUT docs\/handoffs\/records\/alpha\.json -> no answer/, 'the error names the record');
   assert.match(savedBody(stub), /Ship more/);
 });
 
 test('a concurrent edit to other fields is re-read and the edit re-applied once on top of it', async (t) => {
   const stub = await stubStore(t, { [PATH]: file(ALPHA) });
-  stub.onWrite = theirHandoffLands; // between this command's read and its write
+  stub.onWrite = theirHandoffLands();
   const r = await stub.run(['back', 'alpha', '--no-list']);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(stub.attempts, ['PUT', 'PUT'], 'one rejected PUT, one re-applied PUT');
@@ -154,7 +163,7 @@ test('a concurrent edit to other fields is re-read and the edit re-applied once 
 
 test('a concurrent edit to the same field is a clear error, their record is kept and our body saved', async (t) => {
   const stub = await stubStore(t, { [PATH]: file(ALPHA) });
-  stub.onWrite = first((m, p, s) => { s.files.set(PATH, file(THEIRS)); });
+  stub.onWrite = theirHandoffLands();
   const r = await handoff(stub, 'Mine');
   assert.equal(r.status, 1);
   assert.match(r.stderr, /alpha changed in another session .*handoff/);
@@ -166,7 +175,7 @@ test('a concurrent edit to the same field is a clear error, their record is kept
 test('a record that changes again during the re-apply is a clear error after one re-apply', async (t) => {
   const stub = await stubStore(t, { [PATH]: file(ALPHA) });
   let n = 0;
-  stub.onWrite = (m, p, s) => { n++; s.files.set(PATH, file({ ...THEIRS, sessions: 1 + n, handoff: `edit ${n}\n` })); };
+  stub.onWrite = (s) => { n++; s.files.set(PATH, file({ ...THEIRS, sessions: 1 + n, handoff: `edit ${n}\n` })); };
   const r = await stub.run(['back', 'alpha', '--no-list']);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /alpha changed in another session/);
@@ -176,7 +185,7 @@ test('a record that changes again during the re-apply is a clear error after one
 
 test('DELETE of a record another session already deleted is success', async (t) => {
   const stub = await stubStore(t, { [PATH]: file(ALPHA) });
-  stub.onWrite = (m, p, s) => { s.files.delete(PATH); };
+  stub.onWrite = (s) => { s.files.delete(PATH); };
   const r = await stub.run(['complete', 'alpha', '--no-list']);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(stub.attempts, ['DELETE']);
@@ -192,21 +201,55 @@ test('a DELETE whose answer was lost is success, and one of a record changed sin
   assert.equal(lost.commits, 1);
 
   const changed = await stubStore(t, { [PATH]: file(ALPHA) });
-  changed.onWrite = first((m, p, s) => { s.files.set(PATH, file(THEIRS)); });
+  changed.onWrite = theirHandoffLands();
   const refused = await changed.run(['complete', 'alpha', '--no-list']);
   assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /alpha changed in another session/);
+  assert.match(refused.stderr, /alpha changed in another session/, 'the 400 Forgejo gives a stale DELETE is read back too');
+  assert.deepEqual(changed.attempts, ['DELETE']);
   assert.equal(changed.record().handoff, THEIRS.handoff, 'their handoff is not deleted');
   assert.equal(existsSync(join(changed.root, 'docs')), false);
 });
 
 test('a re-applied handoff is written once, and the flush after it finds nothing left to write', async (t) => {
   const stub = await stubStore(t, { [PATH]: file(ALPHA) });
-  stub.onWrite = first((m, p, s) => { s.files.set(PATH, file({ ...ALPHA, eta: '2h' })); });
+  stub.onWrite = first((s) => { s.files.set(PATH, file({ ...ALPHA, eta: '2h' })); });
   const r = await handoff(stub, 'Mine');
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(stub.attempts, ['PUT', 'PUT'], 'handoff flushes twice, the second one writes nothing');
   const rec = stub.record();
   assert.equal(rec.eta, '2h', 'their field survives');
   assert.match(rec.handoff, /Mine/);
+});
+
+test('the re-apply PUT is sent once: a lost answer on it is read back, never resent', async (t) => {
+  const stub = await stubStore(t, { [PATH]: file(ALPHA) });
+  let n = 0;
+  stub.onWrite = (s) => {
+    n++;
+    if (n === 1) s.files.set(PATH, file(THEIRS));
+    return n === 2 ? 'drop-before' : undefined;
+  };
+  const r = await stub.run(['back', 'alpha', '--no-list']);
+  assert.equal(r.status, 1);
+  assert.deepEqual(stub.attempts, ['PUT', 'PUT'], 'the rejected PUT and one re-apply, no third');
+  assert.equal(stub.record().shelf, 'active');
+});
+
+test('a re-apply that moves a record to another shelf holds when a later record fails and the flush runs again', async (t) => {
+  const BETA_PATH = PATH.replace('alpha', 'beta');
+  const stub = await stubStore(t, { [PATH]: file(ALPHA), [BETA_PATH]: file({ ...ALPHA, slug: 'beta', project: 'Beta' }) });
+  const forge = await openForge(stub.cfg);
+  forge.save('active', forge.entries('active').map((e) => ({ ...e, next: `${e.next}, mine` })));
+  // Another session parks alpha before this flush writes it, and beta's writes never land.
+  stub.onWrite = (s, method, path) => {
+    if (path === PATH && JSON.parse(s.files.get(PATH)).shelf === 'active') s.files.set(PATH, file({ ...ALPHA, shelf: 'backlog' }));
+    return path === BETA_PATH ? 'drop-before' : undefined;
+  };
+  await assert.rejects(forge.flush('test'), /beta\.json/);
+  stub.onWrite = null;
+  await forge.flush('test'); // a handoff flushes again at dispatch end
+  assert.equal(stub.record().shelf, 'backlog', 'their shelf move survives the second flush');
+  assert.equal(stub.record().next, 'Ship it, mine');
+  assert.deepEqual(stub.writes.filter((w) => w.endsWith('/alpha.json')), [`PUT ${PATH}`, `PUT ${PATH}`],
+    'alpha: the rejected PUT and the re-apply, nothing on the second flush');
 });

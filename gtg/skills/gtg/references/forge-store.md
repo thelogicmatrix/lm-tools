@@ -42,7 +42,7 @@ finishes, one flush writes the difference: a new record is created, a changed on
 its previous sha, and a missing one is deleted.
 
 A write is never resent blind, because one whose answer was lost may have landed. When the answer
-is lost (a timeout, a dropped connection, a 5xx) or the sha is refused (409, 422), gtg reads the
+is lost (a timeout, a dropped connection, a 5xx) or the sha is refused (409, 422, or 400 on a DELETE), gtg reads the
 record back. If it holds what gtg meant to write, the write landed. If it is unchanged, a lost
 write is sent once more. If another session changed it, gtg re-applies its own edit on top once:
 fields only this command changed take its values, the rest keep theirs, and the later `updated`

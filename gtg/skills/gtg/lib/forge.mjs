@@ -223,30 +223,39 @@ export async function openForge(cfg, fetchImpl = fetch) {
     return { sha: f.sha, url: f.html_url, rec: JSON.parse(Buffer.from(f.content.replace(/\s/g, ''), 'base64').toString('utf8')) };
   };
   // One write, safe to repeat (#28). When the answer is lost (no response, or a 5xx) or the server
-  // refuses the sha (409, 422), this reads the record back and decides from what it finds:
+  // refuses the sha, this reads the record back and decides from what it finds:
   //   - what we meant to write (want, a serialized record, or null for a delete): it landed
   //   - the record as we read it (oldSha, or absent for a create): it never landed, so a lost
-  //     answer is sent once more, and a refusal is thrown as it came, since no session caused it
+  //     answer is sent again while sends < limit, and a refusal is thrown as it came, since no
+  //     session caused it
   //   - anything else: another session wrote it meanwhile, handed back as { theirs } to re-apply
-  // Never a blind resend: the read-back is what makes the second send safe.
-  const write = async (method, path, payload, want, oldSha) => {
+  // Never a blind resend: the read-back is what makes the second send safe. Refusals, from the live
+  // Forgejo on 2026-09-29: a stale sha is 409 on PUT but 400 on DELETE, a POST over an existing
+  // file is 422, and a PUT to a path another session deleted is 500 (lost, then read back).
+  const REFUSED = new Set([400, 409, 422]);
+  const write = async (method, path, payload, want, oldSha, limit = 2) => {
     // Stale data never feeds a write. The dispatcher refuses writes up front, this is the backstop.
     if (read.stale) throw new Error('the hub is unreachable and this command read the cached store (stale), so nothing was written. Re-run it when the hub is back');
-    for (let resent = false; ; resent = true) {
+    for (let sends = 1; ; sends++) {
       let res, err;
-      try { res = await request(method, path, payload); } catch (e) { err = e; }
+      try { res = await request(method, path, payload); } catch (e) {
+        err = new Error(`forge ${method} ${path} -> no answer (${e.cause?.code ?? e.message})`);
+      }
       if (res?.ok) {
         const out = res.status === 204 ? null : await res.json();
         return { sha: out?.content?.sha, url: out?.content?.html_url };
       }
       if (method === 'DELETE' && res?.status === 404) return {}; // already gone
       const lost = !res || res.status >= 500;
-      if (!lost && res.status !== 409 && res.status !== 422) throw await failure(method, path, res);
+      if (!lost && !REFUSED.has(res.status)) throw await failure(method, path, res);
       err ??= await failure(method, path, res);
-      const now = await current(path);
+      let now;
+      try { now = await current(path); } catch (e) {
+        throw new Error(`${err.message}, and reading it back failed${lost ? ', so the write may have landed' : ''} - ${e.message}`);
+      }
       if (want === null ? !now : now && JSON.stringify(now.rec) === want) return { sha: now?.sha, url: now?.url };
       if ((now?.sha ?? null) === (oldSha ?? null)) {
-        if (lost && !resent) continue;
+        if (lost && sends < limit) continue;
         throw err;
       }
       return { theirs: now };
@@ -291,8 +300,10 @@ export async function openForge(cfg, fetchImpl = fetch) {
       const urls = [];
       const seen = new Set();
       const slugs = new Set();
-      const moves = [];
-      for (const shelf of ['active', 'backlog']) for (const item of shelves[shelf]) {
+      // A snapshot, so a re-apply can move an entry to its other shelf at once: a later record that
+      // throws must not leave it on the old shelf for the next flush to write back.
+      const order = ['active', 'backlog'].flatMap((shelf) => shelves[shelf].map((item) => [shelf, item]));
+      for (const [shelf, item] of order) {
         const rec = { ...item, shelf };
         delete rec.file;
         const slug = rec.slug;
@@ -319,8 +330,10 @@ export async function openForge(cfg, fetchImpl = fetch) {
           if ('theirs' in out) {
             const { merged, clash = [] } = old && out.theirs ? reapply(JSON.parse(old.rec), rec, out.theirs.rec) : {};
             if (!merged) throw new Error(`${slug} changed in another session while this command ran${clash.length ? ` (both changed ${clash.join(', ')})` : ''}. Re-run it`);
+            if (!shelves[merged.shelf]) throw new Error(`invalid gtg record at ${path} after another session's edit`);
             final = merged;
-            out = await write('PUT', path, payload(merged, out.theirs.sha), JSON.stringify(merged), out.theirs.sha);
+            // Sent once: the issue's "re-apply and PUT once". A lost answer is still read back.
+            out = await write('PUT', path, payload(merged, out.theirs.sha), JSON.stringify(merged), out.theirs.sha, 1);
             if ('theirs' in out) throw new Error(`${slug} changed in another session again while this command re-applied its edit. Re-run it`);
           }
         } catch (e) { if (pending.has(slug)) failedHandoff = true; throw e; }
@@ -331,13 +344,12 @@ export async function openForge(cfg, fetchImpl = fetch) {
         if (final !== rec) {
           for (const k of Object.keys(item)) delete item[k];
           Object.assign(item, entry(final, fileSlug));
-          if (final.shelf !== shelf) moves.push([item, shelf, final.shelf]);
+          if (final.shelf !== shelf) {
+            shelves[shelf] = shelves[shelf].filter((x) => x !== item);
+            shelves[final.shelf].push(item);
+          }
         }
         if (pending.has(slug)) urls.push(out.url ?? `${cfg.api.replace(/\/api\/v1$/, '')}/${cfg.repo}/src/branch/main/${path}`);
-      }
-      for (const [item, from, to] of moves) {
-        shelves[from] = shelves[from].filter((x) => x !== item);
-        shelves[to].push(item);
       }
       for (const [fileSlug, old] of saved) {
         if (seen.has(fileSlug)) continue;
