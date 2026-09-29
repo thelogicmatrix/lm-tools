@@ -529,8 +529,10 @@ export async function selftest() {
     const e = new Error('aborted'); e.name = 'AbortError'; rej(e);
   }));
 
-  // A timeout is a failure like the rest, not an empty injection.
-  const slow = await route(TASK, books, 'k', timesOut(), FAST);
+  // A timeout is a failure like the rest, not an empty injection. The abort lands at once here, so
+  // the attempt count does not depend on the clock. Waiting for the real abort is the budget
+  // block's job, further down.
+  const slow = await route(TASK, books, 'k', async () => { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }, FAST);
   for (const [f, why, attempts] of [
     [await route(TASK, books, null), 'no key', 0],
     [await route(TASK, books, 'k', async () => ({ ok: false, status: 500 }), FAST), 'http 500', 3],
@@ -589,18 +591,34 @@ export async function selftest() {
 
   // --- the budget bounds the whole sequence, not each attempt ---
   // A short injected budget rather than a real one, so this costs 150ms and not 4 seconds.
-  const t0 = Date.now();
-  const timedOut = count(timesOut());
-  const over = await route(TASK, books, 'k', timedOut, FAST);
-  const elapsed = Date.now() - t0;
-  a.strictEqual(over.why, 'timeout');
-  a.strictEqual(timedOut.n, 3);
-  a.ok(elapsed < FAST.budgetMs + 150, `three attempts must fit the budget, took ${elapsed}ms`);
+  //
+  // ⚠ WALL TIME ON A BUSY MACHINE CARRIES PAUSES THAT ARE NOT THE ROUTER'S (#22). Measured
+  // 2026-09-29 with 32 CPU-bound processes on 16 cores: a 150 ms budget took 153 ms at best and
+  // 341 ms at worst, and late timers used up the last share, leaving two attempts rather than
+  // three. That is the budget holding, so this block asks for at least two, and the clock-free
+  // timeout case above pins three. Each timing takes up to three runs and keeps the first that
+  // meets its bound. The regressions this guards fail every run, not some: a per-attempt timeout
+  // that ignores the budget takes three budgets, and a first attempt that eats the budget leaves
+  // one attempt.
+  const timed = async (opts, fits) => {
+    let run;
+    for (let i = 0; i < 3; i++) {
+      const stub = count(timesOut());
+      const t = Date.now();
+      const r = await route(TASK, books, 'k', stub, opts);
+      run = { r, n: stub.n, ms: Date.now() - t };
+      if (fits(run)) break;
+    }
+    return run;
+  };
+  const over = await timed(FAST, (x) => x.n >= 2 && x.ms < FAST.budgetMs + 150);
+  a.strictEqual(over.r.why, 'timeout');
+  a.ok(over.n >= 2 && over.n <= 3, `the first attempt must not eat the whole budget, took ${over.n} attempts`);
+  a.ok(over.ms < FAST.budgetMs + 150, `three attempts must fit the budget, took ${over.ms}ms`);
   // Each attempt's timeout is derived from the budget rather than declared beside it, so there is
   // no second constant to drift. Halving the budget halves the time spent.
-  const t1 = Date.now();
-  await route(TASK, books, 'k', timesOut(), { budgetMs: 60, delayMs: 0 });
-  a.ok(Date.now() - t1 < elapsed, 'a smaller budget must actually spend less time');
+  const smaller = await timed({ budgetMs: 60, delayMs: 0 }, (x) => x.ms < over.ms);
+  a.ok(smaller.ms < over.ms, `a smaller budget must actually spend less time, took ${smaller.ms}ms against ${over.ms}ms`);
 
   // --- a short prompt is the one deliberate "less than before", and must never call out ---
   let called = false;
