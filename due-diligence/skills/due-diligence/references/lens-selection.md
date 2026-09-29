@@ -42,6 +42,41 @@ and idempotency-rerun-safety).
 | proposal, plan, recommendation | assumptions-risk, alternatives-considered, agency-preservation |
 | educational | pedagogy |
 
+## Heavy critic groups
+
+Heavy runs at most 6 critics, one per res file, so lenses that share a res file share a critic
+and the file is read once. A lens that cites two res files sits under its first cite, with the
+second in brackets. Size is the res file in KB (measured 2026-09-30), for merging groups when
+more than 6 are selected: merge the two with the least res text, and repeat.
+
+| Res file | KB | Lenses that cite it |
+|---|---|---|
+| res_code-quality.md | 15 | concurrency-safety, error-handling, maintainability, performance-efficiency, test-coverage |
+| res_operations.md | 14 | backup-recovery, observability, rollback-blast-radius |
+| res_visual-design.md | 13 | brand-consistency, visual-ui-ux (also res_accessibility) |
+| res_security.md | 13 | data-privacy, dependency-supply-chain, security-secrets |
+| res_homelab.md | 13 | homelab-ops |
+| res_pedagogy.md | 12 | pedagogy |
+| res_agent-interfaces.md | 12 | absent-user-handoff, inference-legibility |
+| res_decision-quality.md | 12 | alternatives-considered, assumptions-risk |
+| res_data-analysis.md | 12 | cross-artifact-consistency (also res_technical-writing), data-quality, statistical-soundness |
+| res_attention-design.md | 11 | attention-cost |
+| res_accessibility.md | 11 | deep-accessibility |
+| res_user-agency.md | 10 | agency-preservation |
+| res_technical-writing.md | 10 | actionability, audience-fit, clarity, depth-sufficiency, necessity, structure-navigability, voice |
+| res_reproducibility.md | 10 | idempotency-rerun-safety, reproducibility-portability |
+| res_llm-safety.md | 10 | output-grounding, prompt-injection |
+| res_interface-states.md | 9 | interface-state-coverage |
+| res_resilience.md | 5 | resilience |
+| res_api-design.md | 4 | api-contract |
+| res_llm-eval.md | 4 | llm-eval |
+| none | 0 | compliance-policy, cost-token-efficiency, data-provenance, operational-completeness |
+
+Worked case, a `code` artifact with every general lens: code-quality, security, reproducibility,
+interface-states, technical-writing, resilience, api-design and none make 8 groups. None (0 KB)
+merges with api-design (4), and that group merges with resilience (5), leaving 6 critics. A user
+lens backed by `.dd/res/<domain>.md` groups under that file the same way.
+
 ## User lenses
 
 Also scan `.dd/lenses/*.md` in the working repo (and, if you keep a `.dd/` outside the repo

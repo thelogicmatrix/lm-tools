@@ -23,7 +23,7 @@ Every shipped lens, and when it applies, is in [lens-selection.md](skills/due-di
 
 Neither skill runs on its own. You ask for one, or the review runs right before something leaves the machine or when a branch is finished.
 
-The review works out what the work is and picks only the lenses it needs. Any general lens it leaves out is named with a reason, so nothing is skipped silently. Then it picks how hard to look and says which: Light (one pass and one round of fixes, the default), Standard (a separate critic that never saw the reasoning) or Heavy (a critic per lens, attacking until nothing new turns up). Light moves itself up when its own scorecard shows the work was worse than it looked. You can steer it with words like "quick check" or "go deep". The rules are in the [skill](skills/due-diligence/SKILL.md).
+The review works out what the work is and picks only the lenses it needs. Any general lens it leaves out is named with a reason, so nothing is skipped silently. Then it picks how hard to look and says which: Light (one pass and one round of fixes, the default), Standard (a separate critic that never saw the reasoning) or Heavy (up to six critics, with lenses that share a research file sharing a critic, attacking until nothing new turns up). Light moves itself up when its own scorecard shows the work was worse than it looked. You can steer it with words like "quick check" or "go deep". The rules are in the [skill](skills/due-diligence/SKILL.md).
 
 `cdd` makes the same choices, then writes the brief instead of attacking. Its two brief sizes are in the [cdd skill](skills/cdd/SKILL.md).
 

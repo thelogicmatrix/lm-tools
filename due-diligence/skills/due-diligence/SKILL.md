@@ -37,9 +37,14 @@ one line. A user naming a tier or intensity ("quick check", "one critic", "go de
 - **Standard**: ONE fresh sub-agent critic given only the artifact, lenses and Step 0 (never
   the authoring rationale); re-attack **once**, only if it found a blocker. For a real boss,
   client or external deliverable.
-- **Heavy**: one critic **per selected lens in parallel**, re-attack to convergence. ONLY when
-  the user asked, the change is irreversible or embarrassing if wrong, or the artifact will not
-  fit one critic's context.
+- **Heavy**: **at most 6 critics in parallel**, re-attack to convergence. ONLY when the user
+  asked, the change is irreversible or embarrassing if wrong, or the artifact will not fit one
+  critic's context. Group the selected lenses by the `res_*.md` they cite, one critic per group,
+  so a shared res file is read once. The groups are in
+  [references/lens-selection.md](references/lens-selection.md#heavy-critic-groups). A lens that
+  cites two res files goes with its first cite, and lenses that cite none form one group. Over 6
+  groups, merge the two with the least res text and repeat until 6 remain. A `code` artifact
+  with every general lens makes 8 groups, which merge to 6.
 
 ## Escalate on the numbers
 
@@ -83,7 +88,7 @@ taken where the surface exists, domain lenses surfaced by the tags, and the user
 lens files. Light never opens a `res_*.md`: every lens's Attacks were derived from its res file
 already, and the res files are the largest thing in this library. Standard and Heavy critics
 get the lens files plus the `res_*.md` each cites, because they are fresh contexts that need
-the bar.
+the bar. A Heavy critic gets its group's lens files and each res file they cite, once.
 
 **Selection guard, one line before attacking:** name the lenses selected AND every general
 lens deliberately skipped, each with a why. Skipping is allowed; omitting without saying is
