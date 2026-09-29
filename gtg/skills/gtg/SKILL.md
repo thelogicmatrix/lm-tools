@@ -49,7 +49,7 @@ followed, not relayed (`--keep` remains a compatibility alias; all resumes retai
 
 ## Checkpoints and Exit Procedure
 
-Write a checkpoint at a meaningful boundary or session end; a checkpoint does not complete or shelve the work. The stable slug retains one current handoff, updated in place, with prior versions in git. Use `gtg complete <slug>` to complete, or `gtg back <slug>` to shelve.
+Write a checkpoint only when losing the session now would lose something git does not hold: at session end, when a context-fill nudge fires, before leaving a long step to a background job or another agent, or when the user adds to `## Up next`. A merged PR, a deploy or a finished sub-task is not a boundary on its own. Git records it, and the next real checkpoint picks it up. A checkpoint does not complete or shelve the work. The stable slug retains one current handoff, updated in place, with prior versions in git. Use `gtg complete <slug>` to complete, or `gtg back <slug>` to shelve.
 
 **Completion is the agent's call, made where it is easy.** Entries persist until completed, so
 an uncompleted finished project lingers forever. Two moments decide it:
