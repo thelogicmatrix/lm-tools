@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHeader } from '../scripts/index.mjs';
-import { OUTAGE_MS, DEDUPE_MS, RB_KEEP, SHORTLIST, STALE_LINE, ageLabel, breakerOpen, codexEnvelope, dedupeRecord,
+import { OUTAGE_MS, DEDUPE_MS, DEDUPE_KEEP_MS, RB_KEEP, SHORTLIST, STALE_LINE, ageLabel, breakerOpen, claimPrompt, codexEnvelope, dedupeFile, dedupeRecord,
   failNotice, isDuplicate, keyFor, loadCorpus, markOutage, matchedBlock, narrow, parse, readKey, readOutage, route,
   tripsBreaker } from '../scripts/router.mjs';
 
@@ -371,5 +371,43 @@ test('keys read rb_ with no prefix on the entry, and loadCorpus takes no prefix'
     const out = loadCorpus(dir, parse, RB_KEEP);
     assert.deepStrictEqual(out.map((x) => x.file), ['live.md']);
     assert.ok(!Object.hasOwn(out[0], 'prefix'), 'no prefix rides on the entry');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// #102. One shared dedupe.json let another session's prompt overwrite the record between this
+// session's two hook copies, so the second copy routed and injected again. Each session now has
+// its own file, and a first write in a session prunes files a day old.
+test('dedupe is per session: interleaved claims still drop each duplicate copy', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-dedupe-'));
+  try {
+    const t = 1_000_000;
+    assert.strictEqual(claimPrompt('sess-A', 'deploy the app', { dir, now: t }), true, 'A copy 1 routes');
+    assert.strictEqual(claimPrompt('sess-B', 'fix the backup', { dir, now: t + 5 }), true, 'B copy 1 routes');
+    assert.strictEqual(claimPrompt('sess-A', 'deploy the app', { dir, now: t + 10 }), false, 'A copy 2 is dropped');
+    assert.strictEqual(claimPrompt('sess-B', 'fix the backup', { dir, now: t + 15 }), false, 'B copy 2 is dropped');
+    assert.strictEqual(claimPrompt('sess-A', 'next task', { dir, now: t + 20 }), true, 'a new prompt in A routes');
+    assert.notStrictEqual(dedupeFile('sess-A', dir), dedupeFile('sess-B', dir), 'one file per session');
+    assert.match(path.basename(dedupeFile('sess-A', dir)), /^dedupe-[0-9a-f]{12}\.json$/);
+    assert.strictEqual(fs.readdirSync(dir).length, 2, 'two sessions, two files');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('dedupe prunes day-old session files and the legacy shared file, and keeps fresh ones', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-dedupe-'));
+  try {
+    const now = Date.now();
+    const old = new Date(now - DEDUPE_KEEP_MS - 60_000);
+    for (const name of ['dedupe-aaaaaaaaaaaa.json', 'dedupe.json']) {
+      fs.writeFileSync(path.join(dir, name), '{}');
+      fs.utimesSync(path.join(dir, name), old, old);
+    }
+    fs.writeFileSync(path.join(dir, 'dedupe-bbbbbbbbbbbb.json'), '{}');
+    fs.writeFileSync(path.join(dir, 'outage.json'), '{}');
+    fs.utimesSync(path.join(dir, 'outage.json'), old, old);
+    assert.strictEqual(DEDUPE_KEEP_MS, 86_400_000, 'a day, pinned by value');
+    claimPrompt('sess-C', 'a prompt', { dir, now });
+    assert.deepStrictEqual(fs.readdirSync(dir).sort(),
+      ['dedupe-bbbbbbbbbbbb.json', path.basename(dedupeFile('sess-C', dir)), 'outage.json'].sort(),
+      'only day-old dedupe files go, and nothing else in the state dir');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

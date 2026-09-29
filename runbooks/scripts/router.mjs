@@ -310,8 +310,24 @@ async function attempt(prompt, books, key, fetchImpl, timeoutMs, firesAt, maxInj
 //
 // Neither registration can simply go. Each one covers sessions the other does not reach. So the
 // guard lives here, where every copy routes through it.
-export const DEDUPE_LOG = path.join(STATE_DIR, 'dedupe.json');
+// One file per session (#102). A single shared dedupe.json let another session's prompt overwrite
+// the record between this session's two copies, so the second copy read as new and injected again.
 export const DEDUPE_MS = 20_000;
+// A session file older than this is from a session that is over. The first write in a session
+// prunes them, and the legacy shared dedupe.json with them.
+export const DEDUPE_KEEP_MS = 86_400_000;
+const DEDUPE_NAME = /^dedupe(-[0-9a-f]{12})?\.json$/;
+export const dedupeFile = (sessionId, dir = STATE_DIR) => path.join(dir,
+  `dedupe-${crypto.createHash('sha1').update(String(sessionId)).digest('hex').slice(0, 12)}.json`);
+function pruneDedupe(dir, now) {
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (!DEDUPE_NAME.test(name)) continue;
+      const file = path.join(dir, name);
+      if (now - fs.statSync(file).mtimeMs > DEDUPE_KEEP_MS) fs.rmSync(file, { force: true });
+    }
+  } catch { /* pruning is housekeeping, never worth failing a prompt over */ }
+}
 
 // The written record, as its own function so the selftest checks the real field names rather than
 // a literal retyped beside them. An output-redaction guard blocks a `key` holding 8+ opaque
@@ -324,23 +340,26 @@ export function isDuplicate(promptHash, now, prev, windowMs = DEDUPE_MS) {
   return !!prev && prev.promptHash === promptHash && now - prev.t < windowMs;
 }
 
-// ponytail: last-write-wins on one file, not a lock. Two copies launched in the same millisecond
-// could both read before either writes. The claim is staked BEFORE the ~380ms API call rather than
-// after it, which leaves a window of microseconds against a gap of a third of a second. If Claude
-// Code ever runs hook groups in true parallel, this needs an O_EXCL create instead.
-function claimPrompt(sessionId, prompt) {
+// ponytail: last-write-wins on the session's file, not a lock. Two copies launched in the same
+// millisecond could both read before either writes. The claim is staked BEFORE the ~380ms API call
+// rather than after it, which leaves a window of microseconds against a gap of a third of a second.
+// If Claude Code ever runs hook groups in true parallel, this needs an O_EXCL create instead.
+export function claimPrompt(sessionId, prompt, { dir = STATE_DIR, now = Date.now() } = {}) {
   // Named promptHash, not key: an output-redaction guard blocks any `key` holding 8+ opaque
   // characters, and a sha1 under that name reads exactly like a leaked credential. It fired on
   // this file twice before the rename.
   const promptHash = crypto.createHash('sha1').update(`${sessionId}\0${prompt}`).digest('hex');
-  const now = Date.now();
+  const file = dedupeFile(sessionId, dir);
+  let seen = false;
   try {
-    const prev = JSON.parse(fs.readFileSync(DEDUPE_LOG, 'utf8'));
+    const prev = JSON.parse(fs.readFileSync(file, 'utf8'));
+    seen = true;
     if (isDuplicate(promptHash, now, prev)) return false;
   } catch { /* absent or corrupt reads as "not seen", which only ever costs one extra call */ }
   try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(DEDUPE_LOG, JSON.stringify(dedupeRecord(promptHash, now)));
+    fs.mkdirSync(dir, { recursive: true });
+    if (!seen) pruneDedupe(dir, now);
+    fs.writeFileSync(file, JSON.stringify(dedupeRecord(promptHash, now)));
   } catch { /* never fail a prompt */ }
   return true;
 }
