@@ -63,6 +63,7 @@ export function parseHeader(head) {
     project: value("Project"),
     purpose: value("Purpose"),
     run: value("Run"),
+    verified: value("Verified"),
     order: [...found].sort((a, b) => a.at - b.at).map((f) => f.name),
   };
 }
@@ -370,12 +371,13 @@ async function runLint() {
   process.exitCode = violations.length ? 1 : 0;
 }
 
-// A SessionStart hook gets a JSON payload on stdin. A TTY, an empty pipe or bad JSON reads as {}.
+// A hook gets a JSON payload on stdin. A TTY, an empty pipe or bad JSON reads as {}. router.mjs
+// imports this for its UserPromptSubmit read.
 // A sync read of fd 0 waits for EOF, so a pipe left open with nothing written hung the hook. The
 // read now has a deadline, and a caller that misses it resolves from the process cwd instead.
 // ponytail: 500 ms is headroom, not a measurement. A harness writes and closes at once, so only a
 // caller that never closes stdin ever waits it out.
-async function readInput(ms = 500) {
+export async function readInput(ms = 500) {
   if (process.stdin.isTTY) return {};
   let raw = "";
   await new Promise((done) => {

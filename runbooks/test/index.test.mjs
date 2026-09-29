@@ -270,7 +270,7 @@ test("a case-insensitive label does not loosen the retirement VALUE format", () 
 
 test("parseHeader returns nulls for a file with no header block", () => {
   const h = parseHeader("# Some Runbook\n\nJust prose, no fields.\n");
-  assert.deepEqual(h, { type: null, status: null, project: null, purpose: null, run: null, order: [] });
+  assert.deepEqual(h, { type: null, status: null, project: null, purpose: null, run: null, verified: null, order: [] });
 });
 
 test("parseHeader ignores a **Purpose:** that appears past the header block", () => {

@@ -54,8 +54,8 @@ meaning anything once a sweep has touched every file, so this is the freshness s
 
 **`Purpose` must be one physical line.** The index and the lint read a field to the end of its
 line and no further, so a purpose that wraps is silently truncated there. Everything past the
-first line never reaches the index or the lint. The router joins the wrapped lines, so a wrapped
-purpose routes on text the index never shows. Write it long if it needs to be long, but write it on one line. For
+first line never reaches the index, the lint or the router, which reads the header with the same
+parse. Write it long if it needs to be long, but write it on one line. For
 standards and references the lint also fails a purpose over 25 words, because that line is the
 question the router asks. How to write one is in `purpose-lines.md`.
 

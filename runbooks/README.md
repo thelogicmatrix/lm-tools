@@ -83,10 +83,10 @@ Change the thresholds, add your own session-start lines, lint rules and writing 
 
 - With more than 30 procedures, standards and references, BM25 keeps the top 30, padded to 30 even where a runbook scores zero. Every standard outside the top 30 is added back. Then it makes one `jev-latest` call on the OpenRouter System One endpoint, about $0.0004 a prompt.
 - It injects each match by name, type and purpose.
-- Retries fit inside a 4 second total budget. Only a timeout, a 5xx, a 429 or a network error is retried.
+- Retries fit inside a 4 second total budget. Only a timeout, a 5xx, a 429 or a network error is retried. When all of them fail, the router skips the API for 60 seconds and injects the notice straight away.
 - A failure (no key, no network, a timeout, a bad response) injects a short notice saying routing is unavailable, why, and to read the runbooks folder directly.
 - Once a key is set, a prompt under 12 characters, like "ok" or "yes", injects nothing. With no key, the failure notice fires on every prompt.
 - A second copy of the hook on the same prompt exits before the API call.
-- Spend and dedupe logs go to `%LOCALAPPDATA%/claude-router/` on Windows and `~/.local/state/claude-router/` elsewhere.
+- Spend, dedupe and outage logs go to `%LOCALAPPDATA%/claude-router/` on Windows and `~/.local/state/claude-router/` elsewhere.
 
 **The index** runs at session start (SessionStart) and makes no API call. It names residuals, postmortems and top-level retired runbooks (as "do not re-propose"), one line each. Your nudges print after them.

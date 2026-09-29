@@ -42,6 +42,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { buildIndex, shortlist } from './prefilter.mjs';
 import { settings, STATE_DIR } from './config.mjs';
+import { DORMANT_RE, parseHeader, readInput, RETIRED_RE } from './index.mjs';
 
 const HOME = os.homedir();
 // Every prompt is posted here, with no customer-data screen.
@@ -85,32 +86,34 @@ const RB_KEEP = new Set(['standard', 'reference', 'procedure']);
 // A retired runbook is a tombstone. SessionStart names it once as "do not re-propose", and routing
 // it would hand the session a dead process with a relevance score on it. A dormant runbook is a live
 // process parked for now (2026-09-24): it never routes either, and index.mjs
-// gives it no tombstone, which is the whole difference from retired.
-const RETIRED = /^\*\*Status:\*\*\s*(retired|dormant)\b/m;
+// gives it no tombstone, which is the whole difference from retired. Both are read by index.mjs's
+// own RETIRED_RE and DORMANT_RE, so a malformed retirement routes here exactly as the lint flags it.
+const isParked = (status) => RETIRED_RE.test(status ?? '') || DORMANT_RE.test(status ?? '');
 
-// Same parse as index.mjs. The terminator is a lookahead with no `$`: under /m that
-// matches the end of the FIRST line and truncates a purpose that wraps.
+// index.mjs's parseHeader, so the router and the index agree on what a runbook says: the header
+// inside its first 800 bytes, and a purpose on one physical line (the lint rejects a wrapped one).
+// Verified keeps only its date, so a trailing note cannot turn the age into "never verified".
 export function parse(text, file) {
-  const type = text.match(/^\*\*Type:\*\*\s*(\w+)/m)?.[1] ?? null;
-  const purpose = text.match(/^\*\*Purpose:\*\*\s*([\s\S]*?)(?=\n\s*\n|\n\*\*|\n#|(?![\s\S]))/m)?.[1]
-    ?.replace(/\s+/g, ' ').trim() ?? null;
-  const verified = text.match(/^\*\*Verified:\*\*\s*(\d{4}-\d{2}-\d{2})/m)?.[1] ?? null;
-  return { file, type, purpose, verified };
+  const h = parseHeader(text);
+  return { file, type: h.type, purpose: h.purpose, status: h.status,
+    verified: h.verified?.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? null };
 }
+
+// Directories never walked. archive/ holds facts that were deliberately superseded, and routing one
+// would hand the session a dead fact with a relevance score on it. retired/ holds tombstones the
+// same way. .git is the store's own history: 277 of the 291 directories the walk used to enter,
+// measured 2026-09-29, and skipping it took loadAll from 33 to 45 ms down to 15 to 18 ms.
+const SKIP_DIRS = new Set(['archive', 'retired', '.git']);
 
 export function loadCorpus(root, parseFn, prefix, keep) {
   const out = [];
   const walk = (d) => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
       const p = path.join(d, e.name);
-      // An archived file is a fact that was deliberately superseded. Routing one would hand the
-      // session a dead fact with a relevance score on it and nothing saying it is dead, which is
-      // the exact failure the archive exists to prevent. A retired Status line is skipped the same way.
-      if (e.isDirectory()) { if (e.name !== 'archive') walk(p); }
+      if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walk(p); }
       else if (e.name.endsWith('.md')) {
-        const text = fs.readFileSync(p, 'utf8');
-        if (RETIRED.test(text)) continue;
-        const r = parseFn(text, path.relative(root, p));
+        const r = parseFn(fs.readFileSync(p, 'utf8'), path.relative(root, p));
+        if (isParked(r.status)) continue;
         if (r.type && r.purpose && keep.has(r.type)) out.push({ ...r, prefix });
       }
     }
@@ -194,13 +197,17 @@ export const codexEnvelope = (text) => ({
   hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: text },
 });
 
-export function readKey(env = process.env) {
+// ~/.jev.env is the canonical home, shared with jevtools. The match is jevtools/scripts/lib.mjs's:
+// anchored to the line start so a commented old line cannot win, a shell `export` prefix allowed,
+// and one pair of surrounding quotes stripped (left in, they give a 401 on every prompt).
+export function readKey(env = process.env, file = path.join(HOME, '.jev.env')) {
   if (env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY;
-  // ~/.jev.env is the canonical home. A missing file is a fallback, never an error.
   try {
-    const m = fs.readFileSync(path.join(HOME, '.jev.env'), 'utf8').match(/OPENROUTER_API_KEY=(.+)/);
-    if (m && m[1].trim()) return m[1].trim();
-  } catch { /* not there; fall through */ }
+    const m = fs.readFileSync(file, 'utf8')
+      .match(/^\s*(?:export\s+)?OPENROUTER_API_KEY=(.*)$/m);
+    const v = m ? m[1].trim().replace(/^(['"])(.*)\1$/, '$2') : '';
+    if (v) return v;
+  } catch { /* not there, and a missing file is a fallback, never an error */ }
   return null;
 }
 
@@ -211,6 +218,28 @@ export function readKey(env = process.env) {
 // A timeout, a 5xx, a thrown network error and a 429 are the ones a second call can answer.
 export const isRetryable = (r) => r.thrown === true || r.why === 'timeout' || r.why === 'http 429'
   || /^http 5\d\d$/.test(r.why);
+
+// ⚠ THE OUTAGE BREAKER. A dead endpoint used to cost the whole 4 s budget on every prompt. Now a
+// full failure on a retryable reason writes the time to OUTAGE_LOG, and for OUTAGE_MS after it the
+// hook injects the notice without calling. A bad key or a bad request never trips it: those fail
+// in one fast call, so there is no latency to save and a real fix to surface.
+// ponytail: a fixed window, not a half-open probe. The first prompt after it pays the budget again
+// if the API is still down. Add a probe if outages are ever measured to outlast a minute often.
+export const OUTAGE_LOG = path.join(STATE_DIR, 'outage.json');
+export const OUTAGE_MS = 60_000;
+export const tripsBreaker = (r) => r.mode === 'fallback' && r.attempts > 0 && isRetryable(r);
+// A marker from the future is a clock step, and reads as no marker rather than a long outage.
+export const breakerOpen = (prev, now, windowMs = OUTAGE_MS) =>
+  Number.isFinite(prev?.t) && now >= prev.t && now - prev.t < windowMs;
+export function readOutage(file = OUTAGE_LOG) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+export function markOutage(file = OUTAGE_LOG, t = Date.now()) {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ t }));
+  } catch { /* a marker is never worth failing a prompt over */ }
+}
 
 // One call. Returns the matched block, or the reason it failed for route to classify and count.
 // What every call actually cost, from the API's own usage block rather than a price table. Written
@@ -345,6 +374,8 @@ export async function route(prompt, books, key, fetchImpl = fetch, opts = {}) {
   if (String(prompt ?? '').trim().length < 12) {
     return { text: '', mode: 'skipped', why: 'short prompt' };
   }
+  // The breaker, open. After the short-prompt skip, so a continuation still injects nothing.
+  if (opts.skipApi) return { text: failNotice(opts.skipApi, 0), mode: 'fallback', why: opts.skipApi, attempts: 0 };
   // After the short-prompt skip, so a prompt that injects nothing never pays to be indexed.
   books = opts.narrow === false ? books : narrow(prompt, books, opts.shortlist ?? SHORTLIST);
   const deadline = Date.now() + budgetMs;
@@ -370,8 +401,6 @@ export async function selftest() {
     { file: 'powershell.md', type: 'standard', purpose: 'How to write PowerShell here.', prefix: 'rb' },
     { file: 'secret-transfer.md', type: 'procedure', purpose: 'Move a secret without it hitting chat.', prefix: 'rb' },
   ];
-  // A wrapped purpose survives; `$` under /m would truncate it.
-  a.strictEqual(parse('**Type:** standard\n**Purpose:** One\ntwo.\n\n## X\nbody', 'p.md').purpose, 'One two.');
   a.strictEqual(parse('**Type:** reference\nno purpose', 'p.md').purpose, null);
 
   // An injected entry is labelled with its type.
@@ -412,9 +441,69 @@ export async function selftest() {
     fs.writeFileSync(path.join(tmp, 'archive', 'dead.md'), '**Type:** standard\n**Purpose:** Superseded.');
     fs.writeFileSync(path.join(tmp, 'parked.md'),
       '**Type:** procedure\n**Status:** dormant 2026-09-24, parked\n**Purpose:** Parked process.');
+    // .git and retired/ are never walked. Each holds a file with a valid header, so a walk that
+    // entered either would route it. Measured on the live corpus: 277 of 291 directories walked
+    // were inside docs/runbooks/.git.
+    for (const d of ['.git', 'retired']) {
+      fs.mkdirSync(path.join(tmp, d));
+      fs.writeFileSync(path.join(tmp, d, 'inside.md'), '**Type:** standard\n**Purpose:** Must not route.');
+    }
     a.deepStrictEqual(loadCorpus(tmp, parse, 'rb', RB_KEEP).map((x) => x.file), ['live.md'],
-      'neither an archive directory nor a retired or dormant Status line may route');
+      'no archive, .git or retired directory, and no retired or dormant Status line, may route');
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+
+  // --- one parse, index.mjs's ---
+  // The router reads a runbook exactly as the index and the lint do: the header inside 800 bytes,
+  // a purpose on its first physical line (the lint rejects a wrapped one), and retirement by the
+  // strict RETIRED_RE rather than any Status line mentioning the word.
+  {
+    const wrapped = '**Type:** standard\n**Purpose:** One\ntwo.\n\n## X\nbody';
+    a.strictEqual(parse(wrapped, 'p.md').purpose, parseHeader(wrapped).purpose, 'the purpose the index shows');
+    a.strictEqual(parse(wrapped, 'p.md').purpose, 'One');
+    const late = `**Type:** reference\n**Purpose:** The real one.\n\n${'x'.repeat(900)}\n**Purpose:** A body line.`;
+    a.strictEqual(parse(late, 'l.md').purpose, 'The real one.', 'a body Purpose past the header is not read');
+    a.strictEqual(parse('**TYPE:** standard\n**Purpose:** P.', 'c.md').type, 'standard', 'a label in capitals still reads');
+    const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'rbr-'));
+    try {
+      // A Status line in the body is prose, not a retirement, and the index lists this file too.
+      fs.writeFileSync(path.join(tmp2, 'live.md'),
+        `**Type:** standard\n**Purpose:** Live.\n\n${'x'.repeat(900)}\n**Status:** retired 2026-01-01 — a quoted example`);
+      a.deepStrictEqual(loadCorpus(tmp2, parse, 'rb', RB_KEEP).map((x) => x.file), ['live.md']);
+    } finally { fs.rmSync(tmp2, { recursive: true, force: true }); }
+  }
+
+  // --- the outage breaker ---
+  // A full failure on a reason worth retrying is an outage. For OUTAGE_MS after one, the API is not
+  // called at all, so a dead endpoint costs one prompt its 4 s budget, not every prompt.
+  {
+    a.strictEqual(OUTAGE_MS, 60_000, 'about a minute, pinned by value');
+    a.strictEqual(breakerOpen(null, 1_000), false, 'no marker, no breaker');
+    a.strictEqual(breakerOpen({ t: 1_000 }, 1_000 + OUTAGE_MS - 1), true, 'inside the window');
+    a.strictEqual(breakerOpen({ t: 1_000 }, 1_000 + OUTAGE_MS), false, 'the window expires');
+    a.strictEqual(breakerOpen({ t: 5_000 }, 1_000), false, 'a marker from the future is a clock step, not an outage');
+    a.strictEqual(breakerOpen({ t: 'x' }, 1_000), false, 'a corrupt marker reads as none');
+    // What trips it, pinned by reason. A bad request or a missing key fails fast and the same way
+    // every time, so there is no latency for the breaker to save.
+    for (const why of ['timeout', 'http 503', 'http 429']) a.strictEqual(tripsBreaker({ mode: 'fallback', why, attempts: 3 }), true, why);
+    a.strictEqual(tripsBreaker({ mode: 'fallback', why: 'fetch failed', thrown: true, attempts: 3 }), true, 'a network error');
+    for (const why of ['http 400', 'http 401', 'no answers', 'no key']) a.strictEqual(tripsBreaker({ mode: 'fallback', why, attempts: 1 }), false, why);
+    a.strictEqual(tripsBreaker({ mode: 'matched', attempts: 2 }), false, 'a recovery is not an outage');
+    // The marker round trip, on a real file.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rbr-'));
+    try {
+      const f = path.join(dir, 'sub', 'outage.json');
+      a.strictEqual(readOutage(f), null, 'an absent marker is null');
+      markOutage(f, 42);
+      a.deepStrictEqual(readOutage(f), { t: 42 });
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    // An open breaker skips the call and says so, with 0 attempts. A short prompt still skips.
+    let calls = 0;
+    const never = async () => { calls += 1; throw new Error('the breaker should have skipped the call'); };
+    const skipped = await route('a real task of sufficient length', books, 'k', never, { skipApi: 'api down' });
+    a.deepStrictEqual([skipped.mode, skipped.why, skipped.attempts, calls], ['fallback', 'api down', 0, 0]);
+    a.strictEqual(skipped.text, failNotice('api down', 0));
+    a.strictEqual((await route('ok', books, 'k', never, { skipApi: 'api down' })).mode, 'skipped');
+  }
 
   // --- every failure path must NAME the gap, never dump the index ---
   // This asserted the opposite until 2026-09-22, when the full-index fallback turned out to cost
@@ -591,6 +680,24 @@ export async function selftest() {
     a.deepStrictEqual(env.hookSpecificOutput,
       { hookEventName: 'UserPromptSubmit', additionalContext: 'BLOCK' });
   }
+  // --- readKey, the same match as jevtools/scripts/lib.mjs ---
+  // Unanchored, a commented old line or a quoted value won and every prompt got a 401. Dummy
+  // strings only, checked with a.ok so a failure never prints a value, and the file is injected so
+  // the real ~/.jev.env is never read.
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rbr-key-'));
+    const kf = (name, body) => { const p = path.join(dir, name); fs.writeFileSync(p, body); return p; };
+    const V = 'OPENROUTER_API_KEY';
+    try {
+      a.ok(readKey({}, kf('commented', `# ${V}=stale-old\n${V}=dummy-live\n`)) === 'dummy-live', 'a commented earlier line is skipped');
+      a.ok(readKey({}, kf('double', `${V}="dummy-double"\n`)) === 'dummy-double', 'double quotes are stripped');
+      a.ok(readKey({}, kf('single', `${V}='dummy-single'\n`)) === 'dummy-single', 'single quotes are stripped');
+      a.ok(readKey({}, kf('export', `  export ${V}=dummy-export\r\n`)) === 'dummy-export', 'an export prefix, indented, with CRLF');
+      a.ok(readKey({}, kf('suffix', `OLD_${V}=dummy-suffix\n`)) === null, 'a longer name ending in the same text is not the key');
+      a.ok(readKey({ [V]: 'dummy-env' }, kf('env', `${V}=dummy-file\n`)) === 'dummy-env', 'the env var takes precedence');
+      a.ok(readKey({}, path.join(dir, 'absent')) === null, 'a missing file gives null');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
   return 'router selftest OK';
 }
 
@@ -603,17 +710,12 @@ if (process.argv.includes('--selftest')) { console.log(await selftest()); proces
 // throws on a missing or undefined argv[1], which is not this file either.
 const isEntry = () => { try { return fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
 if (isEntry()) {
-  let raw = '';
-  for await (const c of process.stdin) raw += c;
-  let prompt = '';
-  let sessionId = '';
-  let cwd = '';
-  try {
-    const input = JSON.parse(raw || '{}');
-    prompt = input.prompt ?? '';
-    sessionId = input.session_id ?? '';
-    cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  } catch { prompt = ''; }
+  // index.mjs's read, with its 500 ms deadline. `for await` over stdin waited for an EOF that a
+  // caller holding the pipe open never sends, and the hook hung until the harness killed it.
+  const input = await readInput();
+  const prompt = typeof input.prompt === 'string' ? input.prompt : '';
+  const sessionId = input.session_id ?? '';
+  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
 
   // No runbooks folder: silent, and before the dedupe claim so a repo without runbooks writes nothing.
   // ponytail: settings() spawns git rev-parse, so a duplicate copy pays that spawn before it exits.
@@ -627,8 +729,13 @@ if (isEntry()) {
 
   const books = loadAll(cfg.dir);
   if (!books.length) process.exit(0);
-  const { text, mode, why, hits, attempts } = await route(prompt, books, readKey(), fetch,
-    { firesAt: cfg.firesAt, maxInject: cfg.maxInject, shortlist: cfg.shortlist });
+  const prev = readOutage();
+  const skipApi = breakerOpen(prev, Date.now())
+    ? `the API failed at ${new Date(prev.t).toISOString().slice(11, 19)} UTC, calls paused ${OUTAGE_MS / 1000} s` : null;
+  const r = await route(prompt, books, readKey(), fetch,
+    { firesAt: cfg.firesAt, maxInject: cfg.maxInject, shortlist: cfg.shortlist, skipApi });
+  if (tripsBreaker(r)) markOutage();
+  const { text, mode, why, hits, attempts } = r;
   // Claude Code takes plain stdout as context. Codex reads only the JSON envelope and drops
   // anything else on the floor, silently, which looks exactly like a router that found no match.
   // Same routing, same corpus, one flag: --json is the whole Codex port.
