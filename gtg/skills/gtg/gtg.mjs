@@ -1544,6 +1544,12 @@ const builtins = {
 // not write, so on a forge they would report an empty history as if it were the truth.
 const NO_STORE = new Set(['help', '--help', '-h', 'progress']);
 const FORGE_REFUSED = new Set(['log', 'undo', 'stats', 'report']);
+// Commands that never write the store, so they may run on a stale cached read. undefined = bare gtg.
+const STALE_OK = new Set([undefined, 'list', 'resume', 'learn']);
+// A failed or refused forge read stops the command with exit 1. Not process.exit: on Windows
+// (Node 24) exiting while fetch sockets are open trips a libuv assertion, and the process dies
+// with 0xC0000409 instead of 1 (seen on a 401). See writeHandoff's forge branch.
+let stopped = false;
 if (!NO_STORE.has(cmd)) {
   let cfg;
   try { cfg = forgeConfig(ROOT); } catch (e) { console.error(`gtg: ${e.message}`); process.exit(2); }
@@ -1554,8 +1560,19 @@ if (!NO_STORE.has(cmd)) {
   if (cfg) {
     try { FORGE = await openForge(cfg); } catch (e) {
       console.error(`gtg: cannot read the forge store - ${firstMeaningfulLine(e)}`);
-      process.exit(1);
+      stopped = true;
     }
+  }
+  // #29: the hub was unreachable and the read came from the local cache. Read-only commands run on
+  // it, marked stale. handoff and backlog <idea> go on to the write guard in lib/forge.mjs, so the
+  // handoff body read from stdin is saved to a file as on any failed forge write. Every other
+  // command could write, so it stops here, before it prints anything that reads as done.
+  if (FORGE?.stale) {
+    const readOnly = STALE_OK.has(cmd) || (cmd === 'backlog' && !parseFlags(rest).project);
+    if (!readOnly && cmd !== 'handoff' && cmd !== 'backlog') {
+      console.error(`gtg ${cmd}: refused, the hub is unreachable. Only the cached store from ${FORGE.stale} could be read, and a write must start from the hub's copy. Re-run it when the hub is back.`);
+      stopped = true;
+    } else if (readOnly) console.log(`(stale, hub unreachable) cached store from ${FORGE.stale}`);
   }
 }
 const flushForge = async () => {
@@ -1565,7 +1582,8 @@ const flushForge = async () => {
     process.exitCode = 1; // not process.exit, see writeHandoff's forge branch
   }
 };
-if (!cmd) { renderList([]); printReview('list', []); }
+if (stopped) process.exitCode = 1;
+else if (!cmd) { renderList([]); printReview('list', []); }
 // hasOwn, not truthiness: every inherited Object key resolved here, so `gtg constructor` and
 // `gtg toString` called something that is not a verb instead of falling through to the
 // extension lookup and then the unknown-command error.

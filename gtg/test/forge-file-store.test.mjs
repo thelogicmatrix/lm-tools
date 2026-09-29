@@ -10,6 +10,9 @@ import { fileURLToPath } from 'node:url';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'gtg', 'gtg.mjs');
 const sha = (text) => createHash('sha1').update(text).digest('hex');
+// A fresh tmp dir per run, so lib/forge.mjs's blob cache starts cold and every run reads the hub
+// the way these tests count requests. forge-offline.test.mjs covers the cache itself.
+const coldCache = () => { const d = mkdtempSync(join(tmpdir(), 'gtg-cold-')); return { TEMP: d, TMP: d, TMPDIR: d }; };
 
 test('file store handoff, resume, shelf move and complete use versioned files only', async (t) => {
   const files = new Map();
@@ -78,7 +81,7 @@ test('file store handoff, resume, shelf move and complete use versioned files on
   const run = (args, input = '') => new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], {
       cwd: root,
-      env: { ...process.env, GTG_HUB: root, GTG_NO_SYNC: '1', GTG_SESSION_ID: 'file-test', FORGEJO_TOKEN: 'tok' },
+      env: { ...process.env, GTG_HUB: root, GTG_NO_SYNC: '1', GTG_SESSION_ID: 'file-test', FORGEJO_TOKEN: 'tok', ...coldCache() },
     });
     let stdout = '', stderr = '';
     child.stdout.on('data', (x) => { stdout += x; });
@@ -149,7 +152,7 @@ test('file store retries a failed read, and resends a failed write only once, af
   const run = (args, input = '') => new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], {
       cwd: root,
-      env: { ...process.env, GTG_HUB: root, GTG_NO_SYNC: '1', GTG_SESSION_ID: 'retry-test', FORGEJO_TOKEN: 'tok' },
+      env: { ...process.env, GTG_HUB: root, GTG_NO_SYNC: '1', GTG_SESSION_ID: 'retry-test', FORGEJO_TOKEN: 'tok', ...coldCache() },
     });
     let stdout = '', stderr = '';
     child.stdout.on('data', (x) => { stdout += x; });
@@ -230,7 +233,7 @@ test('file store reads records from the git tree and one batch of blobs, with fa
   const run = (args, input = '') => new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], {
       cwd: root,
-      env: { ...process.env, GTG_HUB: root, GTG_NO_SYNC: '1', GTG_SESSION_ID: 'tree-test', FORGEJO_TOKEN: 'tok' },
+      env: { ...process.env, GTG_HUB: root, GTG_NO_SYNC: '1', GTG_SESSION_ID: 'tree-test', FORGEJO_TOKEN: 'tok', ...coldCache() },
     });
     let stdout = '', stderr = '';
     child.stdout.on('data', (x) => { stdout += x; });

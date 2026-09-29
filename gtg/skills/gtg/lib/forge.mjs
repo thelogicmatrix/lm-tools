@@ -7,7 +7,9 @@
 // record once, lets the command edit the in-memory copy exactly as it edits the file store, and
 // writes the difference in flush(). A separate module rather than a branch in lib/store.mjs,
 // because that file must stay byte-identical in code to the logical-projects plugin's copy.
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 // null = no forge configured, the file store runs exactly as before.
@@ -40,18 +42,65 @@ function readToken(cfg, env) {
 // decides instead. 2026-09-29: with a dozen gtg processes starting at
 // once (session hooks, parallel sessions) one slow GET of 15 aborted the whole read. Three tries of
 // 8s each, since a healthy call takes under a second.
+// `until` (a Date.now() value) caps the whole call, retries included: no attempt runs past it and
+// no retry starts that would.
 const RETRIES = 3;
-async function send(fetchImpl, url, init) {
+async function send(fetchImpl, url, init, until = Infinity) {
   const read = init.method === 'GET';
   for (let attempt = 1; ; attempt++) {
+    const ms = Math.max(1, Math.min(read ? 8000 : 15000, until - Date.now()));
+    const pause = 300 * attempt;
     try {
-      const res = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(read ? 8000 : 15000) });
-      if (!read || res.status < 500 || attempt === RETRIES) return res;
+      const res = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(ms) });
+      if (!read || res.status < 500 || attempt === RETRIES || Date.now() + pause >= until) return res;
     } catch (e) {
-      if (!read || attempt === RETRIES) throw e;
+      if (!read || attempt === RETRIES || Date.now() + pause >= until) throw e;
     }
-    await new Promise((r) => setTimeout(r, 300 * attempt));
+    await new Promise((r) => setTimeout(r, pause));
   }
+}
+
+// #29: with the hub unreachable (Tailscale down, packets dropped) a read used to cost three 8 s
+// attempts plus backoff, about 25 s, before failing. The whole read now stops at 10 s.
+const READ_CAP_MS = 10000;
+
+// Blobs cached by sha under the tmp dir, plus the last tree read. A blob never changes under its
+// sha, so the cache is correct by construction: a warm read fetches only the blobs it has not seen,
+// and with the hub unreachable the last tree and its blobs serve read-only commands, marked stale.
+// Every cache step is best effort. A cache that cannot be read or written costs speed, not a read.
+const cacheDir = (cfg) => join(tmpdir(), 'gtg-forge-cache',
+  createHash('sha1').update(`${cfg.api}|${cfg.repo}`).digest('hex').slice(0, 16));
+const DAY = 86400000;
+function atomicWrite(path, text) {
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, text);
+  renameSync(tmp, path);
+}
+function cachedBlob(dir, sha) {
+  try { return readFileSync(join(dir, `${sha}.json`), 'utf8'); } catch { return undefined; }
+}
+function saveCache(dir, files) {
+  try {
+    mkdirSync(dir, { recursive: true });
+    for (const f of files) if (cachedBlob(dir, f.sha) === undefined) atomicWrite(join(dir, `${f.sha}.json`), f.text);
+    atomicWrite(join(dir, 'tree.json'), JSON.stringify({ at: new Date().toISOString(), files: files.map(({ name, sha }) => ({ name, sha })) }));
+    // Blobs the tree no longer names, once a day old, so a concurrent process's newer blobs stay.
+    const live = new Set(files.map((f) => `${f.sha}.json`));
+    for (const name of readdirSync(dir)) {
+      if (name === 'tree.json' || live.has(name)) continue;
+      const p = join(dir, name);
+      if (Date.now() - statSync(p).mtimeMs > DAY) unlinkSync(p);
+    }
+  } catch { /* best effort */ }
+}
+function staleCopy(dir) {
+  try {
+    const { at, files } = JSON.parse(readFileSync(join(dir, 'tree.json'), 'utf8'));
+    const out = files.map((f) => ({ ...f, text: cachedBlob(dir, f.sha) }));
+    if (out.some((f) => f.text === undefined)) return null;
+    out.stale = at;
+    return out;
+  } catch { return null; }
 }
 
 const RECORDS = 'docs/handoffs/records/';
@@ -61,12 +110,33 @@ const RECORDS = 'docs/handoffs/records/';
 // entry, 525 to 618 ms of a 900 ms run at 14 records, and the tree costs about 40 ms. The blob sha
 // is the sha the contents API checks on PUT and DELETE. The listing is only the fallback, for a
 // truncated tree or a repo with no commit yet. Exported for hooks that only need to read the store.
+//
+// With the hub unreachable (no answer within the cap, or a 5xx) and a cached copy on disk, returns
+// that copy with `stale` set to when it was read. A 4xx is a real answer and is thrown as before.
 export async function readFileRecords(cfg, fetchImpl = fetch) {
+  const dir = cacheDir(cfg);
+  try {
+    const files = await readLive(cfg, fetchImpl, dir);
+    saveCache(dir, files);
+    return files;
+  } catch (e) {
+    const stale = e.unreachable ? staleCopy(dir) : null;
+    if (!stale) throw e;
+    return stale;
+  }
+}
+
+async function readLive(cfg, fetchImpl, dir) {
+  const until = Date.now() + READ_CAP_MS;
   const get = async (path) => {
-    const res = await send(fetchImpl, `${cfg.api}/repos/${cfg.repo}${path}`, {
-      method: 'GET', headers: { Authorization: `token ${cfg.token}`, Accept: 'application/json' },
-    });
+    let res;
+    try {
+      res = await send(fetchImpl, `${cfg.api}/repos/${cfg.repo}${path}`, {
+        method: 'GET', headers: { Authorization: `token ${cfg.token}`, Accept: 'application/json' },
+      }, until);
+    } catch (e) { throw Object.assign(e, { unreachable: true }); }
     if (!res.ok) res.error = `forge GET ${path} -> ${res.status} ${(await res.text()).slice(0, 200)}`;
+    if (res.status >= 500) throw Object.assign(new Error(res.error), { unreachable: true });
     return res;
   };
   let files;
@@ -77,7 +147,7 @@ export async function readFileRecords(cfg, fetchImpl = fetch) {
       files = t.tree.filter((e) => e.type === 'blob' && e.path.startsWith(RECORDS) && e.path.endsWith('.json')
         && !e.path.slice(RECORDS.length).includes('/')).map((e) => ({ name: e.path.slice(RECORDS.length), sha: e.sha }));
     }
-  } else if (tree.status >= 500) throw new Error(tree.error);
+  }
   if (!files) {
     const names = await get(`/contents/${RECORDS.slice(0, -1)}`);
     if (names.status === 404) {
@@ -89,23 +159,28 @@ export async function readFileRecords(cfg, fetchImpl = fetch) {
   }
   // Forgejo's GetBlobs takes a comma list of shas, 40 of them keep the URL under its ~2000 character
   // limit. A server without that route (Gitea) answers 404 and gets one GET per blob instead.
-  const shas = [...new Set(files.map((f) => f.sha))];
-  const content = new Map();
+  const content = new Map(); // sha -> record text
+  const decode = (b64) => Buffer.from(b64.replace(/\s/g, ''), 'base64').toString('utf8');
+  for (const f of files) {
+    const text = cachedBlob(dir, f.sha);
+    if (text !== undefined) content.set(f.sha, text);
+  }
+  const shas = [...new Set(files.map((f) => f.sha))].filter((sha) => !content.has(sha));
   const one = async (sha) => {
     const blob = await get(`/git/blobs/${sha}`);
     if (!blob.ok) throw new Error(blob.error);
-    content.set(sha, (await blob.json()).content);
+    content.set(sha, decode((await blob.json()).content));
   };
   await Promise.all(Array.from({ length: Math.ceil(shas.length / 40) }, async (_, i) => {
     const chunk = shas.slice(i * 40, i * 40 + 40);
     const batch = await get(`/git/blobs?shas=${chunk.join(',')}`);
     if (batch.status === 404) return Promise.all(chunk.map(one));
     if (!batch.ok) throw new Error(batch.error);
-    for (const b of await batch.json()) content.set(b.sha, b.content);
+    for (const b of await batch.json()) content.set(b.sha, decode(b.content));
   }));
   return files.map((f) => {
     if (!content.has(f.sha)) throw new Error(`forge GET blob ${f.sha} for ${RECORDS}${f.name} -> missing`);
-    return { name: f.name, sha: f.sha, text: Buffer.from(content.get(f.sha).replace(/\s/g, ''), 'base64').toString('utf8') };
+    return { name: f.name, sha: f.sha, text: content.get(f.sha) };
   });
 }
 
@@ -155,6 +230,8 @@ export async function openForge(cfg, fetchImpl = fetch) {
   //   - anything else: another session wrote it meanwhile, handed back as { theirs } to re-apply
   // Never a blind resend: the read-back is what makes the second send safe.
   const write = async (method, path, payload, want, oldSha) => {
+    // Stale data never feeds a write. The dispatcher refuses writes up front, this is the backstop.
+    if (read.stale) throw new Error('the hub is unreachable and this command read the cached store (stale), so nothing was written. Re-run it when the hub is back');
     for (let resent = false; ; resent = true) {
       let res, err;
       try { res = await request(method, path, payload); } catch (e) { err = e; }
@@ -175,7 +252,8 @@ export async function openForge(cfg, fetchImpl = fetch) {
       return { theirs: now };
     }
   };
-  const loaded = (await readFileRecords(cfg, fetchImpl)).map((f) => {
+  const read = await readFileRecords(cfg, fetchImpl);
+  const loaded = read.map((f) => {
     let rec;
     try { rec = JSON.parse(f.text); } catch (e) { throw new Error(`cannot parse ${records}${f.name} - ${e.message}`); }
     if (typeof rec.slug !== 'string' || !['active', 'backlog'].includes(rec.shelf)
@@ -194,6 +272,9 @@ export async function openForge(cfg, fetchImpl = fetch) {
   const pending = new Map();
   let failedHandoff = false;
   return {
+    // When the read came from the local cache because the hub was unreachable: the time of that
+    // cached read. null for a live read.
+    stale: read.stale ?? null,
     entries: (which) => shelves[which].map((r) => ({ ...r })),
     save(which, items) {
       shelves[which] = items.map((r) => {

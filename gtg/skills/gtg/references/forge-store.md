@@ -50,6 +50,18 @@ wins. A field both sides changed, or a second change during the re-apply, is an 
 record, and nothing of theirs is overwritten. A DELETE of a record already gone is success, and a
 DELETE of one changed since the read is refused.
 
+## Offline
+
+The whole read stops at 10 s, retries included. Every blob read is cached by sha under the tmp
+dir (`gtg-forge-cache/`), with the last tree read beside it. A blob never changes under its sha,
+so a warm run fetches the tree and only the blobs it has not seen. When the hub does not answer
+(connection refused, no answer within the cap, or a 5xx) and a cached copy exists, `list`, bare
+`gtg`, `backlog` (the listing), `resume` and `learn` run on it, with a first line
+`(stale, hub unreachable) cached store from <time>`. Every other command is refused, because a
+write must start from the hub's copy. `handoff` and `backlog <idea>` fail at the write instead,
+so the body is saved as below. A 4xx (a bad token, a missing repo) is a real answer and is never
+served stale.
+
 If the forge write fails during `handoff`, the body (read from stdin, so otherwise gone) is written to
 `docs/handoffs/current/<slug>.md`, uncommitted, and the command exits 1.
 
