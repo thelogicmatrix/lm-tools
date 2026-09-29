@@ -16,7 +16,7 @@
 // than no answer.
 
 import assert from 'node:assert';
-import { askJev } from './lib.mjs';
+import { askJev, readKey } from './lib.mjs';
 
 // Realistic distractor labels from the chrome of an e-commerce / SaaS page. Deliberately including
 // near-misses ("Save for later", "Save card", "Save and continue") because the easy version of this
@@ -74,8 +74,8 @@ export function selftest() {
 // The selftest must run without a key: it checks the fixture, not the API.
 if (process.argv.includes('--selftest')) { console.log(selftest()); process.exit(0); }
 
-const key = process.env.OPENROUTER_API_KEY;
-if (!key) { console.error('OPENROUTER_API_KEY not set'); process.exit(1); }
+const key = readKey();
+if (!key) { console.error('no OPENROUTER_API_KEY in the environment and none in ~/.jev.env'); process.exit(1); }
 
 console.log(selftest());
 console.log('Choice option-count scaling, 3 goals x 3 trials each\n');

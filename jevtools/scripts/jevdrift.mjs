@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
-import { askJev, runPool } from './lib.mjs';
+import { askJev, readKey, runPool } from './lib.mjs';
 
 const CONCURRENCY = 6;
 const MIN_CHUNK = 320;      // below this a section is a heading and a sentence, not a rule
@@ -153,8 +153,8 @@ export function selftest() {
 if (process.argv.includes('--selftest')) { console.log(selftest()); process.exit(0); }
 
 const opt = (n) => { const i = process.argv.indexOf(`--${n}`); return i < 0 ? null : process.argv[i + 1]; };
-const key = process.env.OPENROUTER_API_KEY;
-if (!key) { console.error('OPENROUTER_API_KEY not set'); process.exit(1); }
+const key = readKey();
+if (!key) { console.error('no OPENROUTER_API_KEY in the environment and none in ~/.jev.env'); process.exit(1); }
 
 const root = opt('root') ?? 'docs';
 const files = [];

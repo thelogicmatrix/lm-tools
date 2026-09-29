@@ -19,13 +19,16 @@ export const MODEL = 'jev-latest';
 //
 // A caller that finds nothing gets null and prints its own message. Never throw from here: a sweep
 // with no key has one clear line to say, and an exception from a helper buries it in a stack.
-export function readKey(env = process.env) {
+// The match is anchored to the line start so a commented old line cannot win, allows a shell
+// `export` prefix, and strips one pair of surrounding quotes (left in, they give a 401).
+export function readKey(env = process.env, file = path.join(os.homedir(), '.jev.env')) {
   if (env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY;
   try {
-    const m = fs.readFileSync(path.join(os.homedir(), '.jev.env'), 'utf8')
-      .match(/OPENROUTER_API_KEY=(.+)/);
-    if (m && m[1].trim()) return m[1].trim();
-  } catch { /* not there; a missing file is a fallback, never an error */ }
+    const m = fs.readFileSync(file, 'utf8')
+      .match(/^\s*(?:export\s+)?OPENROUTER_API_KEY=(.*)$/m);
+    const v = m ? m[1].trim().replace(/^(['"])(.*)\1$/, '$2') : '';
+    if (v) return v;
+  } catch { /* not there, and a missing file is a fallback, never an error */ }
   return null;
 }
 

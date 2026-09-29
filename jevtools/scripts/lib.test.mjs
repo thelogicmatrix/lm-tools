@@ -1,7 +1,10 @@
 // The network half of lib.mjs, with `fetch` replaced so nothing is spent.
 //   node scripts/jev-sweep/lib.test.mjs
 import assert from 'node:assert';
-import { askJev, isNoul, toText } from './lib.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { askJev, isNoul, readKey, toText } from './lib.mjs';
 
 const realFetch = globalThis.fetch;
 try {
@@ -63,5 +66,27 @@ assert.strictEqual(toText('a&zzz;b'), 'a b');
 // Plain text passes through untouched, which is the common case (median ratio was 1.00).
 assert.strictEqual(toText('Thanks for your application.'), 'Thanks for your application.');
 assert.strictEqual(toText(null), '');
+
+// readKey. Dummy strings only, and the checks use assert.ok so a failure never prints a value.
+// The file path is injected so the real ~/.jev.env is never read.
+const keyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-readkey-'));
+const keyFile = (name, body) => { const p = path.join(keyDir, name); fs.writeFileSync(p, body); return p; };
+try {
+  // A commented old line before the live one must not win.
+  assert.ok(readKey({}, keyFile('commented', '# OPENROUTER_API_KEY=dummy-old\nOPENROUTER_API_KEY=dummy-live\n')) === 'dummy-live', 'a commented earlier line is skipped');
+  // Surrounding quotes are not part of the key. Left in, they give a 401.
+  assert.ok(readKey({}, keyFile('double', 'OPENROUTER_API_KEY="dummy-double"\n')) === 'dummy-double', 'double quotes are stripped');
+  assert.ok(readKey({}, keyFile('single', "OPENROUTER_API_KEY='dummy-single'\n")) === 'dummy-single', 'single quotes are stripped');
+  // A shell-style file with an export prefix, indented, with CRLF endings.
+  assert.ok(readKey({}, keyFile('export', '  export OPENROUTER_API_KEY=dummy-export\r\n')) === 'dummy-export', 'an export prefix is allowed');
+  // A longer name that ends in the same text is a different key.
+  assert.ok(readKey({}, keyFile('suffix', 'OLD_OPENROUTER_API_KEY=dummy-other\n')) === null, 'a suffix match is not the key');
+  // The environment wins over the file.
+  assert.ok(readKey({ OPENROUTER_API_KEY: 'dummy-env' }, keyFile('env', 'OPENROUTER_API_KEY=dummy-file\n')) === 'dummy-env', 'the env var takes precedence');
+  // A missing file is null, never a throw.
+  assert.ok(readKey({}, path.join(keyDir, 'absent')) === null, 'a missing file gives null');
+} finally {
+  fs.rmSync(keyDir, { recursive: true, force: true });
+}
 
 console.log('lib selftest OK');
