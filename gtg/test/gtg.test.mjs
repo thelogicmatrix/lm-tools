@@ -474,6 +474,7 @@ const patchActive = (root, fn) => {
   const sessLine = r.stdout.match(/(\d+) sessions · deepest: (.+?) \((\d+)\)/);
   assert.ok(sessLine, `session-depth line missing/malformed in stats output: ${r.stdout}`);
   assert.equal(sessLine[2], 'Project A');
+  assert.doesNotMatch(r.stdout, /history unavailable/, 'a repo with commits reads its history');
   console.log('ok 7 - bundled stats dispatch');
 }
 
@@ -485,6 +486,17 @@ const patchActive = (root, fn) => {
   assert.match(r.stdout, /0 active/);
   assert.match(r.stdout, /0 backlog/);
   console.log('ok 7b - stats empty store');
+}
+
+// --- 7b2. #100: stats names missing git history instead of printing a quietly partial
+// summary. The hub is a plain dir (GTG_HUB), so `git log` fails there. ---
+{
+  const hub = mkdtempSync(join(tmpdir(), 'gtg-nohist-'));
+  writeCollection(hub, 'docs/handoffs/active', [{ project: 'Solo', slug: 'solo', next: 'x', updated: new Date().toISOString(), sessions: 1 }]);
+  const r = gtg(hub, ['stats'], { hub });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^1 active, 0 backlog\nhistory unavailable: /, `no notice under the counts:\n${r.stdout}`);
+  console.log('ok 7b2 - #100: stats says when git history is unavailable');
 }
 
 // --- 7c. user .gtg/commands/<verb> OVERRIDES a bundled command of the same name ---

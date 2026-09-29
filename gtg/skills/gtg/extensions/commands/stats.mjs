@@ -4,6 +4,9 @@ import { buildReport } from '../lib/history.mjs';
 export default ({ root }) => {
   const r = buildReport(root);
   console.log(`${r.counts.active} active, ${r.counts.backlog} backlog`);
+  // readEvents turns a failed, timed-out or oversized `git log` into historyAvailable: false.
+  // Say so, the way report does, or the lines below read as the whole history (#100).
+  if (!r.historyAvailable) console.log('history unavailable: the git log of docs/handoffs/ failed, so the lines below are partial');
 
   const h = r.habit, t = r.throughput;
   if (h.activeDays) {
