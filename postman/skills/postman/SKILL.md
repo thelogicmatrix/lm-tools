@@ -116,7 +116,11 @@ the cold-outbound branch and the natural unblock is a rubber-stamped `Source:` l
 
 `Sent:` stamps are written into the file after each successful send, so a re-run skips the
 blocks already stamped and a half-failed batch is resumed by re-running it. Never
-hand-write one.
+hand-write one. When the server takes a message for some recipients and refuses
+others (a bad Cc, one of several To addresses), the stamp reads
+`Sent: <when> PARTIAL, refused <address>`, the refused addresses and the server's reply
+are printed, and the batch stops there. The block is still stamped, because the
+recipients who took it would get a second copy on a rerun.
 
 Bodies are written unwrapped, one line per paragraph: a newline in the body is a real
 line break in the email, so a labelled block (`Guests: 100` / `Dates: flexible`) stays a
@@ -130,7 +134,7 @@ block instead of collapsing into prose.
 |---|---|
 | `--verify BATCH` | Layers 1 and 2, prints the table. Sends nothing, spends nothing, asks nothing. |
 | `--test BATCH` | Sends the first email to the identity's `test_to` address (`POSTMAN_TEST_TO` overrides) with `[TEST]` prefixed. A real send. |
-| `--draft BATCH` | Every email as a Gmail draft. **Not part of the ritual** - a draft nobody opens is a review step that did not happen while looking like one, so review happens in chat instead. Kept for when you ask for a draft by name. Drafts are never stamped and `--send` does not consume them: hand-sending a lingering draft and then running `--send` is a double-send, so purge with `--drafts IDENTITY MATCH --purge` before sending the same batch. |
+| `--draft BATCH` | Every email as a Gmail draft. **Not part of the ritual** - a draft nobody opens is a review step that did not happen while looking like one, so review happens in chat instead. Kept for when you ask for a draft by name. Drafts are never stamped. A rerun skips a block whose draft is already in Drafts (same first To address, same subject), so a resume after a failure does not make them twice. `--send` does not consume them: hand-sending a lingering draft and then running `--send` is a double-send, so purge with `--drafts IDENTITY MATCH --purge` before sending the same batch. |
 | `--drafts IDENTITY [MATCH]` | List drafts, optionally filtered by a substring against the To and Subject headers. **Read-only.** This is how the "delete leftover drafts" instruction is actually carried out, which until now the tool gave no way to do. |
 | `--purge` | With `--drafts` only, refused on its own. Moves the listed drafts to Trash by setting Gmail's `\Trash` label, so they survive 30 days and a wrong `MATCH` costs a restore rather than the draft. `--selftest` asserts it cannot run without `--drafts`. |
 | `--send BATCH` | Sends the batch. Only after you explicitly say send. |

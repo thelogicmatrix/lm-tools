@@ -710,14 +710,25 @@ def build_message(rec, ident, to=None, subject_prefix="", in_reply_to=None,
 
 
 def smtp_send(msg, password, conn=None):
-    """Send one message. Pass conn to reuse an open session across a batch."""
+    """Send one message. Pass conn to reuse an open session across a batch.
+
+    Returns the recipients the server refused while it took the message for the rest,
+    as smtplib gives them: {address: (code, reply)}. {} means every recipient took it.
+    A refusal of every recipient raises SMTPRecipientsRefused instead (#49).
+    """
     if conn is not None:
-        conn.send_message(msg)
-        return
+        return conn.send_message(msg) or {}
     # the login address is the one on the message, so a message built for one identity
     # can never leave over the other identity's authenticated session
     with smtp_session(password, msg["From"]) as s:
-        s.send_message(msg)
+        return s.send_message(msg) or {}
+
+
+def refusal_text(refused):
+    """smtplib's {address: (code, reply)} as one line a person can act on."""
+    return ", ".join(
+        f"{a} ({c} {r.decode('utf-8', 'replace') if isinstance(r, bytes) else r})"
+        for a, (c, r) in refused.items())
 
 
 # Socket timeouts in seconds. Without one a server that accepts and then stalls hangs
@@ -750,7 +761,12 @@ def smtp_session(password, sender):
         s.login(sender, password)
         yield s
     finally:
-        s.quit()
+        # a dead connection raises from QUIT too, and that would replace the error that
+        # killed it, which is the one that says whether a send went (#49)
+        try:
+            s.quit()
+        except (OSError, smtplib.SMTPException):
+            s.close()
 
 
 IMAP_HOST = "imap.gmail.com"
@@ -1010,7 +1026,9 @@ def imap_session(password, sender, host=None):
         M.login(sender, password)
         yield M
     finally:
-        M.logout()
+        # the same as smtp_session: a failed LOGOUT must not mask the original error
+        with contextlib.suppress(OSError, imaplib.IMAP4.error):
+            M.logout()
 
 
 def append_draft(msg, password, conn=None):
@@ -1025,6 +1043,19 @@ def append_draft(msg, password, conn=None):
                          msg.as_bytes())
     if typ != "OK":
         raise SystemExit(f"IMAP append failed for {msg['To']}: {typ}")
+
+
+def draft_exists(M, rec):
+    """True when Drafts already holds a draft to rec's first To address with its subject.
+
+    --draft stamps nothing into the batch file, so this is what stops a rerun after a
+    failure from making every draft a second time (#49). Matched on the address and the
+    unfolded subject, as thread_headers matches, because a draft has no other stable key.
+    """
+    subj = " ".join(rec["subject"].split())
+    drafts = special_folder(M, "\\Drafts")
+    return any(header_subject(h) == subj
+               for h in _address_headers(M, drafts, "TO", _to_addrs(rec)[:1])[0])
 
 
 def stamp_block(path, slug, when):
@@ -1075,6 +1106,10 @@ def bounce_sweep(password, since, sender, host=None):
                                  f"was swept, so this is not a clean result.")
             for uid in (data[0] or b"").split():
                 typ, d = M.fetch(uid, "(BODY[HEADER.FIELDS (SUBJECT FROM)])")
+                # a bounce that cannot be read is not a bounce that is not there
+                if typ != "OK" or not d or not isinstance(d[0], tuple):
+                    raise SystemExit(f"--bounces: FETCH {uid.decode()} failed: {typ}. "
+                                     f"This is not a clean result.")
                 hits.append(d[0][1].decode("utf-8", "replace").strip())
     return hits, folder
 
@@ -2512,6 +2547,168 @@ Body.
     assert awaiting_reply(_tb, {"to": _v, "subject": _S}) is None
     assert _tb.calls[_n:] == ["SELECT", "SEARCH", "FETCH"], _tb.calls
 
+    # #49: the send path against fakes. _FakeSMTP runs smtplib's own send_message and
+    # sendmail over scripted replies and opens no socket, so what is tested is how
+    # smtplib really reports a refusal, not a guess at it. Nothing here reaches a server.
+    class _FakeSMTP(smtplib.SMTP):
+        """`refuse` answers 550 to those RCPTs. `quit_error` is raised from quit. Every
+        command lands in the shared `events` list."""
+
+        def __init__(self, host, events, refuse=(), quit_error=None):
+            super().__init__()                  # no host, so smtplib connects nowhere
+            self.events, self.refuse, self.quit_error = events, set(refuse), quit_error
+            events.append(("SMTP", host))
+
+        def starttls(self, context=None):
+            return 220, b"ready"
+
+        def login(self, user, password):
+            return 235, b"ok"
+
+        def ehlo_or_helo_if_needed(self):
+            pass
+
+        def mail(self, sender, options=()):
+            return 250, b"ok"
+
+        def rcpt(self, recip, options=()):
+            return (550, b"5.1.1 no such user") if recip in self.refuse else (250, b"ok")
+
+        def rset(self):
+            return 250, b"ok"
+
+        def data(self, msg):
+            self.events.append(("DATA", email.message_from_bytes(msg)["Subject"]))
+            return 250, b"ok"
+
+        def quit(self):
+            self.events.append(("QUIT",))
+            if self.quit_error:
+                raise self.quit_error
+
+        def close(self):
+            pass
+
+    class _SendBox(_ThreadBox):
+        """_ThreadBox's folders, plus the login, logout and append the send path needs."""
+
+        def __init__(self, boxes, events, logout_error=None):
+            super().__init__(boxes)
+            self.events, self.logout_error = events, logout_error
+
+        def login(self, user, password):
+            self.events.append(("IMAP LOGIN",))
+
+        def logout(self):
+            self.events.append(("IMAP LOGOUT",))
+            if self.logout_error:
+                raise self.logout_error
+
+        def append(self, mailbox, flags, when, raw):
+            self.events.append(("APPEND", email.message_from_bytes(raw)["Subject"]))
+            return "OK", [b""]
+
+    _real_ssl, _real_smtp, _real_mx = imaplib.IMAP4_SSL, smtplib.SMTP, has_mx
+    _pw_saved = {k: os.environ.get(k) for k in (pw_env(work), "POSTMAN_NO_VAULT")}
+
+    def _run(argv, smtp=None, boxes=None, logout_error=None):
+        """main(argv) over the fakes: (exit code or SystemExit, stdout, events)."""
+        events = []
+        box = _SendBox(boxes or {}, events, logout_error)
+        imaplib.IMAP4_SSL = lambda host, **kw: box
+        smtplib.SMTP = lambda host, port, **kw: _FakeSMTP(host, events, **(smtp or {}))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            try:
+                rc = main(argv)
+            except SystemExit as e:
+                rc = e
+        return rc, out.getvalue(), events
+
+    _today = f"{date.today():%Y-%m-%d}"
+    _two = (f"## @one | A B <a@b.example>\nSource: b.example/c, read {_today}\n"
+            f"Cc: c@b.example\nSubject: s1\n\nHi.\n\n---\n"
+            f"## @two | C D <c@d.example>\nSource: d.example/c, read {_today}\n"
+            f"Subject: s2\n\nHi.\n")
+    try:
+        globals()["has_mx"] = lambda domain: True
+        os.environ[pw_env(work)], os.environ["POSTMAN_NO_VAULT"] = "x", "1"
+        with tempfile.TemporaryDirectory() as td:
+            bp = Path(td) / "batch.md"
+            # a clean batch: both sent and stamped, and the IMAP session that resolved the
+            # threads is closed before the SMTP one opens, not held idle for the batch
+            bp.write_text(_two, encoding="utf-8")
+            rc, out, ev = _run(["--send", str(bp)])
+            assert rc == 0, (rc, out)
+            assert [e[1] for e in ev if e[0] == "DATA"] == ["s1", "s2"], ev
+            assert ev.index(("IMAP LOGOUT",)) < ev.index(("SMTP", "smtp.gmail.com")), ev
+            assert all(r["sent"] for r in parse_batch(bp.read_text(encoding="utf-8"))[2])
+            # a partly refused list: the Cc bounced at RCPT, To took it. The block is
+            # stamped (a rerun would send To a second copy) but not as clean, the refused
+            # address is named, and the batch stops before block two
+            bp.write_text(_two, encoding="utf-8")
+            rc, out, ev = _run(["--send", str(bp)], smtp={"refuse": ["c@b.example"]})
+            assert isinstance(rc, SystemExit), (rc, out)
+            assert "c@b.example" in str(rc) and "550" in str(rc), str(rc)
+            assert [e[1] for e in ev if e[0] == "DATA"] == ["s1"], ev
+            _r = parse_batch(bp.read_text(encoding="utf-8"))[2]
+            assert "refused c@b.example" in (_r[0]["sent"] or ""), _r[0]["sent"]
+            assert _r[1]["sent"] is None, "block two must not have been sent"
+            # the rerun resumes at block two and does not send block one again
+            rc, out, ev = _run(["--send", str(bp)])
+            assert rc == 0 and [e[1] for e in ev if e[0] == "DATA"] == ["s2"], (rc, ev)
+            # quit raising on a dead connection after a clean batch changes nothing
+            bp.write_text(_two, encoding="utf-8")
+            rc, out, ev = _run(["--send", str(bp)], smtp={
+                "quit_error": smtplib.SMTPServerDisconnected("gone")},
+                logout_error=imaplib.IMAP4.abort("gone"))
+            assert rc == 0, (rc, out)
+            # a drafts resume: s1 is already in Drafts from the run that died, so the
+            # rerun makes s2 only. A draft to someone else with that subject is not it.
+            bp.write_text(_two, encoding="utf-8")
+            _me = work["sender"]
+            rc, out, ev = _run(["--draft", str(bp)], boxes={DRAFTS: [
+                (_me, "a@b.example", "s1", 1, "<d1@a.example>"),
+                (_me, "z@b.example", "s2", 1, "<d2@a.example>")]})
+            assert rc == 0, (rc, out)
+            assert [e[1] for e in ev if e[0] == "APPEND"] == ["s2"], ev
+            assert "already in Drafts" in out, out
+        # cleanup never masks the error that killed the session
+        for _cm, _kw in ((smtp_session, {}), (imap_session, {})):
+            _ev = []
+            smtplib.SMTP = lambda host, port, **kw: _FakeSMTP(
+                host, _ev, quit_error=smtplib.SMTPServerDisconnected("quit"))
+            imaplib.IMAP4_SSL = lambda host, **kw: _SendBox(
+                {}, _ev, logout_error=imaplib.IMAP4.abort("logout"))
+            try:
+                with _cm("x", work["sender"]):
+                    raise ValueError("the original")
+            except ValueError as e:
+                assert str(e) == "the original", e
+            else:
+                raise AssertionError(f"{_cm.__name__} swallowed the original error")
+        # a FETCH that fails in the bounce sweep is not a clean result, and not a TypeError
+        class _BadFetch(_LocalBox):
+            def search(self, charset, *criteria):
+                return "OK", [b"7"]
+
+            def fetch(self, uid, spec):
+                return "NO", [None]
+        imaplib.IMAP4_SSL = lambda host, **kw: _BadFetch()
+        try:
+            bounce_sweep("x", date.today(), work["sender"])
+        except SystemExit as e:
+            assert "FETCH" in str(e) and "not a clean result" in str(e), str(e)
+        else:
+            raise AssertionError("a failed bounce FETCH read back as clean")
+    finally:
+        imaplib.IMAP4_SSL, smtplib.SMTP = _real_ssl, _real_smtp
+        globals()["has_mx"] = _real_mx
+        for _k, _v in _pw_saved.items():
+            if _v is None:
+                os.environ.pop(_k, None)
+            else:
+                os.environ[_k] = _v
+
     # credential resolution, offline. Never calls vault_password: POSTMAN_NO_VAULT is
     # what keeps this a unit test instead of a live secret-store round trip.
     _ident = resolve_identity("branded", None)
@@ -2925,18 +3122,15 @@ def main(argv=None):
         gate_or_die(pending)
         check_attachments(pending, Path(batch).parent)
         pw = gmail_password(ident)
+        # One IMAP session resolves every thread, and in --draft makes the drafts. It is
+        # closed before the SMTP session opens, not held idle for the whole batch (#49).
         with contextlib.ExitStack() as stack:
-            if not args.send:
-                # entered first so it exits last, after imap_session has closed
-                stack.enter_context(read_failed(
-                    "--draft", "Drafts listed above were made. --draft does not stamp, "
-                               "so check Gmail Drafts before a rerun."))
-            conn = stack.enter_context(smtp_session(pw, ident["sender"]) if args.send
-                                      else imap_session(pw, ident["sender"],
-                                                        ident.get("imap_host")))
-            # A --send batch of replies needs IMAP too, to read the Message-IDs it is
-            # threading onto. --draft is already on IMAP, so it reuses that one session.
-            imap = conn if not args.send else stack.enter_context(
+            # entered first so it exits last, after imap_session has closed
+            stack.enter_context(
+                read_failed("--send", "Nothing was sent.") if args.send else
+                read_failed("--draft", "Drafts listed above were made. A rerun skips "
+                                       "any draft that is already in Drafts."))
+            imap = stack.enter_context(
                 imap_session(pw, ident["sender"], ident.get("imap_host")))
             # a reply that will not thread is a hard block BEFORE anything goes out, so
             # every thread is resolved first and the batch either sends whole or not at
@@ -2944,31 +3138,49 @@ def main(argv=None):
             # which is too late to be a decision.
             plan = []
             for rec in pending:
-                irt, refs = thread_headers(imap, rec) if (imap and is_reply(rec)) \
-                    else (None, None)
+                irt, refs = thread_headers(imap, rec) if is_reply(rec) else (None, None)
                 if is_reply(rec) and not irt:
                     raise SystemExit(
                         f"HOLD: no thread found for {rec['slug']} - it would start a new "
                         f"conversation. Nothing further has been sent.")
                 plan.append((rec, irt, refs))
-            for rec, irt, refs in plan:
+            for rec, irt, refs in () if args.send else plan:
                 msg = build_message(rec, ident, in_reply_to=irt, references=refs,
                                     base_dir=Path(batch).parent)
                 mark = "  [thread]" if irt else ""
-                if args.send:
-                    smtp_send(msg, pw, conn=conn)
+                # --draft never stamps the file: a duplicate Gmail draft is visible and
+                # harmless, a silent double-send is not. What stops a rerun after a
+                # failure making every draft again is the Drafts folder itself.
+                if draft_exists(imap, rec):
+                    print(f"draft {rec['slug']:<12} {rec['to']}{mark}  already in Drafts, "
+                          f"skipped", flush=True)
+                    continue
+                append_draft(msg, pw, conn=imap)
+                print(f"draft {rec['slug']:<12} {rec['to']}{mark}", flush=True)
+        if args.send:
+            with smtp_session(pw, ident["sender"]) as conn:
+                for rec, irt, refs in plan:
+                    msg = build_message(rec, ident, in_reply_to=irt, references=refs,
+                                        base_dir=Path(batch).parent)
+                    mark = "  [thread]" if irt else ""
+                    refused = smtp_send(msg, pw, conn=conn)
+                    when = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    if refused:
+                        # the others have it, so the block is stamped (a rerun would send
+                        # them a second copy), but the stamp names who did not, and the
+                        # batch stops: one refusal can be the first of a run of them (#49)
+                        stamp_block(Path(batch), rec["slug"],
+                                    f"{when} PARTIAL, refused {', '.join(refused)}")
+                        raise SystemExit(
+                            f"PARTIAL: {rec['slug']} went to every recipient but "
+                            f"{refusal_text(refused)}. Its Sent: line says so, and a rerun "
+                            f"will not send it again. Nothing further has been sent.")
                     # stamped before the next send, not after the loop: the window a
                     # crash can land in is one recipient wide either way, and only this
                     # order makes that window "not stamped" rather than "sent twice"
-                    stamp_block(Path(batch), rec["slug"],
-                                datetime.now().strftime("%Y-%m-%d %H:%M"))
+                    stamp_block(Path(batch), rec["slug"], when)
                     sent += 1
                     print(f"sent  {rec['slug']:<12} {rec['to']}{mark}", flush=True)
-                else:
-                    # --draft never stamps: a duplicate Gmail draft is visible and
-                    # harmless, a silent double-send is not
-                    append_draft(msg, pw, conn=conn)
-                    print(f"draft {rec['slug']:<12} {rec['to']}{mark}", flush=True)
         print(f"\n{len(recs)} parsed | {skipped} skipped | {len(pending)} built | "
               f"{sent} sent | 0 failed")
         if args.send:
