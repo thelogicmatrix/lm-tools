@@ -169,7 +169,7 @@ test('a real git failure returns false and says the files are uncommitted', () =
 });
 
 test('a real git failure also sets a non-zero exit code, because callers drop the return', () => {
-  // The `false` above is necessary but not sufficient. saveAndRender (projects.mjs:527)
+  // The `false` above is necessary but not sufficient. saveAndRender (in projects.mjs)
   // discards it, which is how the 2026-08-11 batch ran 39 calls to completion while the
   // commits had stopped landing - see docs/issues/2026-08-11-verb-commit-failure-exits-zero.md.
   // Setting the exit code inside commit() covers every caller at once, including the ones

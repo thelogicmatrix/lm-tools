@@ -13,7 +13,7 @@ test('live routing and purpose-line checks get distinct spend rows', async (t) =
   process.env.JEV_SPEND_LOG = file;
   t.after(() => { if (prev === undefined) delete process.env.JEV_SPEND_LOG;
     else process.env.JEV_SPEND_LOG = prev; });
-  const book = { file: 'commute.md', type: 'reference', prefix: 'rb', purpose: 'Commute facts' };
+  const book = { file: 'commute.md', type: 'reference', purpose: 'Commute facts' };
   const fetch = async () => ({ ok: true, json: async () => ({
     answers: { [keyFor(book)]: { noul: 0.9 } },
     usage: { cost: 0.0002, input_tokens: 4000, output_tokens: 20 },

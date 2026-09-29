@@ -3,7 +3,7 @@ import { posix } from 'node:path';
 
 // PreToolUse guard: docs/projects/INDEX.md is rendered from the store, so a hand-edit to the
 // index is lost the next time any verb runs. The store is hand-editable by design (see the note
-// above `rank` in projects.mjs), so it is guarded for a different reason: editing it directly
+// above `rank` in lib/render.mjs), so it is guarded for a different reason: editing it directly
 // skips validateSlug, validateStatus and assertRenderable, and leaves the rendered index
 // disagreeing with the store until someone renders again.
 //
