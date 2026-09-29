@@ -41,7 +41,8 @@ async function score(target, books, key, pos, neg) {
     const narrowed = J.narrow(q, books, s.shortlist);
     const doc = narrowed.find((b) => b.file === target);
     // Already narrowed above, so route must not narrow a second time: check grades the set the hook sends.
-    if (doc) await J.route(q, narrowed, key, spy, { ...ROUTE_OPTS, narrow: false });
+    if (doc) await J.route(q, narrowed, key, spy, { ...ROUTE_OPTS, narrow: false,
+      spend: { activity: 'purpose_test', target } });
     const p = doc ? (answers?.[J.keyFor(doc)]?.noul ?? 0) : null;
     const ok = want ? p !== null && p >= WRITE_BAR : p === null || p < BAR;
     results.push({ q, want, p, ok });

@@ -71,6 +71,12 @@ node <plugin>/scripts/router.mjs --selftest                offline router check,
 node --test <plugin>/test/*.test.mjs                       the plugin's tests
 ```
 
+The router and `check.mjs` write API usage receipts to
+`~/.local/state/jev-spend/calls.jsonl`. The jevtools command
+`node <jevtools>/scripts/spend-report.mjs` breaks out active routing, purpose-line tests,
+tools and sessions. Set `JEV_SPEND_LOG` to use another path. Old `claude-router/spend.jsonl`
+rows remain readable as unclassified history.
+
 `check.mjs` tests a purpose line before you commit it. Give it three or four prompts phrased the way a real task would arrive. Each must score 0.85, and each `--not` prompt must stay under 0.8. `--record` saves a passing run so `--changed` can skip it later.
 
 ## Extend it

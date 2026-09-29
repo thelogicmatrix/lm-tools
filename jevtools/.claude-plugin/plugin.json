@@ -1,6 +1,6 @@
 {
   "name": "jevtools",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Primitive tools made for big work. A fast, cheap model reads a large body of text first and hands your agent only the parts worth its attention. Extend it with a new sweep, one JSON file each.",
   "author": { "name": "Nathan Wong" }
 }

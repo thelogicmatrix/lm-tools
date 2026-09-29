@@ -245,24 +245,32 @@ export function markOutage(file = OUTAGE_LOG, t = Date.now()) {
 // What every call actually cost, from the API's own usage block rather than a price table. Written
 // because every monthly figure this project has quoted came from a projection, and two of them were
 // wrong: the volume was last read off a code comment and the per-call cost did not reproduce.
-// One compact line per call, appended.
-// Never throws: a router that dies because it could not write its own meter is worse than no meter.
-// Outside the repo, deliberately. It lived beside the hook until 2026-09-22, where every session
-// that sent a prompt wrote into the working tree and the harness reported the change into THAT
-// session's context. An instrument built to save tokens was spending them in every unrelated
-// session, which is the kind of cost that never shows up in the thing it measures.
-// Git-ignoring it was not enough: the harness diffs files, not the index.
-export const SPEND_LOG = path.join(STATE_DIR, 'spend.jsonl');
-function meter(usage, asked, fired) {
-  if (!usage) return;
+// One compact receipt per API attempt. Live routing and purpose-line tests share a journal but
+// carry different activity labels. A failed call with no usage has null cost, never an invented 0.
+// Keep the journal outside the repo and AppData: both harnesses can read it, and Codex-created
+// files under AppData can land in the packaged app's private cache on Windows.
+export const SPEND_LOG = path.join(HOME, '.local', 'state', 'jev-spend', 'calls.jsonl');
+const SPEND_RUN = crypto.randomUUID();
+const spendNumber = (v) => v === null || v === undefined || v === '' || !Number.isFinite(Number(v))
+  ? null : Number(v);
+function meter(usage, asked, fired, spend, status = 'ok') {
+  if (process.env.JEV_SPEND_DISABLED === '1') return;
+  if (!usage && !spend) return;
+  const row = { t: new Date().toISOString(), tool: 'runbooks',
+    activity: spend?.activity ?? 'unclassified',
+    session: spend?.session || process.env.CODEX_THREAD_ID || process.env.CODEX_SESSION_ID
+      || process.env.CLAUDE_CODE_SESSION_ID || null,
+    run: SPEND_RUN, target: spend?.target ?? null, status, model: MODEL,
+    cost: spendNumber(usage?.cost), input_tokens: spendNumber(usage?.input_tokens),
+    output_tokens: spendNumber(usage?.output_tokens), questions: asked, hits: fired };
   try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.appendFileSync(SPEND_LOG, JSON.stringify({ t: new Date().toISOString().slice(0, 16),
-      i: usage.input_tokens, c: usage.cost, q: asked, h: fired }) + '\n');
-  } catch { /* a meter is never worth failing a prompt over */ }
+    const file = process.env.JEV_SPEND_LOG || SPEND_LOG;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, JSON.stringify(row) + '\n');
+  } catch (error) { console.error(`runbooks: could not write Jev usage (${error.code || error.message})`); }
 }
 
-async function attempt(prompt, books, key, fetchImpl, timeoutMs, firesAt, maxInject) {
+async function attempt(prompt, books, key, fetchImpl, timeoutMs, firesAt, maxInject, spend) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
@@ -272,15 +280,16 @@ async function attempt(prompt, books, key, fetchImpl, timeoutMs, firesAt, maxInj
       body: JSON.stringify({ model: MODEL, state: `A task is about to be started. The task: ${prompt}`,
         questions: buildQuestions(books) }),
     });
-    if (!res.ok) return { mode: 'fallback', why: `http ${res.status}` };
+    if (!res.ok) { meter(null, books.length, 0, spend, 'unreported'); return { mode: 'fallback', why: `http ${res.status}` }; }
     const body = await res.json();
-    if (!body?.answers) return { mode: 'fallback', why: 'no answers' };
+    if (!body?.answers) { meter(body?.usage, books.length, 0, spend, 'no_answers'); return { mode: 'fallback', why: 'no answers' }; }
     const hits = books
       .map((b) => ({ ...b, p: body.answers[keyFor(b)]?.noul ?? 0 }))
       .filter((b) => b.p >= firesAt).sort((x, y) => y.p - x.p).slice(0, maxInject);
-    meter(body.usage, books.length, hits.length);
+    meter(body.usage, books.length, hits.length, spend, body.usage ? 'ok' : 'unreported');
     return { text: matchedBlock(hits), mode: 'matched', hits: hits.length };
   } catch (e) {
+    meter(null, books.length, 0, spend, 'unreported');
     // A thrown fetch is a network-level failure, which is retryable. The message still rides along
     // in the notice, because "network" alone does not tell the reader what broke.
     return e.name === 'AbortError'
@@ -385,7 +394,7 @@ export async function route(prompt, books, key, fetchImpl = fetch, opts = {}) {
     // Each attempt gets an equal share of what is left, so a slow first call cannot eat the whole
     // budget and leave the retries no room. This IS the per-attempt timeout, derived not declared.
     const slice = Math.max(1, Math.floor((deadline - Date.now()) / (MAX_ATTEMPTS - n + 1)));
-    const r = await attempt(prompt, books, key, fetchImpl, slice, firesAt, maxInject);
+    const r = await attempt(prompt, books, key, fetchImpl, slice, firesAt, maxInject, opts.spend);
     if (r.mode === 'matched') return { ...r, attempts: n };
     if (!isRetryable(r) || n >= MAX_ATTEMPTS || Date.now() + delayMs >= deadline) {
       return { text: failNotice(r.why, n), mode: 'fallback', why: r.why, attempts: n };
@@ -733,7 +742,8 @@ if (isEntry()) {
   const skipApi = breakerOpen(prev, Date.now())
     ? `the API failed at ${new Date(prev.t).toISOString().slice(11, 19)} UTC, calls paused ${OUTAGE_MS / 1000} s` : null;
   const r = await route(prompt, books, readKey(), fetch,
-    { firesAt: cfg.firesAt, maxInject: cfg.maxInject, shortlist: cfg.shortlist, skipApi });
+    { firesAt: cfg.firesAt, maxInject: cfg.maxInject, shortlist: cfg.shortlist, skipApi,
+      spend: { activity: 'active_route', session: sessionId } });
   if (tripsBreaker(r)) markOutage();
   const { text, mode, why, hits, attempts } = r;
   // Claude Code takes plain stdout as context. Codex reads only the JSON envelope and drops

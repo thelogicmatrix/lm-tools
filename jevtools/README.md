@@ -37,6 +37,7 @@ node <plugin>/scripts/jevclick.mjs --snapshot <file> --goal "<what to click>"
 node <plugin>/scripts/jevmail.mjs --ask "<question>" --identity <id> --query "<gmail query>"
 node <plugin>/scripts/jevclassify.mjs > repos.md
 node <plugin>/scripts/jevdrift.mjs --root docs
+node <plugin>/scripts/spend-report.mjs [--since YYYY-MM-DD] [--json]
 node <plugin>/scripts/<script>.mjs --selftest       offline check, no API call
 node --test <plugin>/skills/jevchecker/jevchecker.test.mjs
 ```
@@ -44,6 +45,18 @@ node --test <plugin>/skills/jevchecker/jevchecker.test.mjs
 ## Extend it
 
 A new jevchecker sweep is one JSON file in `skills/jevchecker/sweeps/`. The format and how to word a check are in the jevchecker skill.
+
+## Jev spend
+
+Jevtools and runbooks append the API's usage receipts to `~/.local/state/jev-spend/calls.jsonl`.
+Set `JEV_SPEND_LOG` to use another path. `spend-report.mjs` groups reported cost by tool,
+activity and session. Runbook routing uses `active_route`, while `check.mjs` purpose-line
+tests use `purpose_test` and name the runbook being checked. The report also shows the old
+router log as unclassified history and names Hindsight's separate reranker as unallocated.
+
+The journal stores no prompts or runbook text. A failed call without a usage receipt has
+unknown cost, not zero. A 30-day run rate appears only after seven complete UTC days of
+journal coverage. It projects observed local spend, not the provider's full bill.
 
 ## Details
 

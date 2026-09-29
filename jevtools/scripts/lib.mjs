@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { recordSpend } from './spend.mjs';
 
 export const ENDPOINT = 'https://openrouter.ai/api/v1/systemone';
 export const MODEL = 'jev-latest';
@@ -62,10 +63,18 @@ export function toText(s) {
 // The body is read as TEXT and parsed after the status check. Parsed first, a gateway's HTML 502
 // page threw `Unexpected token '<'` and the status code was lost from the error.
 export const TIMEOUT_MS = 60_000;
-export async function askJev(state, questions, key, { timeoutMs = TIMEOUT_MS, ...retry } = {}) {
-  const text = await postText(ENDPOINT, key, { model: MODEL, state, questions }, timeoutMs, retry);
-  const body = JSON.parse(text);
-  return { answers: body.answers, cost: body.usage?.cost ?? 0 };
+export async function askJev(state, questions, key, { timeoutMs = TIMEOUT_MS, spend = {}, ...retry } = {}) {
+  const meta = { ...spend, questions: Object.keys(questions).length, model: MODEL };
+  try {
+    const text = await postText(ENDPOINT, key, { model: MODEL, state, questions }, timeoutMs,
+      { ...retry, onRetry: () => recordSpend({ ...meta, usage: null, status: 'unreported' }) });
+    const body = JSON.parse(text);
+    recordSpend({ ...meta, usage: body.usage, status: body.usage ? 'ok' : 'unreported' });
+    return { answers: body.answers, cost: body.usage?.cost ?? 0 };
+  } catch (error) {
+    recordSpend({ ...meta, usage: null, status: 'unreported' });
+    throw error;
+  }
 }
 
 // ⚠ THREE ATTEMPTS, NOT MORE. A timed-out call may still be billed, so every retry of one can be
@@ -101,7 +110,7 @@ export async function postText(url, key, payload, timeoutMs = TIMEOUT_MS, retry 
 // The retry loop under postText, for any request. An HTTP error carries `status`, so a caller can
 // treat one code (a 404 on an optional read) as an answer rather than a failure.
 export async function fetchText(url, init, timeoutMs = TIMEOUT_MS,
-  { attempts = ATTEMPTS, baseDelayMs = BASE_DELAY_MS } = {}) {
+  { attempts = ATTEMPTS, baseDelayMs = BASE_DELAY_MS, onRetry } = {}) {
   for (let n = 1; ; n++) {
     let err;
     let wait = null;
@@ -115,6 +124,7 @@ export async function fetchText(url, init, timeoutMs = TIMEOUT_MS,
       err = e.name === 'TimeoutError' ? new Error(`no response after ${timeoutMs / 1000} s`) : e;
     }
     if ((err.status && !retryable(err.status)) || n >= attempts) throw err;
+    onRetry?.();
     await new Promise((r) => setTimeout(r, wait ?? baseDelayMs * 2 ** (n - 1) * (0.5 + Math.random())));
   }
 }

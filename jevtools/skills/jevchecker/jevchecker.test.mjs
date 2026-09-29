@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+// Child CLI runs use stubbed Jev responses and must not enter the live ledger.
+process.env.JEV_SPEND_DISABLED = '1';
 import { chunk, jsonPath, htmlLi } from './lib/chunk.mjs';
 import { runRegex, surface, modelChecks, regexChecks, pack, questionKey, parseKey, preflight, runSweep } from './lib/engine.mjs';
 
