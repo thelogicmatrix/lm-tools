@@ -186,43 +186,84 @@ export async function openForge(cfg, fetchImpl = fetch) {
   };
 }
 
+const RECORDS = 'docs/handoffs/records/';
+
+// Every record file in a "store": "files" repo as { name, sha, text }, from the git tree and one
+// batch of blobs. 2026-09-29 (#27): the contents listing costs the server a last-commit lookup per
+// entry, 525 to 618 ms of a 900 ms run at 14 records, and the tree costs about 40 ms. The blob sha
+// is the sha the contents API checks on PUT and DELETE. The listing is only the fallback, for a
+// truncated tree or a repo with no commit yet. Exported for hooks that only need to read the store.
+export async function readFileRecords(cfg, fetchImpl = fetch) {
+  const get = async (path) => {
+    const res = await send(fetchImpl, `${cfg.api}/repos/${cfg.repo}${path}`, {
+      method: 'GET', headers: { Authorization: `token ${cfg.token}`, Accept: 'application/json' },
+    });
+    if (!res.ok) res.error = `forge GET ${path} -> ${res.status} ${(await res.text()).slice(0, 200)}`;
+    return res;
+  };
+  let files;
+  const tree = await get('/git/trees/HEAD?recursive=true');
+  if (tree.ok) {
+    const t = await tree.json();
+    if (!t.truncated) {
+      files = t.tree.filter((e) => e.type === 'blob' && e.path.startsWith(RECORDS) && e.path.endsWith('.json')
+        && !e.path.slice(RECORDS.length).includes('/')).map((e) => ({ name: e.path.slice(RECORDS.length), sha: e.sha }));
+    }
+  } else if (tree.status >= 500) throw new Error(tree.error);
+  if (!files) {
+    const names = await get(`/contents/${RECORDS.slice(0, -1)}`);
+    if (names.status === 404) {
+      const repo = await get('');
+      if (!repo.ok) throw new Error(`forge GET repo ${cfg.repo} -> ${repo.status}`);
+      files = [];
+    } else if (!names.ok) throw new Error(names.error);
+    else files = (await names.json()).filter((f) => f.name?.endsWith('.json'));
+  }
+  // Forgejo's GetBlobs takes a comma list of shas, 40 of them keep the URL under its ~2000 character
+  // limit. A server without that route (Gitea) answers 404 and gets one GET per blob instead.
+  const shas = [...new Set(files.map((f) => f.sha))];
+  const content = new Map();
+  const one = async (sha) => {
+    const blob = await get(`/git/blobs/${sha}`);
+    if (!blob.ok) throw new Error(blob.error);
+    content.set(sha, (await blob.json()).content);
+  };
+  await Promise.all(Array.from({ length: Math.ceil(shas.length / 40) }, async (_, i) => {
+    const chunk = shas.slice(i * 40, i * 40 + 40);
+    const batch = await get(`/git/blobs?shas=${chunk.join(',')}`);
+    if (batch.status === 404) return Promise.all(chunk.map(one));
+    if (!batch.ok) throw new Error(batch.error);
+    for (const b of await batch.json()) content.set(b.sha, b.content);
+  }));
+  return files.map((f) => {
+    if (!content.has(f.sha)) throw new Error(`forge GET blob ${f.sha} for ${RECORDS}${f.name} -> missing`);
+    return { name: f.name, sha: f.sha, text: Buffer.from(content.get(f.sha).replace(/\s/g, ''), 'base64').toString('utf8') };
+  });
+}
+
 // One JSON file contains both record and current handoff. One SHA-protected PUT changes both.
 async function openFileForge(cfg, fetchImpl) {
   const sourceSlug = Symbol('gtg-file-source-slug');
   const base = `${cfg.api}/repos/${cfg.repo}/contents/`;
-  const records = 'docs/handoffs/records/';
-  const call = async (method, path, body, missing = false) => {
+  const records = RECORDS;
+  const call = async (method, path, body) => {
     const res = await send(fetchImpl, base + path, {
       method,
       headers: { Authorization: `token ${cfg.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (missing && res.status === 404) return null;
     if (!res.ok) throw new Error(`forge ${method} ${path} -> ${res.status} ${(await res.text()).slice(0, 200)}`);
     return res.status === 204 ? null : res.json();
   };
-  const read = async (path, missing = false) => {
-    const file = await call('GET', path, undefined, missing);
-    return file && { sha: file.sha, text: Buffer.from(file.content.replace(/\s/g, ''), 'base64').toString('utf8') };
-  };
-  const names = await call('GET', records.slice(0, -1), undefined, true);
-  if (!names) {
-    const repo = await send(fetchImpl, `${cfg.api}/repos/${cfg.repo}`, {
-      method: 'GET', headers: { Authorization: `token ${cfg.token}` },
-    });
-    if (!repo.ok) throw new Error(`forge GET repo ${cfg.repo} -> ${repo.status}`);
-  }
-  const files = (names ?? []).filter((f) => f.name?.endsWith('.json'));
-  const loaded = await Promise.all(files.map(async (f) => {
-    const data = await read(records + encodeURIComponent(f.name));
+  const loaded = (await readFileRecords(cfg, fetchImpl)).map((f) => {
     let rec;
-    try { rec = JSON.parse(data.text); } catch (e) { throw new Error(`cannot parse ${records}${f.name} - ${e.message}`); }
+    try { rec = JSON.parse(f.text); } catch (e) { throw new Error(`cannot parse ${records}${f.name} - ${e.message}`); }
     if (typeof rec.slug !== 'string' || !['active', 'backlog'].includes(rec.shelf)
       || (rec.handoff !== undefined && typeof rec.handoff !== 'string')) {
       throw new Error(`invalid gtg record at ${records}${f.name}`);
     }
-    return { rec, sha: data.sha, fileSlug: f.name.slice(0, -5) };
-  }));
+    return { rec, sha: f.sha, fileSlug: f.name.slice(0, -5) };
+  });
   const saved = new Map(loaded.map(({ rec, sha, fileSlug }) => [fileSlug, { rec: JSON.stringify(rec), sha }]));
   const bodyBySlug = new Map(loaded.map(({ rec, fileSlug }) => [fileSlug, rec.handoff]));
   const entry = (rec, fileSlug) => { const { handoff, ...rest } = rec; return { ...rest, file: undefined, [sourceSlug]: fileSlug }; };

@@ -18,7 +18,10 @@ Each project is one `docs/handoffs/records/<file-id>.json` file containing its s
 `active` or `backlog` shelf, and current handoff body. A rename changes the slug inside
 the same file. Forgejo's Contents API writes each change as a commit and requires the
 previous SHA on updates. This prevents a stale client from silently replacing a newer
-handoff or splitting it from its metadata. The hub remains the caller's home repo,
+handoff or splitting it from its metadata. Reads take the git tree at `HEAD` and the record
+blobs in one batch (`GET git/blobs?shas=`, one GET per blob on a server without it). The blob sha
+is the one the next write sends. The Contents API directory listing is only the fallback, for a
+truncated tree or a repo with no commit yet. The hub remains the caller's home repo,
 so local progress records and portfolio hooks keep their existing paths. The GTG store
 repo needs no tracking issues or milestones. `complete` and `remove` delete the record,
 with its previous handoffs retained in Git history.

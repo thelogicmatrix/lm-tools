@@ -15,6 +15,7 @@ test('file store handoff, resume, shelf move and complete use versioned files on
   const files = new Map();
   let writes = 0;
   let race = false;
+  let contentReads = 0;
   const server = createServer(async (req, res) => {
     let raw = '';
     for await (const part of req) raw += part;
@@ -23,6 +24,24 @@ test('file store handoff, resume, shelf move and complete use versioned files on
     const send = (status, data) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(data)); };
     assert.equal(req.headers.authorization, 'token tok');
     if (req.method === 'GET' && path === '/api/v1/repos/o/r') return send(200, {});
+    // Before the first write the repo has no commit, so HEAD does not resolve (Forgejo answers 400).
+    if (req.method === 'GET' && path === '/api/v1/repos/o/r/git/trees/HEAD') {
+      if (!writes) return send(400, { message: 'sha not found [HEAD]' });
+      const tree = [...files.keys()].map((x) => ({ path: x, type: 'blob', sha: sha(files.get(x)) }));
+      return send(200, { sha: 'root', truncated: false, tree: [{ path: 'docs', type: 'tree', sha: 'd' }, ...tree] });
+    }
+    if (req.method === 'GET' && path === '/api/v1/repos/o/r/git/blobs') {
+      const blobs = new URL(req.url, 'http://stub').searchParams.get('shas').split(',').map((want) => {
+        const name = [...files.keys()].find((x) => sha(files.get(x)) === want);
+        const blob = name && { sha: want, encoding: 'base64', content: Buffer.from(files.get(name)).toString('base64') };
+        if (race && name === 'docs/handoffs/records/alpha.json') {
+          files.set(name, JSON.stringify({ ...JSON.parse(files.get(name)), handoff: 'another machine wrote this' }));
+        }
+        return blob;
+      });
+      return blobs.every(Boolean) ? send(200, blobs) : send(400, { message: 'object does not exist' });
+    }
+    if (req.method === 'GET') contentReads++;
     if (req.method === 'GET' && path === 'docs/handoffs/records') {
       const names = [...files.keys()].filter((x) => x.startsWith('docs/handoffs/records/'))
         .map((x) => ({ name: x.split('/').at(-1), sha: sha(files.get(x)) }));
@@ -74,8 +93,10 @@ test('file store handoff, resume, shelf move and complete use versioned files on
   assert.equal(JSON.parse(files.get('docs/handoffs/records/alpha.json')).shelf, 'active');
   assert.equal([...files.keys()].length, 1);
   const beforeRead = writes;
+  contentReads = 0;
   const resumed = await run(['resume', 'alpha']);
   assert.equal(resumed.status, 0, resumed.stderr);
+  assert.equal(contentReads, 0, 'a store with commits is read through the tree and blobs, not the contents API');
   assert.match(resumed.stdout, /Ship it/);
   assert.match(resumed.stdout, /docs\/handoffs\/records\/alpha.json/);
   assert.equal(writes, beforeRead);
@@ -114,8 +135,9 @@ test('file store retries a failed read, but never retries a write', async (t) =>
     if (req.method !== 'GET') { writes++; return failWrites ? send(503, { message: 'busy' }) : send(200, { content: { sha: 'n' } }); }
     reads++;
     if (reads <= failReadsUntil) return send(503, { message: 'busy' });
-    if (path === 'docs/handoffs/records') return send(200, [{ name: 'alpha.json', sha: 's' }]);
-    return send(200, { sha: 's', content: Buffer.from(record).toString('base64') });
+    if (path.endsWith('/git/trees/HEAD')) return send(200, { truncated: false, tree: [{ path: 'docs/handoffs/records/alpha.json', type: 'blob', sha: 's' }] });
+    if (path.endsWith('/git/blobs')) return send(200, [{ sha: 's', encoding: 'base64', content: Buffer.from(record).toString('base64') }]);
+    return send(200, { sha: 's', encoding: 'base64', content: Buffer.from(record).toString('base64') });
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => server.close());
@@ -135,7 +157,7 @@ test('file store retries a failed read, but never retries a write', async (t) =>
     child.on('close', (status) => resolve({ status, stdout, stderr }));
     child.stdin.end(input);
   });
-  failReadsUntil = 2; // the listing fails once and the first record read fails once
+  failReadsUntil = 2; // the first two reads fail and are retried
   const listed = await run(['list', '--no-list']);
   assert.equal(listed.status, 0, listed.stderr);
   failReadsUntil = 0;
@@ -151,4 +173,95 @@ test('file store retries a failed read, but never retries a write', async (t) =>
   const write = await run(['handoff', '--project', 'Alpha', '--slug', 'alpha'], '## Next Action\nAgain\n');
   assert.equal(write.status, 1);
   assert.equal(writes - before, 1, 'a failed PUT is sent once');
+});
+
+test('file store reads records from the git tree and one batch of blobs, with fallbacks for a truncated tree and a server without the batch route', async (t) => {
+  const records = {
+    'docs/handoffs/records/alpha.json': JSON.stringify({ slug: 'alpha', project: 'Alpha', shelf: 'active', next: 'Ship alpha', handoff: 'alpha body' }),
+    'docs/handoffs/records/beta.json': JSON.stringify({ slug: 'beta', project: 'Beta', shelf: 'backlog', next: 'Ship beta' }),
+    'docs/handoffs/records/notes/gamma.json': JSON.stringify({ slug: 'gamma', project: 'Gamma', shelf: 'active' }),
+    'docs/handoffs/records/README.md': 'not a record',
+  };
+  let truncated = false, batchRoute = true;
+  const hits = { tree: 0, batch: 0, blob: 0, listing: 0, contents: 0 };
+  const puts = [];
+  const server = createServer(async (req, res) => {
+    let raw = '';
+    for await (const part of req) raw += part;
+    const url = new URL(req.url, 'http://stub').pathname;
+    const send = (status, data) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(data)); };
+    if (req.method !== 'GET') {
+      puts.push({ method: req.method, url, body: JSON.parse(raw) });
+      return send(200, { content: { sha: 'new', html_url: 'http://stub/x' } });
+    }
+    if (url === '/api/v1/repos/o/r/git/trees/HEAD') {
+      hits.tree++;
+      const tree = Object.entries(records).map(([path, text]) => ({ path, type: 'blob', sha: sha(text) }));
+      return send(200, { truncated, tree: truncated ? tree.slice(0, 1) : tree });
+    }
+    if (url === '/api/v1/repos/o/r/git/blobs') {
+      hits.batch++;
+      if (!batchRoute) return send(404, { message: 'not found' }); // Gitea has no GetBlobs
+      const texts = new URL(req.url, 'http://stub').searchParams.get('shas').split(',')
+        .map((want) => Object.values(records).find((x) => sha(x) === want));
+      return send(200, texts.map((x) => ({ sha: sha(x), encoding: 'base64', content: Buffer.from(x).toString('base64') })));
+    }
+    if (url.startsWith('/api/v1/repos/o/r/git/blobs/')) {
+      hits.blob++;
+      const text = Object.values(records).find((x) => sha(x) === url.split('/').at(-1));
+      return text ? send(200, { encoding: 'base64', content: Buffer.from(text).toString('base64') }) : send(404, {});
+    }
+    if (url === '/api/v1/repos/o/r/contents/docs/handoffs/records') {
+      hits.listing++;
+      return send(200, Object.entries(records).filter(([p]) => p.split('/').length === 4)
+        .map(([p, text]) => ({ name: p.split('/').at(-1), type: 'file', sha: sha(text) }))
+        .concat([{ name: 'notes', type: 'dir', sha: 'd' }]));
+    }
+    hits.contents++;
+    return send(404, { message: 'unexpected' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const root = mkdtempSync(join(tmpdir(), 'gtg-tree-'));
+  mkdirSync(join(root, '.gtg'));
+  writeFileSync(join(root, '.gtg', 'forge.json'), JSON.stringify({
+    api: `http://127.0.0.1:${server.address().port}/api/v1`, repo: 'o/r', store: 'files',
+  }));
+  const run = (args, input = '') => new Promise((resolve) => {
+    const child = spawn(process.execPath, [CLI, ...args], {
+      cwd: root,
+      env: { ...process.env, GTG_HUB: root, GTG_NO_SYNC: '1', GTG_SESSION_ID: 'tree-test', FORGEJO_TOKEN: 'tok' },
+    });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (x) => { stdout += x; });
+    child.stderr.on('data', (x) => { stderr += x; });
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end(input);
+  });
+  const reset = () => { for (const k of Object.keys(hits)) hits[k] = 0; };
+
+  const listed = await run(['list']);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.match(listed.stdout, /Alpha/);
+  assert.doesNotMatch(listed.stdout, /Gamma/, 'a file in a subfolder of records/ is not a record');
+  assert.deepEqual(hits, { tree: 1, batch: 1, blob: 0, listing: 0, contents: 0 });
+  assert.match((await run(['resume', 'alpha'])).stdout, /alpha body/);
+
+  // A PUT after a tree read carries the blob sha from the tree, which is the sha the contents API checks.
+  const handoff = await run(['handoff', '--project', 'Alpha', '--slug', 'alpha'], '## Next Action\nShip more\n');
+  assert.equal(handoff.status, 0, handoff.stderr);
+  assert.equal(puts.length, 1);
+  assert.equal(puts[0].method, 'PUT');
+  assert.equal(puts[0].url, '/api/v1/repos/o/r/contents/docs/handoffs/records/alpha.json');
+  assert.equal(puts[0].body.sha, sha(records['docs/handoffs/records/alpha.json']));
+
+  // A truncated tree may be missing records, so the listing supplies the names and shas instead.
+  // Without the batch route each blob is read on its own.
+  truncated = true;
+  batchRoute = false;
+  reset();
+  const fallback = await run(['backlog']);
+  assert.equal(fallback.status, 0, fallback.stderr);
+  assert.match(fallback.stdout, /Beta/);
+  assert.deepEqual(hits, { tree: 1, batch: 1, blob: 2, listing: 1, contents: 0 });
 });
