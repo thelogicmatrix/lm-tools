@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,8 +16,7 @@ const BODY = '## What Was Done This Session\n- checkpoint\n\n## Next Action\nCon
 function hub() {
   const root = mkdtempSync(join(tmpdir(), 'gtg-persistent-'));
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'test@test'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'test'], { cwd: root });
+  appendFileSync(join(root, '.git', 'config'), '\n[user]\n\temail = test@test\n\tname = test\n');
   return root;
 }
 

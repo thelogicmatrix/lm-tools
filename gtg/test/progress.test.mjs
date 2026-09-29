@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,8 +35,7 @@ function childEnv(root, sessionEnv = { GTG_SESSION_ID: 'progress-test' }) {
 function tempHub() {
   const root = mkdtempSync(join(tmpdir(), 'gtg-progress-'));
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'test@test'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'test'], { cwd: root });
+  appendFileSync(join(root, '.git', 'config'), '\n[user]\n\temail = test@test\n\tname = test\n');
   return root;
 }
 
