@@ -2,7 +2,7 @@
 // gtg self-check - assert-based, no framework. Runs every command against
 // throwaway temp git repos. Non-zero exit on any failure.
 import { execFileSync, execSync, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,6 +11,8 @@ import { readCollection, writeCollection } from '../skills/gtg/lib/store.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'gtg', 'gtg.mjs');
 const SHIM = (name) => pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), name)).href;
+// Two minutes back, past syncHub's one-minute fetch skip (#101): the next resume fetches again.
+const ageFetchHead = (repo) => { const t = new Date(Date.now() - 120e3); utimesSync(join(repo, '.git', 'FETCH_HEAD'), t, t); };
 
 function tempRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'gtg-'));
@@ -52,6 +54,8 @@ function gtg(cwd, args, opts = {}) {
   const pre = [];
   if (opts.tty) { pre.push('--import', SHIM('tty-shim.mjs')); env.NO_COLOR = '1'; }
   if (opts.spawnLog) pre.push('--import', SHIM('spawn-log-shim.mjs'));
+  // opts.lockMerge: the first `git merge` meets a held index.lock (after spawnLog, so both tries log).
+  if (opts.lockMerge) pre.push('--import', SHIM('lock-once-shim.mjs'));
   return spawnSync(process.execPath, [...pre, CLI, ...args], {
     cwd, env, encoding: 'utf8', input: opts.input ?? '',
   });
@@ -2663,6 +2667,9 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   assert.match(r.stdout, /fast-forward/i, 'a real fast-forward is the ONE case that speaks on stdout');
 
   // Up to date: silence. A line on every resume is noise, and noise is how a real one goes unread.
+  // Each later resume here stands for one a while after the last, so the fetch is aged past the
+  // one-minute skip (#101, case 74b).
+  ageFetchHead(repo);
   const q = gtg(repo, ['resume', 'local-a'], { env: FALLBACK });
   assert.equal(q.status, 0, q.stderr);
   assert.doesNotMatch(q.stdout, /fast-forward/i, 'nothing to pull must say nothing');
@@ -2675,6 +2682,7 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   execSync('git commit -q -m "local only"', { cwd: repo });
   assert.equal(gtg(other, HANDOFF_ARGS('remote-d', 'Remote D'), { input: BODY }).status, 0);
   execSync('git push -q origin master', { cwd: other });
+  ageFetchHead(repo);
   const d = gtg(repo, ['resume', 'local-c'], { env: FALLBACK });
   assert.equal(d.status, 0, `a divergence must not fail the resume: ${d.stderr}`);
   assert.match(d.stdout, /RESUME: "Local C"/, 'and it resumes from local state');
@@ -2744,6 +2752,55 @@ export default async (ctx) => { writeFileSync(ctx.root + '/resumed.json', JSON.s
   assert.ok(!active(server).some((e) => e.slug === 'later-work'),
     'nothing was pulled onto the feature branch');
   console.log('ok 74 - the sync target comes from the branch upstream, with the named pair as fallback');
+}
+
+// --- 74b. #101: a resume within a minute of the last fetch skips the sync, and the fast-forward
+// waits out another session's index.lock instead of failing silently. ---
+{
+  const mirror = mkdtempSync(join(tmpdir(), 'gtg-mirror-'));
+  execSync('git init -q --bare -b main', { cwd: mirror });
+  const url = mirror.split('\\').join('/');
+  const clone = (prefix) => {
+    const d = mkdtempSync(join(tmpdir(), prefix));
+    execSync(`git clone -q "${url}" "${d.split('\\').join('/')}"`, { cwd: tmpdir() });
+    execSync('git config user.email test@test', { cwd: d });
+    execSync('git config user.name test', { cwd: d });
+    return d;
+  };
+  const seed = tempRepo();
+  assert.equal(gtg(seed, HANDOFF_ARGS('seed-a', 'Seed A'), { input: BODY }).status, 0);
+  execSync(`git remote add origin "${url}"`, { cwd: seed });
+  execSync('git push -q origin main', { cwd: seed });
+  const hub = clone('gtg-hub-');
+  const laptop = clone('gtg-laptop-');
+  const push = (slug) => {
+    assert.equal(gtg(laptop, HANDOFF_ARGS(slug, slug), { input: BODY }).status, 0);
+    execSync('git push -q origin main', { cwd: laptop });
+  };
+  const gitCalls = (res, verb) => JSON.parse(res.stderr.match(/^GTG_SPAWNS (.*)$/m)[1])
+    .filter((a) => a[0] === 'git' && a[1] === verb);
+
+  push('first');
+  const one = gtg(hub, ['resume', 'seed-a'], { spawnLog: true });
+  assert.equal(one.status, 0, one.stderr);
+  assert.match(one.stdout, /Synced origin\/main: fast-forwarded/);
+  assert.equal(gitCalls(one, 'fetch').length, 1);
+
+  push('second');
+  const two = gtg(hub, ['resume', 'seed-a'], { spawnLog: true });
+  assert.equal(two.status, 0, two.stderr);
+  assert.equal(gitCalls(two, 'fetch').length, 0, 'a second resume within a minute ran another fetch');
+  assert.doesNotMatch(two.stdout, /fast-forward/);
+
+  ageFetchHead(hub);
+  const three = gtg(hub, ['resume', 'seed-a'], { spawnLog: true, lockMerge: true });
+  assert.equal(three.status, 0, three.stderr);
+  assert.equal(gitCalls(three, 'fetch').length, 1, 'a fetch over a minute old runs again');
+  assert.equal(gitCalls(three, 'merge').length, 2, 'the merge that met index.lock was not retried');
+  assert.match(three.stdout, /Synced origin\/main: fast-forwarded/, `the retried fast-forward did not land:\n${three.stderr}`);
+  assert.ok(active(hub).some((e) => e.slug === 'second'), 'the pushed record did not come down');
+  assert.ok(!existsSync(join(hub, '.git', 'index.lock')), 'fixture: the lock is released');
+  console.log('ok 74b - #101: a fresh fetch skips the sync, and the fast-forward retries on index.lock');
 }
 
 // --- 76. --dry-run names the record file it WOULD write, in both collections ---

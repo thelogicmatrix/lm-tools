@@ -5,11 +5,11 @@
 //   ctx.listAll() (the bare list), ctx.onPick(slug) (the entry the review line must skip).
 // A choice (1) or nothing to resume (2) is RETURNED, and the dispatcher exits with it straight
 // away, so the order of output and exit is what it was when this called process.exit itself.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { firstMeaningfulLine } from './git.mjs';
+import { firstMeaningfulLine, runGit } from './git.mjs';
 import { readProgress, renderProgress } from './progress.mjs';
 import { displayOrder, parseFlags, resolveEntry, userVisible } from './view.mjs';
 // Fallback sync target, used only when the branch has no upstream - the reasoning lives at
@@ -21,6 +21,7 @@ const SYNC_BRANCH = process.env.GTG_SYNC_BRANCH || 'main';   // fallback only: t
 // migration itself - and is kept because it is what makes the call idempotent for any future
 // caller: a second fetch costs another 5-second timeout with the hub unreachable.
 let synced = false;
+const FETCH_FRESH_MS = 60000;
 
 // Fast-forward the hub from whatever it tracks before anything reads the store. POSITION IS THE WHOLE
 // POINT (2026-09-01): this shipped first inside .gtg/after-resume.mjs, which runs AFTER
@@ -75,14 +76,23 @@ export function syncHub(root) {
   const name = `${target.remote}/${target.branch}`;
   let before;
   try {
-    before = git('rev-parse', 'HEAD');
+    let fetchHead;
+    [before, fetchHead] = git('rev-parse', 'HEAD', '--git-path', 'FETCH_HEAD').split('\n');
+    // #101: a fetch under a minute old means another resume (or session) just synced, so skip the
+    // fetch and the merge. The whole sync, not just the fetch: FETCH_HEAD may hold another branch
+    // from a manual fetch, and merging that would be wrong. A missing FETCH_HEAD throws: fetch.
+    let fresh = false;
+    try { fresh = Date.now() - statSync(resolve(root, fetchHead)).mtimeMs < FETCH_FRESH_MS; } catch { /* never fetched */ }
+    if (fresh) return;
     git('fetch', '--quiet', target.remote, target.branch);
   } catch { return; } // no remote, host down, offline, not a repo: local state stands, silently
   try {
     // FETCH_HEAD, not <remote>/<branch>: the fetch above just set it to exactly what came down,
     // so nothing here rests on the remote's refspec having updated a tracking ref - and a
     // branch.<b>.remote holding a URL rather than a name has no tracking ref at all.
-    git('merge', '--ff-only', '--quiet', 'FETCH_HEAD');
+    // runGit, so a commit in another session holding index.lock is waited out (#101). Capped
+    // at 5 s like the other calls here.
+    runGit(['merge', '--ff-only', '--quiet', 'FETCH_HEAD'], { cwd: root, timeout: 5000 });
   } catch {
     // The fetch landed and the fast-forward was refused. Home being AHEAD of the mirror is the
     // normal state and says nothing. The mirror holding commits home does not have means a
