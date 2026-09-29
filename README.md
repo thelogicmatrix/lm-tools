@@ -1,6 +1,6 @@
 # logical-tools: Mouldable AI tool frameworks
 
-Nine bespoke plugins covering fundamental tool to create cohesive AI workflows, and each modifiable to your specific needs. Built to retain your custom behaviour between updates, while balancing performance, efficiency and cost. 
+Nine bespoke plugins covering fundamental tools to create cohesive AI workflows, and each modifiable to your specific needs. Built to retain your custom behaviour between updates, while balancing performance, efficiency and cost. 
 
 By [Nathan Wong](https://github.com/thelogicmatrix).
 
