@@ -46,8 +46,6 @@ An **extension** owns entries in the handoff store and renders its own separated
 
 Adding another extension is one line in the `EXTENSIONS` map in `lib/view.mjs`, and that is the whole of it. An extension is a registered `parent` namespace and nothing more. **It must not add a field to the entry.** Membership is read off the existing `parent` field because `gtg handoff` rebuilds each entry as a fresh literal and drops fields it does not know. A marker field of your own would survive exactly until the next checkpoint and then go missing with no error.
 
-**Seed documents live in `skills/gtg/templates/`.** A skill whose data lives in a folder of the user's own needs that folder to explain itself on a fresh install, so the plugin ships the starting document. `gtg:issues` copies `templates/issues-README.md` to `docs/issues/README.md` the first time it files into a folder without one. It never overwrites an existing one, because that file is the folder's own conventions and whoever wrote it outranks the template.
-
 **Decluttering is not lookup.** Only the bare listing hides extension entries. `gtg list <name-or-slug>` searches every entry and will surface a learning sprint. A queried extension entry is labelled with its slug instead of a row number, because row numbers index the bare listing and that is the order `gtg back <n>` resolves against. Use the slug, which every verb accepts.
 
 A targeted query also reaches a shelved extension entry, printed on its own `shelved:` line rather than as a numbered row, whether or not the same query also matched active work. A learning sprint may be shelved between study sessions, and without this the exit procedure's slug-reuse probe would miss it. A shelved normal project stays invisible to a query, deliberately.
