@@ -11,6 +11,14 @@ import { join } from 'node:path';
 
 const SLUG_OK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
+// The record files this process last read or wrote, per directory. writeCollection deletes only
+// files named here, so a record another session created after our read is never seen and never
+// deleted. Before this, stale came from a fresh listing and keep from the caller's earlier read,
+// so that record was removed as if the caller had dropped it.
+// ponytail: per-process memory, so a caller that learns of records some other way (git show,
+// a hand read) cannot delete them through here. Upgrade path: pass the seen set explicitly.
+const SEEN = new Map();
+
 function slugFile(slug) {
   if (typeof slug !== 'string' || !SLUG_OK.test(slug)) {
     throw new Error(`projects: record has an unusable slug ${JSON.stringify(slug)} - cannot name its file`);
@@ -41,9 +49,13 @@ export function slugCollision(items) {
 // code path here. See docs/runbooks/git-parity.md in the store's own repo.
 export function readCollection(root, dir) {
   const abs = join(root, dir);
-  if (!existsSync(abs)) return [];
+  if (!existsSync(abs)) {
+    SEEN.set(abs, new Set());
+    return [];
+  }
   const out = [];
-  for (const f of readdirSync(abs).filter((f) => f.endsWith('.json')).sort()) {
+  const files = readdirSync(abs).filter((f) => f.endsWith('.json')).sort();
+  for (const f of files) {
     const p = join(abs, f);
     let rec;
     try {
@@ -56,6 +68,7 @@ export function readCollection(root, dir) {
     }
     if (rec) out.push(rec);
   }
+  SEEN.set(abs, new Set(files));
   return out;
 }
 
@@ -72,7 +85,8 @@ export function writeCollection(root, dir, items) {
   const abs = join(root, dir);
   const before = existsSync(abs) ? readdirSync(abs).filter((f) => f.endsWith('.json')) : [];
   const keep = new Set(items.map((it) => slugFile(it.slug)));
-  const stale = before.filter((f) => !keep.has(f));
+  const seen = SEEN.get(abs) ?? new Set();
+  const stale = before.filter((f) => !keep.has(f) && seen.has(f));
 
   mkdirSync(abs, { recursive: true });
 
@@ -123,5 +137,6 @@ export function writeCollection(root, dir, items) {
     deleted.add(`${dir}/${f}`);
   }
 
+  SEEN.set(abs, keep);
   return { written: [...written], deleted: [...deleted] };
 }

@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readCollection, writeCollection, slugCollision } from '../skills/gtg/lib/store.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'gtg-store-'));
@@ -136,4 +138,25 @@ test('a slug whose case changed keeps the record and reports both paths', () => 
 
 test('a path-traversing slug is refused', () => {
   assert.throws(() => writeCollection(tmp(), 'd', [{ slug: '../escape' }]), /slug/);
+});
+
+// Two sessions share one checkout. Session 1 reads, session 2 (its own process, so its own
+// module state) adds a record, then session 1 writes the view it read. The write must delete
+// only what session 1 dropped from its own read, never a record it never saw.
+const STORE = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '../skills/gtg/lib/store.mjs')).href;
+test('a write never deletes a record another session created after this one read', () => {
+  const root = tmp();
+  writeCollection(root, 'd', [{ slug: 'a', n: 1 }, { slug: 'c', n: 1 }]);
+  const seen = readCollection(root, 'd');
+  execFileSync(process.execPath, ['--input-type=module', '-e', `
+    import { readCollection, writeCollection } from ${JSON.stringify(STORE)};
+    const root = ${JSON.stringify(root)};
+    writeCollection(root, 'd', [...readCollection(root, 'd'), { slug: 'b', n: 1 }]);
+  `]);
+  assert.equal(existsSync(join(root, 'd', 'b.json')), true, 'session 2 wrote b');
+  const res = writeCollection(root, 'd', seen.filter((e) => e.slug !== 'c').map((e) => ({ ...e, n: 2 })));
+  assert.equal(existsSync(join(root, 'd', 'b.json')), true, 'b was never seen by session 1, so it must survive');
+  assert.equal(existsSync(join(root, 'd', 'c.json')), false, 'c was seen and dropped, so it goes');
+  assert.deepEqual(res.deleted, ['d/c.json']);
+  assert.deepEqual(readCollection(root, 'd').map((e) => e.slug), ['a', 'b']);
 });
