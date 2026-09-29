@@ -28,7 +28,7 @@ jobs:
         if: github.server_url == 'https://github.com'
         with:
           python-version: '3.12'
-      - run: pip install markdown dnspython
+      - run: pip install -r postman/skills/postman/requirements.txt
         if: github.server_url == 'https://github.com'
       # Network-tolerant by construction: the batch tests stub has_mx, and the one real
       # lookup asserts a nonexistent host resolves False, which is also what any resolver

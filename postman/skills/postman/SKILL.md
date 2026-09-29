@@ -134,6 +134,9 @@ found, nothing sends: check the thread, then delete the `Attempting:` line to se
 replace it with a `Sent:` line to skip it. A send the server refused outright clears its
 `Attempting:` line and can be rerun.
 
+A batch that stops mid-send (PARTIAL, UNKNOWN or FAILED) prints why, counts that block in
+the `failed` column of the summary line, and exits 1.
+
 Bodies are written unwrapped, one line per paragraph: a newline in the body is a real
 line break in the email, so a labelled block (`Guests: 100` / `Dates: flexible`) stays a
 block instead of collapsing into prose.

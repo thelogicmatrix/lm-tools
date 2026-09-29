@@ -76,11 +76,10 @@ def load_identities():
                                      and d["imap_host"].strip()):
             raise SystemExit(f"{path}: identity {name!r} has an empty imap_host. "
                              f"Remove it to use {IMAP_HOST}.")
-        # refused, not ignored: the send path is held (#48, #49) and still dials Gmail,
-        # so an accepted smtp_host would send through a server the file never named
-        if "smtp_host" in d:
-            raise SystemExit(f"{path}: identity {name!r} sets smtp_host, which is not "
-                             f"supported yet. Sends go through smtp.gmail.com.")
+        if "smtp_host" in d and not (isinstance(d["smtp_host"], str)
+                                     and d["smtp_host"].strip()):
+            raise SystemExit(f"{path}: identity {name!r} has an empty smtp_host. "
+                             f"Remove it to use {SMTP_HOST}.")
         # html_sig is declared, never sniffed from the filesystem: inferring it from
         # "does SIGNATURE.html exist" means a typo'd assets path silently downgrades a
         # branded email to plain text and sends it anyway
@@ -711,8 +710,9 @@ def build_message(rec, ident, to=None, subject_prefix="", in_reply_to=None,
     return msg
 
 
-def smtp_send(msg, password, conn=None):
-    """Send one message. Pass conn to reuse an open session across a batch.
+def smtp_send(msg, password, conn=None, host=None):
+    """Send one message. Pass conn to reuse an open session across a batch. host is the
+    identity's smtp_host, None for Gmail, and only used when conn is None.
 
     Returns the recipients the server refused while it took the message for the rest,
     as smtplib gives them: {address: (code, reply)}. {} means every recipient took it.
@@ -721,7 +721,7 @@ def smtp_send(msg, password, conn=None):
     if conn is None:
         # the login address is the one on the message, so a message built for one
         # identity can never leave over the other identity's authenticated session
-        with smtp_session(password, msg["From"]) as s:
+        with smtp_session(password, msg["From"], host) as s:
             return smtp_send(msg, password, conn=s)
     # Once DATA is under way the server may hold the whole message, and a connection
     # that drops before its 250 arrives looks exactly like one that dropped before it had
@@ -775,12 +775,13 @@ def read_failed(mode, note):
 
 
 @contextlib.contextmanager
-def smtp_session(password, sender):
+def smtp_session(password, sender, host=None):
     """One authenticated SMTP session for a whole batch. A connect/login per
     recipient is 12 login cycles in a few seconds on the real run, which Gmail
     throttles, and a throttle at recipient 7 leaves 1 to 6 already sent.
+    host is the identity's smtp_host, None for Gmail. Always port 587 with STARTTLS.
     """
-    s = smtplib.SMTP("smtp.gmail.com", 587, timeout=SMTP_TIMEOUT)
+    s = smtplib.SMTP(host or SMTP_HOST, 587, timeout=SMTP_TIMEOUT)
     try:
         s.starttls(context=ssl.create_default_context())
         s.login(sender, password)
@@ -795,6 +796,7 @@ def smtp_session(password, sender):
 
 
 IMAP_HOST = "imap.gmail.com"
+SMTP_HOST = "smtp.gmail.com"
 # Gmail's English names. The fallback only: a non-English account names these folders in
 # its own language, so special_folder asks LIST for the SPECIAL-USE flag first (#52).
 DRAFTS = '"[Gmail]/Drafts"'
@@ -1312,7 +1314,8 @@ def fixture_home():
                         "default": True, "test_to": "ada+test@example.com"},
             "plain": {"sender": "ada.personal@example.com", "assets": str(assets),
                       "store": str(Path(td) / "store2"), "html_sig": False,
-                      "imap_host": "imap.mail.example"},
+                      "imap_host": "imap.mail.example",
+                      "smtp_host": "smtp.mail.example"},
         }), encoding="utf-8")
         prev = os.environ.get("POSTMAN_HOME")
         os.environ["POSTMAN_HOME"] = str(home)
@@ -2473,13 +2476,14 @@ Body.
         imaplib.IMAP4_SSL = _real_ssl
         os.environ.pop(pw_env(work), None)
         os.environ.pop(pw_env(resolve_identity("plain", None)), None)
-    # smtp_host is refused by name: the send path does not read it yet (#48, #49), and a
-    # silently ignored host would send through Gmail while the file says otherwise
+    # an empty host is refused by name, never read as "use the default": a blank field
+    # is a config that was meant to say something
     with tempfile.TemporaryDirectory() as td:
         _prev = os.environ["POSTMAN_HOME"]
         os.environ["POSTMAN_HOME"] = td
         try:
-            for _extra, _needle in (({"smtp_host": "smtp.mail.example"}, "smtp_host"),
+            for _extra, _needle in (({"smtp_host": ""}, "smtp_host"),
+                                    ({"smtp_host": "  "}, "smtp_host"),
                                     ({"imap_host": ""}, "imap_host")):
                 (Path(td) / "identities.json").write_text(json.dumps(
                     {"x": dict({"sender": "a@b.example", "assets": td, "store": td},
@@ -2725,13 +2729,14 @@ Body.
             assert [e[1] for e in ev if e[0] == "DATA"] == ["s1", "s2"], ev
             assert ev.index(("IMAP LOGOUT",)) < ev.index(("SMTP", "smtp.gmail.com")), ev
             assert all(r["sent"] for r in parse_batch(bp.read_text(encoding="utf-8"))[2])
+            assert "2 sent | 0 failed" in out, out
             # a partly refused list: the Cc bounced at RCPT, To took it. The block is
             # stamped (a rerun would send To a second copy) but not as clean, the refused
             # address is named, and the batch stops before block two
             bp.write_text(_two, encoding="utf-8")
             rc, out, ev = _run(["--send", str(bp)], smtp={"refuse": ["c@b.example"]})
-            assert isinstance(rc, SystemExit), (rc, out)
-            assert "c@b.example" in str(rc) and "550" in str(rc), str(rc)
+            assert rc == 1 and "0 sent | 1 failed" in out, (rc, out)
+            assert "PARTIAL: one" in out and "c@b.example (550" in out, out
             assert [e[1] for e in ev if e[0] == "DATA"] == ["s1"], ev
             _r = parse_batch(bp.read_text(encoding="utf-8"))[2]
             assert "refused c@b.example" in (_r[0]["sent"] or ""), _r[0]["sent"]
@@ -2760,7 +2765,7 @@ Body.
             # took block one and the connection dropped before its 250: UNKNOWN, stop.
             bp.write_text(_two, encoding="utf-8")
             rc, out, ev = _run(["--send", str(bp)], smtp={"drop": "after-data"})
-            assert isinstance(rc, SystemExit) and str(rc).startswith("UNKNOWN: one"), rc
+            assert rc == 1 and "UNKNOWN: one" in out and "0 sent | 1 failed" in out, out
             assert [e[1] for e in ev if e[0] == "DATA"] == ["s1"], ev
             _r = _blocks(bp)
             assert _r[0]["sent"] is None and "UNKNOWN" in (_r[0]["attempting"] or ""), _r[0]
@@ -2786,7 +2791,8 @@ Body.
             # as itself, the Attempting: line is cleared, and the rerun sends both
             bp.write_text(_two, encoding="utf-8")
             rc, out, ev = _run(["--send", str(bp)], smtp={"drop": "mail"})
-            assert isinstance(rc, smtplib.SMTPServerDisconnected), rc
+            assert rc == 1 and "FAILED: one" in out and "SMTPServerDisconnected" in out, out
+            assert "0 sent | 1 failed" in out, out
             assert not [e for e in ev if e[0] == "DATA"], ev
             assert [(r["sent"], r["attempting"]) for r in _blocks(bp)] == [(None, None)] * 2
             rc, out, ev = _run(["--send", str(bp)])
@@ -2795,21 +2801,37 @@ Body.
             bp.write_text(_two, encoding="utf-8")
             rc, out, ev = _run(["--send", str(bp)],
                                smtp={"data_reply": (554, b"5.7.1 rejected")})
-            assert isinstance(rc, smtplib.SMTPDataError), rc
+            assert rc == 1 and "FAILED: one" in out and "SMTPDataError" in out, out
             assert [(r["sent"], r["attempting"]) for r in _blocks(bp)] == [(None, None)] * 2
             # sent, then the Sent: stamp cannot be written (an editor holding the file):
             # the Attempting: line stays, so the block is UNKNOWN, never sendable again
             bp.write_text(_two, encoding="utf-8")
             _tmp = bp.with_suffix(".md.tmp")
             rc, out, ev = _run(["--send", str(bp)], smtp={"on_data": _tmp.mkdir})
-            assert isinstance(rc, SystemExit) and str(rc).startswith("UNKNOWN: one"), rc
-            assert "was sent" in str(rc) and "stamp" in str(rc), str(rc)
+            assert rc == 1 and "UNKNOWN: one" in out and "1 failed" in out, out
+            assert "was sent" in out and "stamp" in out, out
             _tmp.rmdir()
             _r = _blocks(bp)
             assert _r[0]["sent"] is None and _r[0]["attempting"], _r[0]
             rc, out, ev = _run(["--send", str(bp)])
             assert isinstance(rc, SystemExit) and str(rc).startswith("UNKNOWN: one"), rc
             assert not [e for e in ev if e[0] == "DATA"], ev
+            # smtp_host: absent dials Gmail (asserted on the clean batch above), present
+            # dials the declared host, for --send and for --test alike
+            os.environ[pw_env(resolve_identity("plain", None))] = "x"
+            bp.write_text(_two, encoding="utf-8")
+            rc, out, ev = _run(["--send", str(bp), "--as", "plain"])
+            assert rc == 0 and ("SMTP", "smtp.mail.example") in ev, (rc, ev)
+            os.environ["POSTMAN_TEST_TO"] = "ada+test@example.com"
+            try:
+                for _as, _host in (("branded", "smtp.gmail.com"),
+                                   ("plain", "smtp.mail.example")):
+                    rc, out, ev = _run(["--test", str(bp), "--as", _as])
+                    _dialled = [e for e in ev if e[0] == "SMTP"]
+                    assert rc == 0 and _dialled == [("SMTP", _host)], (_as, rc, ev)
+            finally:
+                os.environ.pop("POSTMAN_TEST_TO", None)
+                os.environ.pop(pw_env(resolve_identity("plain", None)), None)
         # cleanup never masks the error that killed the session
         for _cm, _kw in ((smtp_session, {}), (imap_session, {})):
             _ev = []
@@ -3204,7 +3226,7 @@ def main(argv=None):
         dest = test_to(ident)
         msg = build_message(recs[0], ident, to=dest, subject_prefix="[TEST] ",
                             base_dir=Path(args.test).parent)
-        smtp_send(msg, gmail_password(ident))
+        smtp_send(msg, gmail_password(ident), host=ident.get("smtp_host"))
         print(f"sent {msg['Subject']!r} to {dest}")
         return 0
     # is not None, not truthiness: --bounces 0 means "today only", not "no sweep"
@@ -3314,8 +3336,11 @@ def main(argv=None):
                     continue
                 append_draft(msg, pw, conn=imap)
                 print(f"draft {rec['slug']:<12} {rec['to']}{mark}", flush=True)
+        # why the batch stopped, when it did. Every stop is one block that did not cleanly
+        # send, and it is the failed count, so a stopped batch never reads "0 failed".
+        stop = None
         if args.send and plan:
-            with smtp_session(pw, ident["sender"]) as conn:
+            with smtp_session(pw, ident["sender"], ident.get("smtp_host")) as conn:
                 for rec, irt, refs in plan:
                     msg = build_message(rec, ident, in_reply_to=irt, references=refs,
                                         base_dir=Path(batch).parent)
@@ -3333,22 +3358,27 @@ def main(argv=None):
                         with contextlib.suppress(OSError, BatchError):
                             stamp_block(Path(batch), rec["slug"], f"{tried} UNKNOWN, {e}",
                                         key="Attempting")
-                        raise SystemExit(
-                            f"UNKNOWN: {rec['slug']} {rec['to']}: the connection failed "
-                            f"after the message went to the server ({e}), so it may have "
-                            f"been sent. It was not retried. A rerun checks Sent Mail "
-                            f"before it will send this block. Nothing further has been "
-                            f"sent.")
-                    except Exception:
+                        stop = (f"UNKNOWN: {rec['slug']} {rec['to']}: the connection "
+                                f"failed after the message went to the server ({e}), so "
+                                f"it may have been sent. It was not retried. A rerun "
+                                f"checks Sent Mail before it will send this block. Nothing "
+                                f"further has been sent.")
+                        break
+                    except Exception as e:
                         # refused outright or failed before DATA: the server took nothing,
-                        # so the block is sendable again and the error surfaces as itself
+                        # so the block is sendable again
                         try:
                             stamp_block(Path(batch), rec["slug"], None)
-                        except (OSError, BatchError) as e:
+                        except (OSError, BatchError) as e2:
                             print(f"postman: {rec['slug']}: its Attempting: line could not "
-                                  f"be cleared ({e}), so a rerun treats it as UNKNOWN.",
+                                  f"be cleared ({e2}), so a rerun treats it as UNKNOWN.",
                                   file=sys.stderr)
-                        raise
+                        if not isinstance(e, (OSError, smtplib.SMTPException)):
+                            raise                   # not a mail error: a bug, surfaced whole
+                        stop = (f"FAILED: {rec['slug']} {rec['to']}: {type(e).__name__}: "
+                                f"{' '.join(str(e).split())}. The server took nothing, so a "
+                                f"rerun sends it. Nothing further has been sent.")
+                        break
                     when = datetime.now().strftime("%Y-%m-%d %H:%M")
                     line = (f"{when} PARTIAL, refused {', '.join(refused)}" if refused
                             else when)
@@ -3360,26 +3390,31 @@ def main(argv=None):
                     try:
                         stamp_block(Path(batch), rec["slug"], line)
                     except (OSError, BatchError) as e:
-                        raise SystemExit(
-                            f"UNKNOWN: {rec['slug']} {rec['to']} was sent, but its Sent: "
-                            f"stamp could not be written ({type(e).__name__}: {e}). Its "
-                            f"Attempting: line holds it, so a rerun checks Sent Mail "
-                            f"before sending it again. Nothing further has been sent.")
+                        stop = (f"UNKNOWN: {rec['slug']} {rec['to']} was sent, but its "
+                                f"Sent: stamp could not be written ({type(e).__name__}: "
+                                f"{e}). Its Attempting: line holds it, so a rerun checks "
+                                f"Sent Mail before sending it again. Nothing further has "
+                                f"been sent.")
+                        break
                     if refused:
                         # the others have it, so the block is stamped (a rerun would send
                         # them a second copy), but the stamp names who did not, and the
                         # batch stops: one refusal can be the first of a run of them (#49)
-                        raise SystemExit(
-                            f"PARTIAL: {rec['slug']} went to every recipient but "
-                            f"{refusal_text(refused)}. Its Sent: line says so, and a rerun "
-                            f"will not send it again. Nothing further has been sent.")
+                        stop = (f"PARTIAL: {rec['slug']} went to every recipient but "
+                                f"{refusal_text(refused)}. Its Sent: line says so, and a "
+                                f"rerun will not send it again. Nothing further has been "
+                                f"sent.")
+                        break
                     sent += 1
                     print(f"sent  {rec['slug']:<12} {rec['to']}{mark}", flush=True)
+        if stop:
+            print(stop, flush=True)
+        failed = 1 if stop else 0
         print(f"\n{len(recs)} parsed | {skipped} skipped | {len(pending)} built | "
-              f"{sent} sent | 0 failed")
+              f"{sent} sent | {failed} failed")
         if args.send:
             print(f"Run --bounces {ident['name']} 1 in 30 minutes for layer 4.")
-        return 0
+        return 1 if failed else 0
     if args.selftest:
         selftest()
         return 0
