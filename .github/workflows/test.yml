@@ -20,7 +20,7 @@ jobs:
       - run: node logical-learning/test/learn.test.mjs
       - run: node --test runbooks/test/*.test.mjs
       # Offline: every model call is a stubbed fetch and jevmail's postman call is injected.
-      - run: node jevtools/skills/jevchecker/jevchecker.test.mjs
+      - run: node --test jevtools/skills/jevchecker/*.test.mjs
       - run: node --test jevtools/scripts/*.test.mjs
       - uses: actions/setup-python@v5
         if: github.server_url == 'https://github.com'

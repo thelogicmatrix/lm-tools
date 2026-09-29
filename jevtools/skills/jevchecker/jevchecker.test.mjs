@@ -889,6 +889,8 @@ export async function selftest() {
   // reads and would otherwise make the result depend on whether ~/.jev.env exists.
   const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), 'jevchecker.mjs');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jevchecker-cli-'));
+  // The model-arm runs below journal their calls. Kept in this temp dir, which is removed at the end.
+  process.env.JEVCHECKER_JOURNAL_DIR = path.join(tmp, 'journal');
   const write = (name, text) => { const p = path.join(tmp, name); fs.writeFileSync(p, text); return p; };
   const noChecks = write('nochecks.json', JSON.stringify({ name: 'nochecks', chunk: { type: 'lines' } }));
   const needsSource = write('needsource.json', JSON.stringify({ name: 'needsource', chunk: { type: 'lines' },

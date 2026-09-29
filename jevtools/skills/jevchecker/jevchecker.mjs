@@ -8,11 +8,14 @@
 // chunked nothing, or in which the model answered nothing at all, did not run, so those exit 1.
 //
 //   jevchecker.mjs <body> --sweep <sweep.json> [--source <file>] [--json <out>] [--text]
+//     [--concurrency N] [--resume]
 //   jevchecker.mjs --selftest
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { runSweep, modelChecks, BUDGET } from './lib/engine.mjs';
-import { isMain, parseArgs, readKey } from '../../scripts/lib.mjs';
+import { openJournal } from './lib/journal.mjs';
+import { CONCURRENCY, isMain, parseArgs, readKey } from '../../scripts/lib.mjs';
 
 async function main(argv) {
   const { opt, flag } = parseArgs(argv);
@@ -27,16 +30,23 @@ async function main(argv) {
 
   // The body is the first argument that is neither a flag nor a flag's value, so `--sweep s.json body`
   // finds `body` rather than reading a file called `--sweep`.
-  const VALUED = ['--sweep', '--source', '--json'];
+  const VALUED = ['--sweep', '--source', '--json', '--concurrency'];
   const bodyPath = argv.find((a, i, all) => !a.startsWith('--') && !VALUED.includes(all[i - 1]));
   const sweepPath = opt('sweep');
   // Exit 1 is for the sweep NOT RUNNING. It is never used for what a sweep found.
-  const usage = 'usage: jevchecker.mjs <body> --sweep <sweep.json> [--source <file>] [--json <out>] [--text]';
+  const usage = 'usage: jevchecker.mjs <body> --sweep <sweep.json> [--source <file>] [--json <out>] [--text] [--concurrency N] [--resume]';
   if (!bodyPath || !sweepPath) { console.error(usage); process.exit(1); }
   // `--json` with no value would be silently ignored and the copy never written. And `--json` naming
   // the body or the source overwrites the input with the output.
   const jsonOut = opt('json');
   if (flag('json') && (!jsonOut || jsonOut.startsWith('--'))) { console.error(usage); process.exit(1); }
+  // Calls in flight. Digits only, because runPool starts that many workers, and 1.5 or 0 would
+  // quietly start one or none.
+  const concurrency = flag('concurrency') ? Number(opt('concurrency')) : CONCURRENCY;
+  if (flag('concurrency') && !(/^\d+$/.test(opt('concurrency') ?? '') && concurrency >= 1)) {
+    console.error(`--concurrency takes a whole number of 1 or more\n${usage}`);
+    process.exit(1);
+  }
   // Compared case-insensitively on Windows, where `Body.txt` and `body.TXT` are the same file.
   const same = (a, b) => (process.platform === 'win32'
     ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
@@ -100,17 +110,29 @@ async function main(argv) {
   // need. Exit 1 is honest here because the sweep did NOT run, which is the only thing exit 1 means.
   // `process.exit` is safe in this branch for the reason it is safe in read(): every fault that
   // reaches it is found before a socket is opened, and the line has already been written to stderr.
+  //
+  // Every landed call is journaled, so a killed or partly failed run keeps what it paid for. The
+  // journal sits in the temp directory under a hash of the chunks, checks and source, so rerunning
+  // the same command with --resume finds it without a path to remember (lib/journal.mjs).
+  let log = null;
+  const journal = (id) => {
+    const dir = process.env.JEVCHECKER_JOURNAL_DIR || path.join(os.tmpdir(), 'jevchecker');
+    log = openJournal(path.join(dir, `${id}.jsonl`), { resume: flag('resume') });
+    process.stderr.write(`  journal ${log.file}\n`);
+    return log;
+  };
   let r;
   try {
     r = await runSweep(body, sweep, source, key, {
-      onDone: (d, t) => process.stderr.write(`  [${d}/${t}] calls\n`),
+      concurrency, journal, onDone: (d, t) => process.stderr.write(`  [${d}/${t}] calls\n`),
     });
   } catch (e) {
     console.error(`the sweep did not run: ${e.message}`);
     process.exit(1);
   }
 
-  console.log(`\n${sweep.name}: ${r.chunks} chunks, ${r.calls} calls, $${r.cost.toFixed(6)}`);
+  console.log(`\n${sweep.name}: ${r.chunks} chunks, ${r.calls} calls, $${r.cost.toFixed(6)}`
+    + `${r.resumed ? `, ${r.resumed} answers resumed from the journal` : ''}`);
   // The source rides in every call, so a big one leaves little room to pack and is re-sent each time.
   // Warned after packing, when the call count shows it happened, rather than only at the budget.
   if (source && r.calls > 1 && source.length > BUDGET / 2) {
@@ -140,7 +162,10 @@ async function main(argv) {
   if (r.unanswered.length) {
     console.log(`\n${r.unanswered.length} UNANSWERED (treated as candidates, not as clean):`);
     for (const u of r.unanswered) console.log(`  ${u.checkId.padEnd(14)} ${u.path}${u.error ? `  (${u.error})` : ''}`);
+    if (log) console.log(`\nRun again with --resume to ask only these ${r.unanswered.length}. The journal is ${log.file}`);
   }
+  // Nothing left to resume, so the journal goes. Kept whenever a row is still unanswered.
+  if (log && !r.unanswered.length) log.remove();
   // ⚠ EVERY QUESTION UNANSWERED IS A SWEEP THAT DID NOT RUN. A bad key or an outage fails every call,
   // and the lines above then read "0 candidates to read" over a body nothing judged. Said in a banner
   // and exit 1, the same class as NOTHING SWEPT. Some unanswered is still exit 0: the rest ran.

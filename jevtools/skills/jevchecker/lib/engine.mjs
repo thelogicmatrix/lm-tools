@@ -2,6 +2,7 @@
 // Nothing in this file asserts anything: a surfaced chunk is "worth reading", never "wrong".
 import { chunk as chunkBody } from './chunk.mjs';
 import { CONCURRENCY, askJev, runPool } from '../../../scripts/lib.mjs';
+import { sweepId } from './journal.mjs';
 
 // The torn band for a noul. A noul has no confidence field, so distance from 0.5 is the only proxy
 // available, and it says the model is TORN rather than unsure. Those are different things, which is
@@ -373,7 +374,12 @@ function strength(row, byCheck) {
 // A transient failure (a 429 at concurrency 6, a dropped connection) is retried inside lib.mjs's
 // postText, which every Jev caller shares. A call that reaches the catch below has used its
 // attempts, so it is not asked again here.
-export async function runSweep(body, sweep, sourceText, key, { concurrency = CONCURRENCY, ask = askJev, onDone } = {}) {
+//
+// `journal(id)` is optional and returns `{ prior, append }` for the sweep whose content hash is
+// `id` (journal.mjs). A valid answer in `prior` is used as it stands and never asked again, and a
+// chunk whose every question is answered there is left out of the packing, so its text is not paid
+// for twice. Each call has its answers appended the moment it lands.
+export async function runSweep(body, sweep, sourceText, key, { concurrency = CONCURRENCY, ask = askJev, onDone, journal } = {}) {
   // FIRST, before chunking and before the regex checks run, because every fault it catches is in the
   // sweep file rather than in the body and none of them is worth finding after the model is paid.
   preflight(sweep, sourceText);
@@ -389,47 +395,68 @@ export async function runSweep(body, sweep, sourceText, key, { concurrency = CON
   const clean = [];
   for (const check of regexChecks(sweep)) hits.push(...runRegex(chunks, check));
   const checks = modelChecks(sweep);
-  const calls = pack(chunks, checks, sweep?.state?.include_source ? sourceText : null);
+  const source = sweep?.state?.include_source ? sourceText : null;
   const byId = new Map(chunks.map((c) => [c.id, c]));
   const byCheck = new Map(checks.map((c) => [c.id, c]));
+  const log = journal && checks.length && chunks.length ? journal(sweepId(chunks, checks, source)) : null;
+  // Only an answer surface() accepts is kept. The file is on disk and anything can have edited it,
+  // so a key that parses to no chunk or check here, or an answer that is not a valid value, is
+  // simply asked again.
+  const prior = {};
+  for (const [qk, answer] of Object.entries(log?.prior ?? {})) {
+    const i = qk.indexOf('__');
+    const ck = byCheck.get(qk.slice(i + 2));
+    if (i > 0 && ck && byId.has(qk.slice(0, i)) && surface(ck, answer).band !== 'unanswered') prior[qk] = answer;
+  }
+  const pending = chunks.filter((c) => checks.some((ck) => !Object.hasOwn(prior, questionKey(c.id, ck.id))));
+  const calls = pack(pending, checks, source);
+  for (const call of calls) for (const qk of Object.keys(prior)) delete call.questions[qk];
   let cost = 0;
   const results = await runPool(calls, async (call) => {
+    let res;
     try {
-      return await ask(call.state, call.questions, key);
+      res = await ask(call.state, call.questions, key);
     } catch (e) {
       // A failed call is not a clean result. Every question in it becomes unanswered, which
       // surfaces, so a network blip can never read as "nothing to look at here".
       return { answers: null, cost: 0, error: e.message };
     }
+    const got = res?.answers && typeof res.answers === 'object' ? res.answers : {};
+    log?.append(Object.fromEntries(Object.keys(call.questions).filter((qk) => Object.hasOwn(got, qk))
+      .map((qk) => [qk, got[qk]])), Number(res?.cost) || 0);
+    return res;
   }, concurrency, onDone);
+  const place = (qk, answer, error) => {
+    const { chunkId, checkId } = parseKey(qk);
+    const s = surface(byCheck.get(checkId), answer);
+    const c = byId.get(chunkId);
+    // Every unanswered row says why, including the call that returned 200 without this answer or
+    // with a broken one. The NOTHING ANSWERED banner points the reader at these reasons.
+    const why = error ?? (s.band !== 'unanswered' ? undefined
+      : answer == null ? 'the response carried no answer for this question'
+        : `the answer was not a valid value: ${JSON.stringify(answer).slice(0, 80)}`);
+    const row = { chunkId, path: c?.path, text: c?.text, checkId, value: s.value, band: s.band,
+      error: why };
+    // Band first. `surfaced` and `band` are independent, so a torn answer under the surfacing
+    // line goes under the torn heading rather than into the candidate list.
+    if (s.band === 'torn') torn.push(row);
+    else if (s.band === 'unanswered') unanswered.push(row);
+    else if (s.surfaced) hits.push(row);
+    else clean.push(row);
+  };
+  for (const [qk, answer] of Object.entries(prior)) place(qk, answer);
   for (const [i, res] of results.entries()) {
     // Coerced, because the cost arrives from the API and a string there would otherwise throw in
     // the CLI's `toFixed` after the run was paid for, before a single result printed.
     cost += Number(res.cost) || 0;
-    for (const qk of Object.keys(calls[i].questions)) {
-      const { chunkId, checkId } = parseKey(qk);
-      const answer = res.answers?.[qk];
-      const s = surface(byCheck.get(checkId), answer);
-      const c = byId.get(chunkId);
-      // Every unanswered row says why, including the call that returned 200 without this answer or
-      // with a broken one. The NOTHING ANSWERED banner points the reader at these reasons.
-      const why = res.error ?? (s.band !== 'unanswered' ? undefined
-        : answer == null ? 'the response carried no answer for this question'
-          : `the answer was not a valid value: ${JSON.stringify(answer).slice(0, 80)}`);
-      const row = { chunkId, path: c?.path, text: c?.text, checkId, value: s.value, band: s.band,
-        error: why };
-      // Band first. `surfaced` and `band` are independent, so a torn answer under the surfacing
-      // line goes under the torn heading rather than into the candidate list.
-      if (s.band === 'torn') torn.push(row);
-      else if (s.band === 'unanswered') unanswered.push(row);
-      else if (s.surfaced) hits.push(row);
-      else clean.push(row);
-    }
+    for (const qk of Object.keys(calls[i].questions)) place(qk, res.answers?.[qk], res.error);
   }
   hits.sort((a, b) => strength(b, byCheck) - strength(a, byCheck));
-  // `asked` is the model-question count, so a caller can tell "all 40 unanswered" (nothing was
-  // checked, the key or the service failed) from "3 of 40 unanswered" without recounting.
-  const asked = calls.reduce((n, c) => n + Object.keys(c.questions).length, 0);
+  // `asked` is the model-question count, resumed answers included, so a caller can tell "all 40
+  // unanswered" (nothing was checked, the key or the service failed) from "3 of 40 unanswered"
+  // without recounting. `calls` and `cost` are this run's only.
+  const resumed = Object.keys(prior).length;
+  const asked = resumed + calls.reduce((n, c) => n + Object.keys(c.questions).length, 0);
   return { hits, torn, unanswered, clean, chunks: chunks.length, dropped: chunkStats.dropped ?? 0,
-    calls: calls.length, asked, cost };
+    calls: calls.length, asked, cost, resumed };
 }

@@ -25,6 +25,7 @@ text of every candidate, torn, unanswered and clean chunk is written to the file
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/skills/jevchecker/jevchecker.mjs" <body> --sweep <sweep.json> [--source <file>] [--json <out>] [--text]
+    [--concurrency N] [--resume]
 node "${CLAUDE_PLUGIN_ROOT}/skills/jevchecker/jevchecker.mjs" --selftest
 ```
 
@@ -58,6 +59,15 @@ Two outcomes mean the sweep did not run, and both exit 1 under a banner rather t
 question failing (a bad key, an outage). A partial failure exits 0 and lists the failed rows under
 UNANSWERED, each with its reason. A network error, 408, 429 or 5xx is retried up to three attempts with backoff, and a rerun costs
 fractions of a cent.
+
+Each call's answers go to a journal on disk the moment the call lands, and the path prints to
+stderr when the run begins. It holds the answers and nothing else, no body text. Its name is a hash of
+the chunks, the checks and the source, so after a Ctrl-C or a run with UNANSWERED rows, the same
+command with `--resume` asks only the rows still unanswered and reuses every answer already paid
+for. A changed body, sweep or source is a different journal, and a fresh run without `--resume`
+starts its journal empty. A run that ends with every row answered deletes it. The journals live in
+`jevchecker/` under the system temp directory, or in `JEVCHECKER_JOURNAL_DIR` when that is set.
+`--concurrency N` sets the calls in flight, 6 by default.
 
 ## Writing a check
 
