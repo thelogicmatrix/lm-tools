@@ -3,7 +3,7 @@
 // prompts through the live router path (prefilter, then one Jev call per prompt, ~$0.0004 each).
 //
 //   node <plugin>/scripts/check.mjs <runbook.md> "<prompt>" ... [--not "<prompt>"] [--purpose "<trial text>"] [--record]
-//   node <plugin>/scripts/check.mjs --changed [--dry]
+//   node <plugin>/scripts/check.mjs --changed [--dry] [--yes]
 //
 // Every plain prompt must score >= the write bar (settings().writeBar, firesAt + 0.05 = 0.85 by
 // default), the writing margin. A prompt the prefilter cuts counts as a fail, because a cut
@@ -14,7 +14,9 @@
 // --record writes the prompts and a fingerprint of the scored purpose to the ledger
 // (settings().ledger). --changed re-runs, with their stored prompts, only the runbooks whose
 // purpose moved since their ledger entry, and records the new result. An unchanged purpose costs
-// nothing. --dry lists what would run and makes no call.
+// nothing. --dry lists what would run and makes no call. Its first line is the call count and
+// cost, and a run over CALL_CAP calls needs --yes (#105), so a bulk purpose edit is never a
+// surprise bill.
 import path from 'node:path';
 import { settings } from './config.mjs';
 import * as J from './router.mjs';
@@ -28,6 +30,10 @@ const BAR = s.firesAt;
 // under the bar itself.
 const WRITE_BAR = s.writeBar;
 const ROUTE_OPTS = { firesAt: s.firesAt, maxInject: s.maxInject, shortlist: s.shortlist };
+// --changed stops above this many calls unless --yes is passed. The cost per call is the header's
+// measured figure. A prompt the prefilter cuts makes no call, so the count is an upper bound.
+const CALL_CAP = 20;
+const COST_PER_CALL = 0.0004;
 
 // Called after the usage parse, so a bad command line gets the usage line wherever it runs.
 const requireDir = () => { if (!s.dir) { console.error('No runbooks folder found (RUNBOOKS_DIR, .runbooks/config.json dir, docs/runbooks).'); process.exit(2); } };
@@ -53,17 +59,22 @@ async function score(target, books, key, pos, neg) {
 
 const args = process.argv.slice(2);
 const flag = (f) => { const i = args.indexOf(f); if (i < 0) return false; args.splice(i, 1); return true; };
-const changedMode = flag('--changed'), dry = flag('--dry'), record = flag('--record');
+const changedMode = flag('--changed'), dry = flag('--dry'), record = flag('--record'), yes = flag('--yes');
 
 if (changedMode) {
   requireDir();
   const books = J.loadAll(s.dir);
   const ledger = L.load(s.ledger);
   const t = L.triage(books, ledger);
+  const pos = t.changed.reduce((n, f) => n + (ledger[f].prompts?.length ?? 0), 0);
+  const neg = t.changed.reduce((n, f) => n + (ledger[f].not?.length ?? 0), 0);
+  const calls = pos + neg;
+  console.log(`at most ${calls} Jev calls (${pos} prompts, ${neg} --not prompts), about $${(calls * COST_PER_CALL).toFixed(4)}`);
   console.log(`${t.unchanged.length} unchanged (skipped), ${t.changed.length} changed, ${t.untested.length} never recorded, ${t.gone.length} gone from the corpus`);
   for (const f of t.untested) console.log(`  never recorded: ${f} (run it once by hand with --record)`);
   for (const f of t.gone) console.log(`  gone: ${f} (its ledger entry can be deleted)`);
   if (dry || !t.changed.length) { for (const f of t.changed) console.log(`  would re-run: ${f}`); process.exit(0); }
+  if (calls > CALL_CAP && !yes) { console.error(`${calls} calls is over the ${CALL_CAP}-call cap, rerun with --yes to spend them`); process.exit(2); }
   const key = J.readKey();
   if (!key) { console.error('no jev key, cannot score'); process.exit(2); }
   let failedFiles = 0;
@@ -87,7 +98,7 @@ if (changedMode) {
     else if (args[i] === '--purpose') purpose = args[++i];
     else pos.push(args[i]);
   }
-  if (!target || !pos.length) { console.error('usage: check.mjs <runbook.md> "<prompt>" ... [--not "<prompt>"] [--purpose "<text>"] [--record]  |  --changed [--dry]'); process.exit(2); }
+  if (!target || !pos.length) { console.error('usage: check.mjs <runbook.md> "<prompt>" ... [--not "<prompt>"] [--purpose "<text>"] [--record]  |  --changed [--dry] [--yes]'); process.exit(2); }
   requireDir();
 
   const books = J.loadAll(s.dir).map((b) => (b.file === target && purpose ? { ...b, purpose } : b));

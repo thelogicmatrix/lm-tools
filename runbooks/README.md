@@ -66,7 +66,7 @@ With no folder found, the plugin does nothing, so installing it in a repo withou
 ```
 node <plugin>/scripts/index.mjs --lint                     lint every header, exit 1 on a violation
 node <plugin>/scripts/check.mjs <runbook.md> "<prompt>" ... [--not "<prompt>"] [--purpose "<text>"] [--record]
-node <plugin>/scripts/check.mjs --changed [--dry]          re-score only purposes that moved
+node <plugin>/scripts/check.mjs --changed [--dry] [--yes]  re-score only purposes that moved, --yes above 20 calls
 node <plugin>/scripts/router.mjs --selftest                offline router check, no API call
 node --test <plugin>/test/*.test.mjs                       the plugin's tests
 ```

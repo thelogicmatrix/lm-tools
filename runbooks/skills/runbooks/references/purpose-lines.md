@@ -57,6 +57,7 @@ sets `ledger`). From then on:
 - `check.mjs --changed` re-runs only the runbooks whose purpose moved since their entry, with the
   stored prompts. An unchanged purpose costs no call.
 - `check.mjs --changed --dry` lists what would run, free.
+- Every `--changed` run prints its call count and cost first. Over 20 calls it stops unless you pass `--yes`.
 - `index.mjs --lint` names the changed and never-checked purposes.
 
 Only reword a purpose when the check fails or the runbook's job changed. A passing line stays as

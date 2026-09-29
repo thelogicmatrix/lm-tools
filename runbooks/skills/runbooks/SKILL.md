@@ -82,7 +82,7 @@ Run these from the repo that holds the runbooks. They find the folder the same w
 |---|---|
 | `node <plugin>/scripts/index.mjs --lint` | Lints every header. Exits 1 on a violation. Also prints advisories that never fail it. |
 | `node <plugin>/scripts/check.mjs <runbook.md> "<prompt>" "<prompt>" "<prompt>" --not "<prompt>"` | Scores one purpose line through the live router. Add `--purpose "<text>"` to trial a rewrite, `--record` to save a passing run to the ledger. |
-| `node <plugin>/scripts/check.mjs --changed` | Re-scores only the purposes that moved since their ledger entry. Add `--dry` to list them free. |
+| `node <plugin>/scripts/check.mjs --changed` | Re-scores only the purposes that moved since their ledger entry. Add `--dry` to list them free. Over 20 calls it needs `--yes`. |
 | `node <plugin>/scripts/router.mjs --selftest` | Checks the router offline, with no API call. |
 | `node <plugin>/scripts/projects.mjs pack --project <slug> --output <path.zip>` | Makes a local ZIP of tagged live and retired runbooks. Repeat `--exclude <relative-path>` to omit reviewed files. A scan finding stops the pack. |
 | `node <plugin>/scripts/projects.mjs retire --project <slug> [--apply]` | Previews moves and tag removals. `--apply` edits live runbooks after collision and dirty-file checks. |
