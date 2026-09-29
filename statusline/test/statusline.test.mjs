@@ -3,6 +3,8 @@
 // crashing the session's status line.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +52,26 @@ const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
   assert.equal(label({ CLAUDE_STATUSLINE_ACCOUNT: 'work' }), 'work');
   assert.equal(label({ CLAUDE_CONFIG_DIR: '/x/.claudework', CLAUDE_STATUSLINE_ACCOUNT: '' }), 'claudework');
   assert.equal(label({ CLAUDE_CONFIG_DIR: '/x/.claude', CLAUDE_STATUSLINE_ACCOUNT: '' }), 'personal');
+}
+
+// Effort: settings.json is read once per render, not once per mention. Counted by patching
+// fs.readFileSync, which the script calls through the same module object.
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'statusline-'));
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ effortLevel: 'high' }));
+  const saved = process.env.CLAUDE_CONFIG_DIR;
+  const realRead = fs.readFileSync;
+  let reads = 0;
+  process.env.CLAUDE_CONFIG_DIR = dir;
+  fs.readFileSync = (p, ...rest) => { if (String(p).endsWith('settings.json')) reads += 1; return realRead(p, ...rest); };
+  try {
+    assert.match(strip(render({}).split('\n')[0]), /^Claude \| hi \|/);
+    assert.equal(reads, 1, 'settings.json is read once');
+  } finally {
+    fs.readFileSync = realRead;
+    if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // Malformed stdin: no output, no crash.

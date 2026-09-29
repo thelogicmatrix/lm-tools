@@ -131,28 +131,48 @@ function samePath(left, right) {
   return leftResolved === rightResolved;
 }
 
+// The first line of a file, read in chunks so a 400 MB session costs one small read. Codex writes
+// session_meta as line 1 (all 255 local files, 2026-09-29, median 19 KB, max 23 KB).
+function firstLine(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(64 * 1024);
+    const parts = [];
+    for (let pos = 0; ;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, pos);
+      if (!n) break;
+      const nl = buf.subarray(0, n).indexOf(10);
+      parts.push(Buffer.from(buf.subarray(0, nl >= 0 ? nl : n)));
+      if (nl >= 0) break;
+      pos += n;
+    }
+    return Buffer.concat(parts).toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// Newest first by mtime, and a file is read whole only when its first line says it is a root
+// session in this cwd. Reading every file in full first cost 2.0 s over 255 files and 423 MB.
 export function findLatestSession(root, cwd = process.cwd()) {
   if (!fs.existsSync(root)) throw new Error(`Codex sessions directory not found: ${root}`);
 
-  const sessions = sessionFiles(root)
-    .map((sessionPath) => {
-      const parsed = parseSession(fs.readFileSync(sessionPath, 'utf8'));
-      return {
-        ...parsed,
-        path: sessionPath,
-        modified: fs.statSync(sessionPath).mtimeMs,
-      };
-    })
-    .filter((session) => !session.isSubagent && session.model && session.usage)
+  const files = sessionFiles(root)
+    .map((sessionPath) => ({ path: sessionPath, modified: fs.statSync(sessionPath).mtimeMs }))
     .sort((left, right) => right.modified - left.modified);
 
-  const selected = sessions.find((session) => samePath(session.cwd, cwd));
-  if (!selected) {
-    throw new Error(
-      `No root Codex session matching ${cwd} with token usage found under ${root}. Use --session FILE to select one explicitly.`,
-    );
+  for (const file of files) {
+    let head = parseSession(firstLine(file.path));
+    let whole;
+    // No session_meta on line 1 is an older or odd file, so it gets the full read it always had.
+    if (!head.cwd) head = whole = parseSession(fs.readFileSync(file.path, 'utf8'));
+    if (head.isSubagent || !samePath(head.cwd, cwd)) continue;
+    whole ??= parseSession(fs.readFileSync(file.path, 'utf8'));
+    if (!whole.isSubagent && whole.model && whole.usage) return { ...whole, ...file };
   }
-  return selected;
+  throw new Error(
+    `No root Codex session matching ${cwd} with token usage found under ${root}. Use --session FILE to select one explicitly.`,
+  );
 }
 
 function assignmentRange(lines, start, end, key) {

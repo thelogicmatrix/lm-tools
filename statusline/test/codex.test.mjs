@@ -94,6 +94,45 @@ assert.throws(
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// ⚠ NEWEST FIRST, WHOLE FILES ONLY ON A MATCH. Every session file used to be read in full before
+// the newest match was picked: 2.0 s over 255 files and 423 MB. The scan now reads each file's first
+// line (session_meta) newest-first and reads a whole file only when its cwd matches. Counted by
+// patching fs.readFileSync, which the script calls through the same default export.
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'statusline-codex-'));
+  const now = Date.now() / 1000;
+  const write = (name, body, age) => {
+    const p = path.join(dir, name);
+    fs.writeFileSync(p, body);
+    fs.utimesSync(p, now - age, now - age);
+    return p;
+  };
+  const other = (cwd) => meta().replace('C:\\\\work\\\\demo', cwd);
+  for (let i = 0; i < 5; i++) write(`old-${i}.jsonl`, `${meta()}\n${usage(totals)}\n`, 100 + i);
+  const newest = write('newest.jsonl', `${meta()}\n${usage(totals)}\n`, 1);
+  write('elsewhere.jsonl', `${other('C:\\\\work\\\\other')}\n${usage(totals)}\n`, 0);
+  // A match with no usage yet is skipped for the next match, as before.
+  const blank = write('blank.jsonl', `${meta()}\n`, 0.5);
+  // A file whose session_meta is not on line 1 is still read, in full, as before.
+  const late = write('late.jsonl', `{"type":"turn_context"}\n${other('C:\\\\work\\\\late')}\n${usage(totals)}\n`, 200);
+
+  const realRead = fs.readFileSync;
+  const reads = [];
+  fs.readFileSync = (p, ...rest) => { reads.push(path.basename(String(p))); return realRead(p, ...rest); };
+  try {
+    assert.equal(findLatestSession(dir, 'C:\\work\\demo').path, newest);
+    assert.deepEqual(reads, ['blank.jsonl', 'newest.jsonl'], 'only the matches down to the first with usage are read whole');
+    reads.length = 0;
+    assert.throws(() => findLatestSession(dir, 'C:\\work\\missing'), /No root Codex session matching/);
+    assert.deepEqual(reads, ['late.jsonl'], 'a miss reads no file whole except one with no session_meta on line 1');
+    reads.length = 0;
+    assert.equal(findLatestSession(dir, 'C:\\work\\late').path, late);
+  } finally {
+    fs.readFileSync = realRead;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 {
   const before = [
     'model = "gpt-5.6-sol"',
@@ -153,7 +192,7 @@ assert.throws(
   assert.equal(manifest.interface.category, 'Productivity');
 
   const skill = fs.readFileSync(path.join(root, 'skills', 'statusline', 'SKILL.md'), 'utf8');
-  assert.match(skill, /^---\nname: statusline\ndescription: Use when /);
+  assert.match(skill, /^---\r?\nname: statusline\r?\ndescription: Use when /);
   assert.match(skill, /statusline-codex\.mjs/);
 }
 

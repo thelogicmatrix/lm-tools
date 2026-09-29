@@ -71,9 +71,10 @@ function limitSegment(label, window, dim) {
 }
 
 function render(data) {
+  const effort = effortLabel();   // once: each call reads and parses settings.json
   const row1 = [
     `${DIM}${data.model?.display_name || 'Claude'}${RESET}`,
-    effortLabel() && `${DIM}${effortLabel()}${RESET}`,
+    effort && `${DIM}${effort}${RESET}`,
     `${DIM}${path.basename(data.workspace?.current_dir || process.cwd())}${RESET}`,
     contextBar(data.context_window),
     `${DIM}${accountLabel()}${RESET}`,
