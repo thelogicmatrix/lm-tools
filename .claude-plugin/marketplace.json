@@ -28,11 +28,6 @@
       "description": "Your personal tutor. One subject, one project you want, one new concept per session, and a pass/fail gate at the end of each session that you don't get to mark yourself. Extend it with your own study tracks in .learn/tracks/."
     },
     {
-      "name": "statusline",
-      "source": "./statusline",
-      "description": "Usage and context at a glance. Context fill and usage limits in the footer of Claude Code and Codex, with nothing running in the background, plus an on-demand session cost estimate in Codex."
-    },
-    {
       "name": "postman",
       "source": "./postman",
       "description": "The ultimate email manager. Sends cold email and threaded replies from your own mailbox. If any reply in a batch cannot find its thread, nothing sends. Extend it with one identity per mailbox, each with its own signature, voice and password command."

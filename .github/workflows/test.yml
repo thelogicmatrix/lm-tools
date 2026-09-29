@@ -24,8 +24,6 @@ jobs:
       - run: node jevtools/scripts/lib.test.mjs
       - run: node jevtools/scripts/jevmail.mjs --selftest
       - run: node jevtools/scripts/jevmail.triage.mjs --selftest
-      - run: npm test
-        working-directory: statusline
       - uses: actions/setup-python@v5
         if: github.server_url == 'https://github.com'
         with:

@@ -47,9 +47,6 @@ One subject, one project you want, one new concept per session, and a pass/fail 
 ### [runbooks](runbooks/README.md): immediate intelligent context injection
 Short files of procedures, rules and lookup tables. On every prompt a cheap model picks the ones that apply and points the agent to them before it answers. **Extend it** with thresholds, lint rules and session-start lines in `.runbooks/`.
 
-### [statusline](statusline/README.md): usage and context at a glance
-Context fill and usage limits in the footer of Claude Code and Codex, with nothing running in the background, plus an on-demand session cost estimate in Codex.
-
 ### [logical-research](logical-research/README.md): research once, keep it usable 
 Reads a question's sources, or a whole channel, book or doc set, in full, and writes context you can paste into a model later, with every claim graded and traced. **Extend it** with reading angles you reuse in `.lr/angles/`.
 
