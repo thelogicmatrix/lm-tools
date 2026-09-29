@@ -5,11 +5,12 @@ import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import { appendFileSync, mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 import { readCollection, writeCollection } from '../skills/gtg/lib/store.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'gtg', 'gtg.mjs');
+const SHIM = (name) => pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), name)).href;
 
 function tempRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'gtg-'));
@@ -46,7 +47,12 @@ function gtg(cwd, args, opts = {}) {
   if (opts.session === null) delete env.GTG_SESSION_ID;
   else env.GTG_SESSION_ID = opts.session || 'test-session';
   if (opts.hub) env.GTG_HUB = opts.hub;
-  return spawnSync(process.execPath, [CLI, ...args], {
+  // opts.tty: run gtg's TTY branch with stdout still piped to the test (colour off).
+  // opts.spawnLog: print the child processes gtg ran, as one GTG_SPAWNS line on stderr.
+  const pre = [];
+  if (opts.tty) { pre.push('--import', SHIM('tty-shim.mjs')); env.NO_COLOR = '1'; }
+  if (opts.spawnLog) pre.push('--import', SHIM('spawn-log-shim.mjs'));
+  return spawnSync(process.execPath, [...pre, CLI, ...args], {
     cwd, env, encoding: 'utf8', input: opts.input ?? '',
   });
 }
@@ -798,7 +804,7 @@ const patchActive = (root, fn) => {
 
   // dirty worktree is flagged
   writeFileSync(join(wt, 'scratch.txt'), 'uncommitted');
-  r = gtg(repo, ['list']);
+  r = gtg(repo, ['list'], { tty: true });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /uncommitted/, 'dirty worktree not flagged');
 
@@ -1003,7 +1009,7 @@ const patchActive = (root, fn) => {
   const r = gtg(repo, [...HANDOFF_ARGS('unreachable-wt', 'Unreachable Wt'),
     '--worktree', join(repo, 'no-such-worktree-dir')], { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  const rl = gtg(repo, ['list']);
+  const rl = gtg(repo, ['list'], { tty: true });
   assert.equal(rl.status, 0, rl.stderr);
   assert.match(rl.stdout, /●\s*\?\s*uncommitted/,
     `an unreachable explicit worktree must render '?', not silently show nothing, got:\n${rl.stdout}`);
@@ -1018,7 +1024,7 @@ const patchActive = (root, fn) => {
   const r = gtg(repo, HANDOFF_ARGS('hub-entry', 'Hub Entry'), { input: BODY }); // worktree: 'repo root'
   assert.equal(r.status, 0, r.stderr);
   writeFileSync(join(repo, 'unrelated-hub-churn.txt'), 'noise'); // dirty the HUB, not any project's worktree
-  const rl = gtg(repo, ['list']);
+  const rl = gtg(repo, ['list'], { tty: true });
   assert.equal(rl.status, 0, rl.stderr);
   assert.doesNotMatch(rl.stdout, /uncommitted/,
     `a 'repo root' entry must not be flagged dirty from hub churn, got:\n${rl.stdout}`);
@@ -1035,10 +1041,33 @@ const patchActive = (root, fn) => {
   writeFileSync(join(wt, 'dirty.txt'), 'x');
   const r = gtg(repo, [...HANDOFF_ARGS('own-wt-proj', 'Own Wt Proj'), '--worktree', wt], { input: BODY });
   assert.equal(r.status, 0, r.stderr);
-  const rl = gtg(repo, ['list']);
+  const rl = gtg(repo, ['list'], { tty: true });
   assert.equal(rl.status, 0, rl.stderr);
   assert.match(rl.stdout, /Own Wt Proj[\s\S]*?● 1 uncommitted/, 'dirty count for the entry\'s own worktree must resolve consistently');
   console.log('ok 24 - minor: resolveDir consistent between dirty-map build and render');
+}
+
+// --- 24c. #96: a piped list is read by a tool, not a person, so it skips the per-worktree
+// `git status`. The same list on a TTY still runs it and flags the dirty worktree. ---
+{
+  const repo = tempRepo();
+  const wt = tempRepo();
+  execSync('git commit -q --allow-empty -m init', { cwd: wt });
+  writeFileSync(join(wt, 'dirty.txt'), 'x');
+  const r = gtg(repo, [...HANDOFF_ARGS('piped-wt', 'Piped Wt'), '--worktree', wt], { input: BODY });
+  assert.equal(r.status, 0, r.stderr);
+  const statusCalls = (res) => JSON.parse(res.stderr.match(/^GTG_SPAWNS (.*)$/m)[1])
+    .filter((a) => a[0] === 'git' && a.includes('status'));
+  const piped = gtg(repo, ['list'], { spawnLog: true });
+  assert.equal(piped.status, 0, piped.stderr);
+  assert.match(piped.stdout, /Piped Wt/);
+  assert.doesNotMatch(piped.stdout, /uncommitted/, 'a piped list shows no dirty flag');
+  assert.deepEqual(statusCalls(piped), [], 'a piped list spawns no git status');
+  const tty = gtg(repo, ['list'], { tty: true, spawnLog: true });
+  assert.equal(tty.status, 0, tty.stderr);
+  assert.match(tty.stdout, /Piped Wt[\s\S]*?● 1 uncommitted/);
+  assert.equal(statusCalls(tty).length, 1, 'a TTY list runs one git status per distinct worktree');
+  console.log('ok 24c - #96: piped list skips git status, TTY list keeps the dirty flag');
 }
 
 // --- 25. I2's ctx extension surface: `stats` (a bundled extension, receiving

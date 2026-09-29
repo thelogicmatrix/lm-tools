@@ -168,8 +168,11 @@ export function renderList(argv, ctx) {
 
   // One git call per distinct worktree, not per project - several projects
   // commonly share one checkout, which is exactly what the warning below is for.
+  // TTY only (#96): piped output goes to a tool, no person reads the flag, and each
+  // `git status` costs 195 to 290 ms on the home hub. An unchecked dir renders no tag.
   const dirty = new Map();
   for (const e of shown) {
+    if (!process.stdout.isTTY) break;
     if (!hasOwnWorktree(e)) continue;
     const dir = resolveDir(e, ctx.root);
     if (!dirty.has(dir)) dirty.set(dir, dirtyCount(dir));

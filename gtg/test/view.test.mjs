@@ -51,10 +51,17 @@ test('renderList marks dirty and unreachable worktrees and warns on a shared bra
       entry({ project: 'B', slug: 'b', worktree: wt, branch: 'fix/x' }),
       entry({ project: 'C', slug: 'c', worktree: join(wt, 'gone'), branch: 'fix/y' }),
     ];
-    const out = capture(() => renderList([], ctxFor(active)));
+    // The dirty flag is TTY-only (#96), and node --test pipes stdout.
+    const wasTTY = process.stdout.isTTY;
+    process.stdout.isTTY = true;
+    let out;
+    try { out = capture(() => renderList([], ctxFor(active))); } finally { process.stdout.isTTY = wasTTY; }
     assert.match(out, /1\. A s1 \[1h\] \(0h ago\) fix\/x ● 1 uncommitted/);
     assert.match(out, /3\. C s1 \[1h\] \(0h ago\) fix\/y ● \? uncommitted/, 'a missing worktree is ?, not clean');
     assert.match(out, /⚠ 2 projects share fix\/x @ .* - A, B/);
+    const piped = capture(() => renderList([], ctxFor(active)));
+    assert.doesNotMatch(piped, /uncommitted/, 'piped: no dirty flag, not even the ? of an unchecked dir');
+    assert.match(piped, /⚠ 2 projects share fix\/x @ .* - A, B/, 'the shared-branch warning stays');
   } finally { rmSync(wt, { recursive: true, force: true }); }
 });
 
