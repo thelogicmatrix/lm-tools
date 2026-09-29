@@ -151,7 +151,9 @@ Layer 2 is the gate on **cold outbound**: the address must come from the venue's
 with a read date inside 30 days. A reply is not held to that, because there is nothing to
 source - the resolved thread is the provenance, and the verdict reads `threaded` instead of
 `sourced`. Both verdicts clear. Layer 1 (MX) catches dead domains and runs on every address
-either way. Neither layer costs anything. Hunter is layer 3 and it is an **ask** - it runs only for addresses that
+either way, one lookup per domain. `NO-MX` means DNS says the domain takes no mail (no MX
+and no A record, or a null MX). `UNKNOWN` means DNS did not answer after one retry. Both
+block the batch, and `UNKNOWN` is worth a re-run once DNS is back. Neither layer costs anything. Hunter is layer 3 and it is an **ask** - it runs only for addresses that
 failed layer 2, and only after you agree to spend the credit. Never batch-verify.
 The rule came from a real batch: every own-site address survived verification, and the
 only address that would have bounced came from a third-party directory.

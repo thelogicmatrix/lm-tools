@@ -11,6 +11,7 @@ import smtplib
 import ssl
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 import email
 import email.header                             # not implied by `import email`
@@ -405,17 +406,46 @@ def check_attachments(recs, base_dir):
                 f"per-message limit")
 
 
-def has_mx(domain):
-    """Layer 1. False on any resolver failure - a domain we cannot check is not usable."""
+# Seconds one DNS lookup may take across every nameserver, per attempt. Set, not left to
+# dnspython's default, so a dead resolver cannot stall the gate for longer than this (#51).
+MX_LIFETIME = 5
+
+
+def _dns(resolve, domain, rdtype):
+    """One lookup, retried once on the two failures that are about the resolver rather
+    than the domain: a timeout, and every nameserver failing (SERVFAIL, REFUSED)."""
+    import dns.exception
+    import dns.resolver
     try:
+        return resolve(domain, rdtype, lifetime=MX_LIFETIME)
+    except (dns.exception.Timeout, dns.resolver.NoNameservers):
+        return resolve(domain, rdtype, lifetime=MX_LIFETIME)
+
+
+def has_mx(domain, resolve=None):
+    """Layer 1. True when the domain takes mail, False when DNS says it does not, None
+    when DNS could not say. None blocks like False and is reported apart from it,
+    because a resolver timeout is not a fact about the domain.
+
+    No MX record means the A record is the mail host (RFC 5321 5.1). An MX of "." is a
+    null MX and means the domain takes no mail at all (RFC 7505).
+    """
+    try:
+        import dns.exception
         import dns.resolver
     except ImportError:
         raise SystemExit("dnspython is not installed, so no MX check can run. "
                          "pip install -r requirements.txt") from None
+    resolve = resolve or dns.resolver.resolve
     try:
-        return bool(dns.resolver.resolve(domain, "MX"))
-    except Exception:
+        try:
+            return any(str(r.exchange) != "." for r in _dns(resolve, domain, "MX"))
+        except dns.resolver.NoAnswer:
+            return bool(_dns(resolve, domain, "A"))
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
         return False
+    except (dns.exception.DNSException, OSError):
+        return None
 
 
 def body_to_html(body_md):
@@ -445,26 +475,41 @@ def verify(recs, today=None):
     for rec in recs:
         layer2, reason = check_provenance(rec, today)
         gate_voice(rec)
-        domain = rec["to"].rsplit("@", 1)[-1]
         # a reply carries no Source: by rule, so the source columns come from the thread
         m = SOURCE_RE.match(rec.get("source") or "")
         rows.append({
             "slug": rec["slug"], "to": rec["to"],
             "host": source_host(m.group("url")) if m else "(thread)",
             "read": m.group("date") if m else "",
-            "mx": has_mx(domain), "layer2": layer2, "reason": reason,
+            "layer2": layer2, "reason": reason,
         })
+    # after the gates, so a refused batch costs no DNS. One lookup per domain, all of
+    # them at once: ten recipients at one venue group are one query, and the batch waits
+    # for its slowest domain rather than the sum of them.
+    domains = sorted({row["to"].rsplit("@", 1)[-1].lower() for row in rows})
+    with ThreadPoolExecutor(max_workers=max(1, min(8, len(domains)))) as pool:
+        mx = dict(zip(domains, pool.map(lambda d: has_mx(d), domains)))
+    for row in rows:
+        row["mx"] = mx[row["to"].rsplit("@", 1)[-1].lower()]
     return rows
+
+
+MX_LABEL = {True: "MX", False: "NO-MX", None: "UNKNOWN"}
 
 
 def print_table(rows):
     """The human gate. One row per recipient, nothing rounded up to a tick."""
     w = max((len(r["slug"]) for r in rows), default=4)
     for r in rows:
-        mx = "MX" if r["mx"] else "NO-MX"
-        print(f"{r['slug']:<{w}}  {r['to']:<38} {mx:<6} {r['layer2']:<9} {r['reason']}")
+        mx = MX_LABEL[r["mx"]]
+        print(f"{r['slug']:<{w}}  {r['to']:<38} {mx:<7} {r['layer2']:<9} {r['reason']}")
     bad = [r for r in rows if not r["mx"] or r["layer2"] not in CLEARED]
     print(f"\n{len(rows)} recipient(s), {len(bad)} needing attention.")
+    unknown = {r["to"].rsplit("@", 1)[-1].lower() for r in rows if r["mx"] is None}
+    if unknown:
+        print(f"{len(unknown)} domain(s) did not answer DNS (timeout or server failure): "
+              f"{', '.join(sorted(unknown))}. They block like NO-MX. Re-run when DNS "
+              f"answers.")
     if bad:
         print("Unsourced or stale addresses do not send. Layer 3 (Hunter) is an ask - "
               "see --hunter.")
@@ -772,25 +817,55 @@ def _to_addrs(rec):
 THREAD_LOOKBACK_DAYS = 90
 
 
-def _newest_date(M, mailbox, criteria, subj, skip_autoreply=False):
-    """When the newest message in `mailbox` matching `criteria` AND thread `subj` was sent.
+def _address_headers(M, mailbox, key, addrs):
+    """Per address, the headers of the newest SCAN_DEPTH messages in `mailbox` whose
+    `key` (FROM or TO) is that address, newest first.
 
-    The subject stays out of the IMAP criteria for the same reason as _newest_matching: a
-    folded header can never match a HEADER SUBJECT atom (2026-08-11). IMAP narrows on the
-    address, which never folds, and the subject is decided here on the unfolded header.
+    One SELECT per mailbox, then one SEARCH and ONE FETCH per address. A FETCH per
+    message made the not-found path about 96 round trips per recipient (#51). The result
+    is kept on the connection per (mailbox, key, address). Every subject reuses it, and
+    so does awaiting_reply after thread_headers, which is what preflight runs.
+
+    The subject is deliberately NOT part of the IMAP criteria. A HEADER SUBJECT atom is
+    matched against the raw header bytes, so any atom long enough to span a fold can never
+    hit (2026-08-11: this silently unthreaded 9 of 11 venue replies). IMAP narrows on the
+    address, which never folds, and the subject is decided by the caller on the unfolded
+    header.
     """
-    typ, _ = M.select(mailbox, readonly=True)
-    if typ != "OK":
-        return None
+    cache = M.__dict__.setdefault("_postman_headers", {})
+    todo = [a for a in addrs if (mailbox, key, a) not in cache]
+    if todo:
+        typ, _ = M.select(mailbox, readonly=True)
+        for addr in todo:
+            cache[(mailbox, key, addr)] = (
+                _fetch_headers(M, (key, f'"{addr}"')) if typ == "OK" else [])
+    return [cache[(mailbox, key, a)] for a in addrs]
+
+
+def _fetch_headers(M, criteria):
+    """The selected mailbox's newest SCAN_DEPTH matches for criteria, newest first."""
     typ, data = M.search(None, *criteria)
     if typ != "OK":
-        return None
+        return []
+    seqs = [s.decode() for s in (data[0] or b"").split()[-SCAN_DEPTH:]]
+    if not seqs:
+        return []
+    typ, d = M.fetch(",".join(seqs),
+                     "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID REFERENCES SUBJECT DATE)])")
+    if typ != "OK":
+        return []
+    # each hit is a (b"<seq> (BODY[...] {n}", header bytes) tuple, in whatever order the
+    # server chose, so it is keyed on its own sequence number and not on position
+    got = {p[0].split(None, 1)[0].decode(): email.message_from_bytes(p[1])
+           for p in (d or []) if isinstance(p, tuple)}
+    return [got[s] for s in reversed(seqs) if s in got]
+
+
+def _newest_date(lists, subj, since, skip_autoreply=False):
+    """When the newest message in any of `lists` in thread `subj`, sent since `since`,
+    was sent. None when there is none."""
     newest = None
-    for uid in reversed((data[0] or b"").split()[-SCAN_DEPTH:]):
-        typ, d = M.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (SUBJECT DATE)])")
-        if typ != "OK" or not d or not isinstance(d[0], tuple):
-            continue
-        hdrs = email.message_from_bytes(d[0][1])
+    for hdrs in (h for msgs in lists for h in msgs):
         if not subject_matches(hdrs, subj):
             continue
         if skip_autoreply and is_autoreply(hdrs):
@@ -801,7 +876,7 @@ def _newest_date(M, mailbox, criteria, subj, skip_autoreply=False):
             continue
         if when.tzinfo is None:                 # a naive Date is read as UTC
             when = when.replace(tzinfo=timezone.utc)
-        if newest is None or when > newest:
+        if when >= since and (newest is None or when > newest):
             newest = when
     return newest
 
@@ -822,18 +897,14 @@ def awaiting_reply(M, rec):
     autoresponder is skipped, because an out-of-office answers nothing.
     """
     subj = base_subject(rec["subject"])
-    since = (datetime.now(timezone.utc)
-             - timedelta(days=THREAD_LOOKBACK_DAYS)).strftime("%d-%b-%Y")
-    ours = theirs = None
+    # the lookback is applied to the Date header here rather than as an IMAP SINCE, so
+    # this reads the same cached headers thread_headers already fetched
+    since = datetime.now(timezone.utc) - timedelta(days=THREAD_LOOKBACK_DAYS)
+    addrs = _to_addrs(rec)
     sent, all_mail = special_folder(M, "\\Sent"), special_folder(M, "\\All")
-    for addr in _to_addrs(rec):
-        mine = _newest_date(M, sent, ("SINCE", since, "TO", f'"{addr}"'), subj)
-        if mine and (ours is None or mine > ours):
-            ours = mine
-        back = _newest_date(M, all_mail, ("SINCE", since, "FROM", f'"{addr}"'), subj,
-                            skip_autoreply=True)
-        if back and (theirs is None or back > theirs):
-            theirs = back
+    ours = _newest_date(_address_headers(M, sent, "TO", addrs), subj, since)
+    theirs = _newest_date(_address_headers(M, all_mail, "FROM", addrs), subj, since,
+                          skip_autoreply=True)
     if ours is None:
         return None                             # nothing of ours to amend
     return None if theirs and theirs > ours else ours
@@ -870,26 +941,9 @@ def is_autoreply(hdrs):
 SCAN_DEPTH = 30
 
 
-def _newest_matching(M, mailbox, criteria, subj):
-    """Newest (Message-ID, References) from mailbox matching criteria AND subj.
-
-    The subject is deliberately NOT part of the IMAP criteria. A HEADER SUBJECT atom is
-    matched against the raw header bytes, so any atom long enough to span a fold can never
-    hit (2026-08-11: this silently unthreaded 9 of 11 venue replies). IMAP narrows on the
-    address, which never folds, and the subject is decided here on the unfolded header.
-    """
-    typ, _ = M.select(mailbox, readonly=True)
-    if typ != "OK":
-        return None
-    typ, data = M.search(None, *criteria)
-    if typ != "OK":
-        return None
-    uids = (data[0] or b"").split()
-    for uid in reversed(uids[-SCAN_DEPTH:]):
-        typ, d = M.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID REFERENCES SUBJECT)])")
-        if typ != "OK" or not d or not isinstance(d[0], tuple):
-            continue
-        hdrs = email.message_from_bytes(d[0][1])
+def _newest_matching(msgs, subj):
+    """Newest (Message-ID, References) in msgs (newest first) in thread subj, else None."""
+    for hdrs in msgs:
         if not subject_matches(hdrs, subj) or is_autoreply(hdrs):
             continue
         mid = (hdrs.get("Message-ID") or "").strip()
@@ -915,16 +969,17 @@ def thread_headers(M, rec):
     # ours and an archived reply still counts. The first address is not necessarily the one
     # who wrote in the thread. ALL_MAIL is included because a reply that has been archived
     # leaves INBOX entirely, and reading the inbox is normal working behaviour.
-    candidates = [(mb, key, addr)
-                  for mb, key in (("INBOX", "FROM"), (special_folder(M, "\\All"), "FROM"),
-                                  (special_folder(M, "\\Sent"), "TO"))
-                  for addr in _to_addrs(rec)]
-    for mailbox, key, addr in candidates:
-        hit = _newest_matching(M, mailbox, (key, f'"{addr}"'), subj)
-        if not hit:
-            continue
-        mid, prior = hit
-        return mid, (f"{prior} {mid}".strip() if prior else mid)
+    # Grouped by mailbox, one SELECT each, and the order is unchanged: every address in
+    # INBOX, then in ALL_MAIL, then in SENT.
+    addrs = _to_addrs(rec)
+    for mailbox, key in (("INBOX", "FROM"), (special_folder(M, "\\All"), "FROM"),
+                         (special_folder(M, "\\Sent"), "TO")):
+        for msgs in _address_headers(M, mailbox, key, addrs):
+            hit = _newest_matching(msgs, subj)
+            if not hit:
+                continue
+            mid, prior = hit
+            return mid, (f"{prior} {mid}".strip() if prior else mid)
     return None, None
 
 
@@ -937,7 +992,8 @@ def gate_or_die(recs, today=None):
         # The verdict rides in the message. "3 recipients did not clear" tells you
         # nothing he can act on, "cityhotel (unsourced, MX)" tells him what to go fix.
         named = ", ".join(
-            f"{r['slug']} ({r['layer2']}, {'MX' if r['mx'] else 'no MX'})"
+            f"{r['slug']} ({r['layer2']}, "
+            f"{ {True: 'MX', False: 'no MX', None: 'MX unknown'}[r['mx']] })"
             for r in blocked)
         raise SystemExit(
             f"{len(blocked)} recipient(s) did not clear layer 2 or have no MX: "
@@ -1092,20 +1148,32 @@ def hunter_key():
     return key
 
 
+class HunterError(Exception):
+    """No verdict for one address. Never retried, because each call bills a credit."""
+
+
 def hunter_verify(address, key):
     """Layer 3, on request only. One credit per call. Never called by a default path.
 
     accept_all means cannot-be-disproved, not confirmed. Reported verbatim.
     """
-    import json
+    import urllib.error
     import urllib.parse
     import urllib.request
-    q = urllib.parse.urlencode({"email": address, "api_key": key})
-    with urllib.request.urlopen(f"{HUNTER_URL}?{q}", timeout=30) as r:
-        if r.status == 202:
-            raise SystemExit(f"{address}: Hunter still verifying (202), re-run - "
-                             f"it bills once")
-        return json.load(r)["data"]
+    q = urllib.parse.urlencode({"email": address})
+    # the key rides in a header, not the query string, where proxy logs and tracebacks
+    # keep every URL they see (#51)
+    req = urllib.request.Request(f"{HUNTER_URL}?{q}", headers={"X-API-KEY": key})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            if r.status == 202:
+                raise HunterError("Hunter still verifying (202), re-run this address, "
+                                  "it bills once")
+            return json.load(r)["data"]
+    except urllib.error.HTTPError as e:
+        raise HunterError(f"HTTP {e.code} {e.reason}") from None
+    except OSError as e:
+        raise HunterError(f"{type(e).__name__}: {e}") from None
 
 
 # a real 1x1 PNG, not a stub: add_related parses it, and "b'notapng'" would make the
@@ -1732,16 +1800,89 @@ More body.
 
     # layer 1: a domain that cannot have mail. Deterministic offline too, since any
     # resolver failure is False by design - which is exactly why this assertion ALONE
-    # proves nothing: it passes identically with no DNS at all, and every other MX path in
-    # this file is stubbed, so the true branch would never run. The positive case below
-    # exercises it where a resolver exists and says so out loud where one does not, rather
-    # than going green on a check that never happened.
-    assert has_mx("no-such-host.invalid") is False
-    # NOT an assertion, and not coverage: it reports. Asserting here would fail the suite
-    # on any runner without DNS egress, so layer 1's true branch stays formally untested
-    # and this line exists so a green run cannot be mistaken for one that checked it.
-    if not has_mx("gmail.com"):
-        print("selftest: NO DNS EGRESS - layer 1's true branch was NOT exercised")
+    # #51: layer 1 against a stubbed resolver, so every branch runs and none touches DNS.
+    # True takes mail, False provably does not, None could not be told. None blocks the
+    # batch like False, and is reported apart from it.
+    import dns.exception
+    import dns.name
+    import dns.resolver
+    import threading
+    import types
+
+    def _mx(*hosts):
+        return [types.SimpleNamespace(exchange=dns.name.from_text(h)) for h in hosts]
+
+    def _resolver(script):
+        """script maps rdtype to a list of outcomes, one per call: a list is an answer,
+        an exception class is raised. Every call is recorded with its lifetime."""
+        calls = []
+
+        def resolve(domain, rdtype, lifetime=None):
+            calls.append((domain, rdtype, lifetime))
+            got = script[rdtype].pop(0)
+            if isinstance(got, type):
+                raise got()
+            return got
+        return resolve, calls
+
+    for _script, _want, _n in (
+        ({"MX": [_mx("mx1.b.example")]}, True, 1),
+        ({"MX": [_mx(".")]}, False, 1),                       # null MX, RFC 7505
+        ({"MX": [dns.resolver.NXDOMAIN]}, False, 1),
+        # no MX record: the A record is the mail host (RFC 5321 5.1)
+        ({"MX": [dns.resolver.NoAnswer], "A": [["192.0.2.1"]]}, True, 2),
+        ({"MX": [dns.resolver.NoAnswer], "A": [dns.resolver.NoAnswer]}, False, 2),
+        # the two transient failures are retried once, and only once
+        ({"MX": [dns.exception.Timeout, _mx("mx1.b.example")]}, True, 2),
+        ({"MX": [dns.resolver.NoNameservers, _mx("mx1.b.example")]}, True, 2),
+        ({"MX": [dns.exception.Timeout, dns.exception.Timeout]}, None, 2),
+        ({"MX": [dns.resolver.NoNameservers, dns.resolver.NoNameservers]}, None, 2),
+        ({"MX": [dns.resolver.NoAnswer], "A": [dns.exception.Timeout,
+                                               dns.exception.Timeout]}, None, 3),
+    ):
+        _res, _calls = _resolver({k: list(v) for k, v in _script.items()})
+        _got = has_mx("b.example", resolve=_res)
+        assert _got is _want, f"{_script}: got {_got!r}, wanted {_want!r}"
+        assert len(_calls) == _n, f"{_script}: {len(_calls)} lookups, wanted {_n}"
+        assert all(c[2] == MX_LIFETIME for c in _calls), _calls
+    assert MX_LIFETIME == 5, MX_LIFETIME
+
+    # verify: one lookup per domain, all domains at once. The barrier only opens when
+    # all three lookups are in flight together, so a serial verify fails it.
+    _looked, _gate = [], threading.Barrier(3, timeout=5)
+
+    def _stub_mx(domain):
+        _looked.append(domain)
+        _gate.wait()
+        return {"a.example": True, "b.example": False, "c.example": None}[domain]
+    _mx_real, globals()["has_mx"] = globals()["has_mx"], _stub_mx
+    try:
+        _recs = parse_batch("\n---\n".join(
+            f"## @r{i} | P Q <p{i}@{d}>\nSource: {d.lower()}/x, read "
+            f"{date.today():%Y-%m-%d}\nSubject: s\n\nHi.\n"
+            for i, d in enumerate(["a.example"] * 10 + ["B.example", "c.example"])))[2]
+        _rows = verify(_recs)
+    finally:
+        globals()["has_mx"] = _mx_real
+    assert sorted(_looked) == ["a.example", "b.example", "c.example"], _looked
+    assert [r["mx"] for r in _rows] == [True] * 10 + [False, None], _rows
+    import io
+    with contextlib.redirect_stdout(io.StringIO()) as _out:
+        print_table(_rows)
+    assert "NO-MX" in _out.getvalue() and "UNKNOWN" in _out.getvalue(), _out.getvalue()
+    assert "1 domain(s) did not answer DNS" in _out.getvalue(), _out.getvalue()
+    # unknown still blocks, and says which it was
+    _mx_real, globals()["has_mx"] = globals()["has_mx"], lambda d: {"a.example": True}.get(d)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            gate_or_die([_recs[0], _recs[11]])
+    except SystemExit as e:
+        assert "r11 (" in str(e) and "MX unknown" in str(e), str(e)
+        assert "r0 (" not in str(e), str(e)
+    else:
+        raise AssertionError("an unknown MX must block the batch")
+    finally:
+        globals()["has_mx"] = _mx_real
 
     # Task 4: assembly
     built = build_message(parse_batch(sample)[2][0], work)
@@ -1885,6 +2026,59 @@ Body.
         for callable_name in ("hunter_verify", "hunter_key"):
             assert callable_name not in src, (
                 f"{fn.__name__} calls {callable_name} - layer 3 is an ask, never automatic")
+
+    # #51: Hunter. The key rides in a header, never the URL, where it lands in proxy logs
+    # and tracebacks. Each call bills a credit, so nothing is retried, and one address
+    # failing no longer ends the loop for the rest. urlopen is stubbed: no HTTP.
+    import urllib.error
+    import urllib.request
+    _sent = []
+
+    class _Resp:
+        def __init__(self, status, body):
+            self.status, self._body = status, body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return self._body
+
+    def _fake_open(req, timeout=None):
+        _sent.append(req)
+        addr = urllib.parse.parse_qs(urllib.parse.urlsplit(req.full_url).query)["email"][0]
+        if addr.startswith("slow"):
+            return _Resp(202, b"{}")
+        if addr.startswith("busy"):
+            raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, None)
+        return _Resp(200, json.dumps({"data": {"status": "valid", "score": 97,
+                                               "result": "deliverable",
+                                               "smtp_check": True}}).encode())
+    import urllib.parse
+    _real_open = urllib.request.urlopen
+    os.environ["POSTMAN_HUNTER_KEY"] = "k-test-123"
+    try:
+        urllib.request.urlopen = _fake_open
+        with contextlib.redirect_stdout(io.StringIO()) as _out:
+            _rc = main(["--hunter", "ok@b.example", "slow@b.example", "busy@b.example",
+                        "ok2@b.example"])
+    finally:
+        urllib.request.urlopen = _real_open
+        os.environ.pop("POSTMAN_HUNTER_KEY", None)
+    assert len(_sent) == 4, f"{len(_sent)} calls for 4 addresses: nothing retries"
+    for _req in _sent:
+        assert "k-test-123" not in _req.full_url and "api_key" not in _req.full_url, \
+            _req.full_url
+        assert _req.get_header("X-api-key") == "k-test-123", _req.header_items()
+    _o = _out.getvalue()
+    assert "ok2@b.example" in _o and "valid" in _o, _o      # the loop reached the end
+    assert "slow@b.example" in _o and "202" in _o, _o
+    assert "busy@b.example" in _o and "429" in _o, _o
+    assert "k-test-123" not in _o, "the key must never be printed"
+    assert _rc == 1, "any address without a verdict makes the run exit 1"
 
     # Task 5: stamping
     with tempfile.TemporaryDirectory() as td:
@@ -2030,6 +2224,9 @@ Body.
         "an older inbound does not answer a newer send"
     # we have never written to them, so there is nothing to amend
     assert awaiting_reply(_FakeBox(), _rec) is None, "no prior send means nothing awaiting"
+    # outside THREAD_LOOKBACK_DAYS, our old mail is not something to amend
+    assert awaiting_reply(_FakeBox(sent=(24 * 100, _S)), _rec) is None, \
+        "a send older than the lookback is not awaiting"
     # an autoresponder is in the thread but is not the venue answering us
     assert awaiting_reply(
         _FakeBox(sent=(26, _S), inbound=(2, "Automatic reply: Dinner for 100")),
@@ -2240,6 +2437,80 @@ Body.
     assert _rc == 1 and "HOLD: y would send unthreaded" in _o, _o
     # the shared session helper, with the identity's host, and exactly one session
     assert _opened == [("x", work["sender"], None)], _opened
+
+    # #51: thread lookup round trips. Per mailbox one SELECT, then per address one SEARCH
+    # and ONE FETCH for the newest SCAN_DEPTH headers, never one FETCH per message. The
+    # headers are kept on the connection per (mailbox, key, address), so awaiting_reply
+    # after thread_headers (what preflight does) costs nothing more.
+    class _ThreadBox:
+        """Mailboxes of (from, to, subject, hours_ago, message_id). Counts commands."""
+
+        def __init__(self, boxes):
+            self.boxes, self.box, self.calls = boxes, None, []
+
+        def list(self):
+            return "OK", []                     # names nothing: the Gmail fallbacks
+
+        def select(self, mailbox, readonly=False):
+            self.calls.append("SELECT")
+            self.box = mailbox
+            return "OK", [str(len(self.boxes.get(mailbox, []))).encode()]
+
+        def search(self, charset, key, addr):
+            self.calls.append("SEARCH")
+            col = {"FROM": 0, "TO": 1}[key]
+            return "OK", [b" ".join(str(n).encode() for n, m in
+                                    enumerate(self.boxes.get(self.box, []), 1)
+                                    if f'"{m[col]}"' == addr)]
+
+        def fetch(self, seqs, spec):
+            self.calls.append("FETCH")
+            out = []
+            for s in str(seqs).split(","):
+                f, t, subj, ago, mid = self.boxes[self.box][int(s) - 1]
+                when = datetime.now(timezone.utc) - timedelta(hours=ago)
+                out += [(f"{s} (BODY[HEADER.FIELDS (...)] {{99}}".encode(),
+                         (f"From: {f}\r\nTo: {t}\r\nSubject: {subj}\r\n"
+                          f"Date: {email.utils.format_datetime(when)}\r\n"
+                          f"Message-ID: {mid}\r\n\r\n").encode()), b")"]
+            return "OK", out
+
+    _v, _me = "dana.r@venuegroup.example", "ada@example.com"
+    # 40 unrelated messages each way in every mailbox: the not-found (HOLD) path. This
+    # was 3 x (SELECT + SEARCH + 30 FETCH) = 96 round trips per recipient.
+    _noise = [(_v, _me, f"Other {i}", 500 - i, f"<n{i}@v.example>") for i in range(40)]
+    _sent_noise = [(_me, _v, f"Other {i}", 500 - i, f"<s{i}@v.example>") for i in range(40)]
+    _tb = _ThreadBox({"INBOX": _noise, ALL_MAIL: _noise, SENT: _sent_noise})
+    assert thread_headers(_tb, {"to": _v, "subject": _S}) == (None, None)
+    assert _tb.calls == ["SELECT", "SEARCH", "FETCH"] * 3, _tb.calls
+    # preflight's second pass on the same session is free
+    assert awaiting_reply(_tb, {"to": _v, "subject": _S}) is None
+    assert len(_tb.calls) == 9, f"awaiting_reply re-read what was cached: {_tb.calls}"
+    # two addresses: still one SELECT per mailbox, not one per address
+    _w = "sam@venuegroup.example"
+    _tb = _ThreadBox({"INBOX": _noise, ALL_MAIL: _noise, SENT: _sent_noise})
+    thread_headers(_tb, {"to": f"{_v}, {_w}", "subject": _S})
+    assert _tb.calls.count("SELECT") == 3, _tb.calls
+    assert _tb.calls.count("SEARCH") == 6 and _tb.calls.count("FETCH") == 3, _tb.calls
+    # and the answers are the ones the serial lookup gave: the venue's newest message in
+    # the thread, INBOX first, an autoreply skipped, our sent copy only as the fallback
+    _thread = _noise + [(_v, _me, "RE: Dinner for 100", 30, "<old@v.example>"),
+                        (_v, _me, "RE: Dinner for 100", 5, "<new@v.example>"),
+                        (_v, _me, "Automatic reply: Dinner for 100", 1, "<ooo@v.example>")]
+    _tb = _ThreadBox({"INBOX": [], ALL_MAIL: _thread,
+                      SENT: [(_me, _v, "Dinner for 100", 40, "<ours@a.example>")]})
+    assert thread_headers(_tb, {"to": _v, "subject": _S})[0] == "<new@v.example>"
+    _tb = _ThreadBox({"INBOX": [], ALL_MAIL: _noise,
+                      SENT: [(_me, _v, "Dinner for 100", 40, "<ours@a.example>")]})
+    assert thread_headers(_tb, {"to": _v, "subject": _S})[0] == "<ours@a.example>"
+    # our send 40h ago, their reply 5h ago: answered. thread_headers stopped at All Mail,
+    # so only Sent is read now, and All Mail comes from the cache
+    _tb = _ThreadBox({"INBOX": [], ALL_MAIL: _thread,
+                      SENT: [(_me, _v, "Dinner for 100", 40, "<ours@a.example>")]})
+    thread_headers(_tb, {"to": _v, "subject": _S})
+    _n = len(_tb.calls)
+    assert awaiting_reply(_tb, {"to": _v, "subject": _S}) is None
+    assert _tb.calls[_n:] == ["SELECT", "SEARCH", "FETCH"], _tb.calls
 
     # credential resolution, offline. Never calls vault_password: POSTMAN_NO_VAULT is
     # what keeps this a unit test instead of a live secret-store round trip.
@@ -2565,11 +2836,22 @@ def main(argv=None):
         key = hunter_key()
         print(f"This spends {len(args.hunter)} Hunter credit(s) of the 50/month free "
               f"allowance.")
+        failed = 0
         for addr in args.hunter:
-            d = hunter_verify(addr, key)
+            # one address without a verdict is reported and the loop goes on. Nothing is
+            # retried: each call bills a credit whether or not an answer comes back.
+            try:
+                d = hunter_verify(addr, key)
+            except HunterError as e:
+                failed += 1
+                print(f"{addr:<40} no verdict: {e}", flush=True)
+                continue
             print(f"{addr:<40} {d['status']:<12} score={d['score']:<4} "
-                  f"result={d['result']} smtp_check={d['smtp_check']}")
-        return 0
+                  f"result={d['result']} smtp_check={d['smtp_check']}", flush=True)
+        if failed:
+            print(f"{failed} of {len(args.hunter)} address(es) got no verdict. Nothing "
+                  f"was retried.")
+        return 1 if failed else 0
     if args.verify:
         ident_name, _, recs = parse_batch(Path(args.verify).read_text(encoding="utf-8"))
         ident = resolve_identity(args.as_identity, ident_name)
