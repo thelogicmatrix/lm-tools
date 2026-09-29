@@ -3,15 +3,16 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
+import http from 'node:http';
 import path from 'node:path';
-import { askJev, isNoul, readKey, toText } from './lib.mjs';
+import { ATTEMPTS, askJev, isNoul, postText, readKey, retryAfterMs, toText } from './lib.mjs';
 
 const realFetch = globalThis.fetch;
 try {
   // A gateway error page is HTML. Parsed before the status check it threw `Unexpected token '<'`
   // and the status was lost. The error must name the status.
   globalThis.fetch = async () => new Response('<html>Bad Gateway</html>', { status: 502 });
-  await assert.rejects(() => askJev('s', {}, 'k'), /^Error: HTTP 502: <html>Bad Gateway/, 'a 502 names its status');
+  await assert.rejects(() => askJev('s', {}, 'k', { baseDelayMs: 0 }), /^Error: HTTP 502: <html>Bad Gateway/, 'a 502 names its status');
 
   // ⚠ A WEDGED CALL MUST END. The mock never answers and honours the abort signal, as real fetch
   // does. It holds a timer the way a real open socket holds the event loop, because the timeout's
@@ -21,7 +22,7 @@ try {
     init.signal.addEventListener('abort', () => { clearTimeout(socket); reject(init.signal.reason); });
   });
   const t0 = Date.now();
-  await assert.rejects(() => askJev('s', {}, 'k', { timeoutMs: 50 }), /no response after 0\.05 s/, 'a hung call times out');
+  await assert.rejects(() => askJev('s', {}, 'k', { timeoutMs: 50, baseDelayMs: 0 }), /no response after 0\.05 s/, 'a hung call times out');
   assert.ok(Date.now() - t0 < 2000, 'and does so near the timeout, not whenever the socket gives up');
 
   // The happy path still returns answers and cost.
@@ -88,5 +89,72 @@ try {
 } finally {
   fs.rmSync(keyDir, { recursive: true, force: true });
 }
+
+// postText retry, against a stub server on localhost. `script` is the response per request in
+// order, and the last entry repeats. baseDelayMs 0 keeps the backoff out of the runtime, except
+// where the test is about a wait the server asked for.
+const stub = async (script) => {
+  const hits = [];
+  const server = http.createServer((req, res) => {
+    const [status, headers = {}, body = ''] = script[Math.min(hits.length, script.length - 1)];
+    hits.push(Date.now());
+    req.resume();
+    res.writeHead(status, headers).end(body);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { url: `http://127.0.0.1:${server.address().port}/`, hits, close: () => new Promise((r) => server.close(r)) };
+};
+const OK = [200, {}, 'fine'];
+{
+  // A 429 with Retry-After waits what the server asked, then succeeds. The backoff is 0 here, so
+  // a second request under 0.9 s after the first means the header was ignored.
+  const s = await stub([[429, { 'Retry-After': '1' }, 'slow down'], OK]);
+  try {
+    assert.strictEqual(await postText(s.url, 'k', {}, 5000, { baseDelayMs: 0 }), 'fine');
+    assert.strictEqual(s.hits.length, 2, 'a 429 is asked again');
+    assert.ok(s.hits[1] - s.hits[0] >= 900, `Retry-After is honoured (waited ${s.hits[1] - s.hits[0]} ms)`);
+  } finally { await s.close(); }
+}
+{
+  // 5xx then success. 408 is retried too, on the same list.
+  const s = await stub([[503, {}, 'busy'], [408, {}, 'timeout'], OK]);
+  try {
+    assert.strictEqual(await postText(s.url, 'k', {}, 5000, { baseDelayMs: 0 }), 'fine');
+    assert.strictEqual(s.hits.length, 3, 'a 503 and a 408 are each retried');
+  } finally { await s.close(); }
+}
+{
+  // Any other 4xx is final. A bad key asked three times is three failures, not a recovery.
+  for (const status of [400, 401, 403, 404]) {
+    const s = await stub([[status, {}, 'no'], OK]);
+    try {
+      await assert.rejects(() => postText(s.url, 'k', {}, 5000, { baseDelayMs: 0 }), new RegExp(`^Error: HTTP ${status}: no`));
+      assert.strictEqual(s.hits.length, 1, `a ${status} is not retried`);
+    } finally { await s.close(); }
+  }
+}
+{
+  // A server that never recovers is asked ATTEMPTS times and the last status surfaces.
+  const s = await stub([[500, {}, 'down']]);
+  try {
+    await assert.rejects(() => postText(s.url, 'k', {}, 5000, { baseDelayMs: 0 }), /^Error: HTTP 500: down/);
+    assert.strictEqual(s.hits.length, ATTEMPTS, 'a permanent 500 is asked ATTEMPTS times, no more');
+    assert.strictEqual(ATTEMPTS, 3, 'kept small, because a timed-out call may still be billed');
+  } finally { await s.close(); }
+}
+{
+  // A refused connection is a network error and is retried. The port is closed straight after
+  // it is bound, so nothing listens on it.
+  const s = await stub([OK]);
+  await s.close();
+  const t0 = Date.now();
+  await assert.rejects(() => postText(s.url, 'k', {}, 5000, { baseDelayMs: 100 }), /fetch failed/);
+  assert.ok(Date.now() - t0 >= 100, 'a refused connection is backed off and retried');
+}
+// Retry-After in both of its forms, capped so a hostile header cannot park a sweep.
+assert.strictEqual(retryAfterMs('2'), 2000);
+assert.strictEqual(retryAfterMs(new Date(10_000).toUTCString(), 7_000), 3000);
+assert.strictEqual(retryAfterMs('86400'), 30_000);
+assert.deepStrictEqual([retryAfterMs(null), retryAfterMs(''), retryAfterMs('soon')], [null, null, null]);
 
 console.log('lib selftest OK');

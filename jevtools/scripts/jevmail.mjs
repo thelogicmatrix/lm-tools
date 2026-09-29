@@ -39,7 +39,7 @@ import fs from 'node:fs';
 import assert from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { askJev, runPool, noulsFrom, firedTags, readKey } from './lib.mjs';
+import { ATTEMPTS, askJev, runPool, noulsFrom, firedTags, readKey } from './lib.mjs';
 
 const CONCURRENCY = 6;
 
@@ -115,12 +115,17 @@ async function ask(m, key) {
 // shared state would let message 7's questions be answered partly from message 3's text — Jev
 // evaluates every question against the WHOLE state. Packing is right when chunks need a common
 // source (a resume against its basis); it is wrong when they are independent.
-const sweep = (messages, key, onDone) => runPool(messages, async (m) => {
+//
+// A row that already carries tags came from an earlier run's tags file and is kept as it is, so
+// feeding that file back in re-asks only the rows that failed.
+export const sweep = (messages, key, onDone) => runPool(messages, async (m) => {
+  if (m.tags) return m;
+  const { error: _old, ...rest } = m;
   try {
-    const { tags, cost } = await ask(m, key);
-    return { ...m, tags, cost };
+    const { tags, cost } = await ask(rest, key);
+    return { ...rest, tags, cost };
   } catch (e) {
-    return { ...m, tags: null, error: e.message };
+    return { ...rest, tags: null, error: e.message };
   }
 }, CONCURRENCY, onDone);
 
@@ -149,7 +154,7 @@ function report(rows) {
   console.log(`  no tag fired    ${untagged}`);
   console.log(`  cost            $${ok.reduce((s, r) => s + (r.cost ?? 0), 0).toFixed(5)}`);
   if (failed.length) {
-    console.log(`  failed          ${failed.length}`);
+    console.log(`  failed          ${failed.length}  <- not judged. Write --json, then re-run with --in on that file to ask only these`);
     for (const f of failed.slice(0, 5)) console.log(`    ${String(f.subject).slice(0, 50)}: ${f.error}`);
   }
   // A high untagged count is the signal that the vocabulary is wrong, not that the mailbox is
@@ -368,12 +373,29 @@ export async function selftestSearch() {
     const rows = await searchMail({ ask: 'the booking link', identity: 'personal', query: 'booking' },
       { key: 'k', run: (args) => { seen.push(args); return searchOut; } });
     assert.deepStrictEqual(seen, [['search', 'personal', 'booking']]);
-    assert.strictEqual(sent.length, 2, 'one call per message');
+    assert.strictEqual(new Set(sent.map((b) => b.state)).size, 2, 'one call per message');
+    assert.strictEqual(sent.length, 1 + ATTEMPTS, 'the failing one used its attempts in postText');
     assert.ok(sent.every((b) => b.questions.message.instructions.endsWith('the booking link')));
     // Ranked: the answered message first, the failed one last with its reason kept.
     assert.deepStrictEqual(rows.map((r) => [r.subject, r.score]), [['Your room | booking link', 0.91], ['Weekly digest', null]]);
     assert.strictEqual(rows[0].parts[0].text, 'https://venue.example/book?id=1', 'the link that answers comes first');
     assert.strictEqual(rows[1].error, 'offline');
+
+    // Tag mode re-queues. A row that already carries tags is not asked again, a row that failed
+    // (tags null, from an earlier run's tags file) is, and a row that fails now is marked failed
+    // with its reason rather than silently tagged. So `--in tags.json --json tags.json` re-asks
+    // only the failures.
+    sent.length = 0;
+    const tagged = await sweep([
+      { subject: 'done', snippet: 'x', tags: { is_rejection: 0.9 } },
+      { subject: 'retry me', snippet: 'x', tags: null, error: 'HTTP 503: old failure' },
+      { subject: 'Weekly digest', snippet: 'x' },
+    ], 'k');
+    assert.ok(!sent.some((b) => b.state.includes('Subject: done')), 'the tagged row is not asked again');
+    assert.deepStrictEqual(tagged[0], { subject: 'done', snippet: 'x', tags: { is_rejection: 0.9 } });
+    assert.strictEqual(tagged[1].tags.is_rejection, 0.1, 'the earlier failure is asked again and tagged');
+    assert.ok(!('error' in tagged[1]), 'and loses its old error');
+    assert.deepStrictEqual([tagged[2].tags, tagged[2].error], [null, 'offline'], 'a failure now is marked failed');
   } finally {
     globalThis.fetch = realFetch;
   }

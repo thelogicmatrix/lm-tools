@@ -56,7 +56,7 @@ readable there too.
 Two outcomes mean the sweep did not run, and both exit 1 under a banner rather than showing
 "0 candidates". NOTHING SWEPT is a chunk spec that matched no text. NOTHING ANSWERED is every model
 question failing (a bad key, an outage). A partial failure exits 0 and lists the failed rows under
-UNANSWERED, each with its reason. A failed call is retried once after a second, and a rerun costs
+UNANSWERED, each with its reason. A network error, 408, 429 or 5xx is retried up to three attempts with backoff, and a rerun costs
 fractions of a cent.
 
 ## Writing a check
@@ -159,7 +159,7 @@ exists to avoid.
   (`&#x2014;`) and capitalised (`&Eacute;`) entities pass it for the same reason. A known gap,
   pinned by a test so closing it is a decision rather than a surprise.
 - **A call that gets no response ends after 60 seconds.** `askJev` in `jevtools/scripts/lib.mjs`
-  aborts it, the retry runs once, and a second hang lands as an unanswered row reading "no response
+  aborts it, `postText` tries three times in all, and a third hang lands as an unanswered row reading "no response
   after 60 s". A gateway error names its HTTP status.
 - **`--source` and `state.include_source` go together.** A sweep that sets `include_source` refuses
   to run without a `--source` (an empty or whitespace-only file counts as none), and a `--source`

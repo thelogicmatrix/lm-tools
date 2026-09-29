@@ -37,7 +37,7 @@ const RULES = [
 const NEEDS_HUMAN = new Set(['reply needed', 'log outcome', 'triage by hand']);
 
 export function planFor(tags) {
-  if (!tags) return { label: null, act: 'skip', reason: 'sweep failed for this message' };
+  if (!tags) return { label: null, act: 'failed', reason: 'sweep failed for this message, re-run jevmail --in on the tags file' };
   for (const r of RULES) {
     const v = tags[r.tag];
     if (typeof v === 'number' && v >= r.at) {
@@ -65,8 +65,11 @@ export function selftest() {
   assert.strictEqual(planFor({ is_interview_invite: 0.70 }).label, 'Jobs/Interview');
   // Alerts need a high bar because the tag fired on 87% of a real window.
   assert.strictEqual(planFor({ is_job_listing_alert: 0.79 }).label, null);
-  // A failed sweep is skipped, never filed by default.
-  assert.strictEqual(planFor(null).act, 'skip');
+  // A failed sweep is failed, never filed and never 'skip'. Skip read as done, so the row was never
+  // asked again. jevmail re-asks only the untagged rows of its own tags file.
+  assert.deepStrictEqual(planFor(null),
+    { label: null, act: 'failed', reason: 'sweep failed for this message, re-run jevmail --in on the tags file' });
+  assert.ok(!NEEDS_HUMAN.has('failed'), 'a failed row is a re-run, not a digest entry');
   assert.strictEqual(planFor({}).act, 'leave');
   // Null tags (missing answers) must not satisfy a threshold.
   assert.strictEqual(planFor({ is_rejection: null }).label, null);
@@ -108,6 +111,10 @@ const quar = planned.filter((p) => p.quarantine);
 console.log(`\n  needs a human   ${digest.length} of ${planned.length} `
   + `(${(digest.length / planned.length * 100).toFixed(0)}%)`);
 console.log(`  quarantined     ${quar.length}`);
+const failed = planned.filter((p) => p.act === 'failed');
+if (failed.length) {
+  console.log(`  failed          ${failed.length}  <- not judged, re-run \`jevmail.mjs --in ${inPath} --json ${inPath}\` to ask only these`);
+}
 
 console.log('\n--- DIGEST ---');
 for (const p of digest.slice(0, 40)) {

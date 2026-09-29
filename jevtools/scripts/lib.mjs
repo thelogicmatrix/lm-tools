@@ -62,29 +62,59 @@ export function toText(s) {
 // The body is read as TEXT and parsed after the status check. Parsed first, a gateway's HTML 502
 // page threw `Unexpected token '<'` and the status code was lost from the error.
 export const TIMEOUT_MS = 60_000;
-export async function askJev(state, questions, key, { timeoutMs = TIMEOUT_MS } = {}) {
-  const text = await postText(ENDPOINT, key, { model: MODEL, state, questions }, timeoutMs);
+export async function askJev(state, questions, key, { timeoutMs = TIMEOUT_MS, ...retry } = {}) {
+  const text = await postText(ENDPOINT, key, { model: MODEL, state, questions }, timeoutMs, retry);
   const body = JSON.parse(text);
   return { answers: body.answers, cost: body.usage?.cost ?? 0 };
 }
 
-// One POST with the timeout and the status-first error, shared with the JD escalation CLI's second opinion.
-export async function postText(url, key, payload, timeoutMs = TIMEOUT_MS) {
-  let res;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch (e) {
-    if (e.name === 'TimeoutError') throw new Error(`no response after ${timeoutMs / 1000} s`);
-    throw e;
+// ⚠ THREE ATTEMPTS, NOT MORE. A timed-out call may still be billed, so every retry of one can be
+// paid twice. A network error, 408, 429 or 5xx is retried with exponential backoff and jitter, and
+// a Retry-After from the server replaces the backoff. Any other 4xx is final: a bad key or a bad
+// request fails the same way every time.
+export const ATTEMPTS = 3;
+const BASE_DELAY_MS = 500;
+// ponytail: a Retry-After above this is cut to it, so a hostile or broken header cannot park a
+// sweep for an hour. Fail the row instead if a real server ever asks for longer.
+const MAX_WAIT_MS = 30_000;
+const retryable = (status) => status === 408 || status === 429 || status >= 500;
+
+// Retry-After is either whole seconds or an HTTP date. Null when absent or unreadable, so the
+// caller falls back to its own backoff.
+export function retryAfterMs(v, now = Date.now()) {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  const ms = /^\d+$/.test(s) ? Number(s) * 1000 : Date.parse(s) - now;
+  return Number.isFinite(ms) ? Math.min(Math.max(ms, 0), MAX_WAIT_MS) : null;
+}
+
+// One POST with the timeout, the retry and the status-first error, shared with every Jev caller.
+export async function postText(url, key, payload, timeoutMs = TIMEOUT_MS,
+  { attempts = ATTEMPTS, baseDelayMs = BASE_DELAY_MS } = {}) {
+  // Serialised once, outside the loop, so a payload that cannot serialise throws once, unretried.
+  const body = JSON.stringify(payload);
+  for (let n = 1; ; n++) {
+    let err;
+    let wait = null;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const text = await res.text();
+      if (res.ok) return text;
+      err = new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
+      if (!retryable(res.status)) throw Object.assign(err, { final: true });
+      wait = retryAfterMs(res.headers.get('retry-after'));
+    } catch (e) {
+      if (e.final) throw e;
+      err = e.name === 'TimeoutError' ? new Error(`no response after ${timeoutMs / 1000} s`) : e;
+    }
+    if (n >= attempts) throw err;
+    await new Promise((r) => setTimeout(r, wait ?? baseDelayMs * 2 ** (n - 1) * (0.5 + Math.random())));
   }
-  const text = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
-  return text;
 }
 
 // ⚠ `typeof v === 'number'` IS NOT A VALID-ANSWER CHECK. NaN and Infinity are numbers, NaN fails

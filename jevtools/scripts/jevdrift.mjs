@@ -195,6 +195,10 @@ console.log(`\n  judged          ${ok.length}`);
 console.log(`  conflicts       ${hits.length}`);
 console.log(`  too thin to say ${thin.length}  <- would have been false positives on confidence alone`);
 console.log(`  cost            $${ok.reduce((s, r) => s + (r.cost ?? 0), 0).toFixed(4)}`);
+// A failed pair was not judged, so it is neither a conflict nor clear. Counted, so a run where the
+// calls failed cannot read as a repo with no conflicts.
+const failed = out.filter((r) => r.error);
+if (failed.length) console.log(`  failed          ${failed.length}  <- not judged (${failed[0].error.slice(0, 80)}). Re-run to ask them`);
 
 for (const h of hits.slice(0, 20)) {
   console.log(`\n  conflict ${h.conflict.toFixed(2)} (conf ${(h.conflictConf ?? 0).toFixed(2)}, context ${h.enough.toFixed(1)}/2)`);

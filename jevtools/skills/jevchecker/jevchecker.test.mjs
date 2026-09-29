@@ -507,19 +507,15 @@ export async function selftest() {
   // Clean rows are kept for the JSON copy, with their values, so a measurement can be re-derived.
   assert.deepStrictEqual(r.clean.map((c) => [c.chunkId, c.value]), [['c1', 0.99]], 'the clean row is kept with its value');
 
-  // ⚠ ONE RETRY. A transient failure (a 429 at concurrency 6) would otherwise cost its whole call.
-  // A call failing twice is still unanswered, pinned above. A call failing once must come back.
+  // ⚠ NO SECOND RETRY HERE. postText already retried a transient failure (lib.test.mjs pins it),
+  // so an ask that throws has used its attempts. Asking again in the engine would multiply them.
   let tries = 0;
-  const flakyAsk = async (state, questions) => {
-    tries += 1;
-    if (tries === 1) throw new Error('429');
-    return { answers: Object.fromEntries(Object.keys(questions).map((k) => [k, { noul: 0.1 }])), cost: 0.0001 };
-  };
-  const rRetry = await runSweep('a\nb', { name: 'f', chunk: { type: 'lines' }, checks: [{ id: 'g', type: 'noul', instructions: 'i' }] },
-    null, 'fake-key', { ask: flakyAsk, retryDelay: 0 });
-  assert.strictEqual(tries, 2, 'the failed call was asked again, once');
-  assert.strictEqual(rRetry.unanswered.length, 0, 'and its answers were used');
-  assert.strictEqual(rRetry.hits.length, 2);
+  const onceAsk = async () => { tries += 1; throw new Error('HTTP 429: slow down'); };
+  const rOnce = await runSweep('a\nb', { name: 'f', chunk: { type: 'lines' }, checks: [{ id: 'g', type: 'noul', instructions: 'i' }] },
+    null, 'fake-key', { ask: onceAsk });
+  assert.strictEqual(tries, 1, 'the engine asks a failed call once');
+  assert.deepStrictEqual(rOnce.unanswered.map((u) => u.error), ['HTTP 429: slow down', 'HTTP 429: slow down'],
+    'and its rows surface as unanswered with the reason');
   // Every unanswered row says why, including a 200 response missing the answer or carrying a broken one.
   const holeAsk = async () => ({ answers: { c0__g: { noul: NaN } }, cost: 0 });
   const rHole = await runSweep('a\nb', { name: 'h', chunk: { type: 'lines' }, checks: [{ id: 'g', type: 'noul', instructions: 'i' }] },

@@ -370,10 +370,10 @@ function strength(row, byCheck) {
 // meaning the model did not answer. Routing a programming error into it prints a content finding
 // for a code bug. Only a FAILED MODEL CALL becomes unanswered, which is what the try below covers.
 //
-// A failed call is retried ONCE after `retryDelay` ms, because at concurrency 6 a 429 or a dropped
-// connection is transient and would otherwise leave its whole call unanswered, with a full rerun as
-// the only recovery. A failed call costs nothing, so the retry is free when it fails again.
-export async function runSweep(body, sweep, sourceText, key, { concurrency = 6, ask = askJev, onDone, retryDelay = 1000 } = {}) {
+// A transient failure (a 429 at concurrency 6, a dropped connection) is retried inside lib.mjs's
+// postText, which every Jev caller shares. A call that reaches the catch below has used its
+// attempts, so it is not asked again here.
+export async function runSweep(body, sweep, sourceText, key, { concurrency = 6, ask = askJev, onDone } = {}) {
   // FIRST, before chunking and before the regex checks run, because every fault it catches is in the
   // sweep file rather than in the body and none of them is worth finding after the model is paid.
   preflight(sweep, sourceText);
@@ -396,15 +396,10 @@ export async function runSweep(body, sweep, sourceText, key, { concurrency = 6, 
   const results = await runPool(calls, async (call) => {
     try {
       return await ask(call.state, call.questions, key);
-    } catch {
-      await new Promise((r) => setTimeout(r, retryDelay));
-      try {
-        return await ask(call.state, call.questions, key);
-      } catch (e) {
-        // A failed call is not a clean result. Every question in it becomes unanswered, which
-        // surfaces, so a network blip can never read as "nothing to look at here".
-        return { answers: null, cost: 0, error: e.message };
-      }
+    } catch (e) {
+      // A failed call is not a clean result. Every question in it becomes unanswered, which
+      // surfaces, so a network blip can never read as "nothing to look at here".
+      return { answers: null, cost: 0, error: e.message };
     }
   }, concurrency, onDone);
   for (const [i, res] of results.entries()) {
