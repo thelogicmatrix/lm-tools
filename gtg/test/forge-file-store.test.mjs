@@ -265,3 +265,71 @@ test('file store reads records from the git tree and one batch of blobs, with fa
   assert.match(fallback.stdout, /Beta/);
   assert.deepEqual(hits, { tree: 1, batch: 1, blob: 2, listing: 1, contents: 0 });
 });
+
+// An empty store: no commit yet, so the tree and the records listing are both 404 and the repo exists.
+async function emptyStore(t) {
+  const auth = new Set();
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) { /* drain */ }
+    auth.add(req.headers.authorization);
+    const found = new URL(req.url, 'http://stub').pathname === '/api/v1/repos/o/r';
+    res.writeHead(found ? 200 : 404, { 'content-type': 'application/json' });
+    res.end(found ? '{}' : '{"message":"missing"}');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  return { api: `http://127.0.0.1:${server.address().port}/api/v1`, auth };
+}
+
+function hubWith(config) {
+  const root = mkdtempSync(join(tmpdir(), 'gtg-cfg-'));
+  mkdirSync(join(root, '.gtg'));
+  writeFileSync(join(root, '.gtg', 'forge.json'), JSON.stringify(config));
+  return root;
+}
+
+function runIn(root, args, env = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [CLI, ...args], {
+      cwd: root,
+      env: { ...process.env, GTG_HUB: root, GTG_NO_SYNC: '1', GTG_SESSION_ID: 'cfg-test', FORGEJO_TOKEN: 'tok', ...env },
+    });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', (x) => { stdout += x; });
+    child.stderr.on('data', (x) => { stderr += x; });
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end('');
+  });
+}
+
+test('config without a token is refused, a token file is read, and history commands are refused', async (t) => {
+  const { api, auth } = await emptyStore(t);
+  const root = hubWith({ api, repo: 'o/r', store: 'files' });
+  const none = await runIn(root, ['list'], { FORGEJO_TOKEN: '' });
+  assert.equal(none.status, 2);
+  assert.match(none.stderr, /no token/);
+
+  // forgejo-cli's keys.json shape, keyed by the api's host.
+  const keys = join(root, 'keys.json');
+  writeFileSync(keys, JSON.stringify({ hosts: { [new URL(api).host]: { type: 'Application', token: 'fromfile' } } }));
+  const fileRoot = hubWith({ api, repo: 'o/r', store: 'files', tokenFile: '${GTG_TEST_KEYS}' });
+  const ok = await runIn(fileRoot, ['list'], { FORGEJO_TOKEN: '', GTG_TEST_KEYS: keys });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.ok(auth.has('token fromfile'));
+
+  for (const cmd of ['log', 'undo', 'stats', 'report']) {
+    const r = await runIn(root, [cmd]);
+    assert.equal(r.status, 2, cmd);
+    assert.match(r.stderr, /not available on the forge store/, cmd);
+  }
+});
+
+test('a config without "store": "files" is refused before any request, since the milestone store is gone', async (t) => {
+  const { api, auth } = await emptyStore(t);
+  for (const store of [undefined, 'milestones']) {
+    const r = await runIn(hubWith({ api, repo: 'o/r', store }), ['list']);
+    assert.equal(r.status, 2, String(store));
+    assert.match(r.stderr, /needs "store": "files"/, String(store));
+  }
+  assert.equal(auth.size, 0, 'no request reaches the forge');
+});

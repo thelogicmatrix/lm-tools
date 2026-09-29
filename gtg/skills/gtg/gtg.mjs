@@ -12,15 +12,25 @@ import { forgeConfig, openForge } from './lib/forge.mjs';
 import { readProgress, renderProgress, renderProgressTaskList } from './lib/progress.mjs';
 
 // --- storage root -----------------------------------------------------------
+// The repo the caller stands in, or null outside one. Looked up once: startup needs it for ROOT
+// when GTG_HUB is unset, and handoff's inferWorktree needs it again. 2 s, so a hung git cannot
+// hang every command.
+let cwdTop;
+function callerRepo() {
+  if (cwdTop === undefined) {
+    try {
+      cwdTop = execFileSync('git', ['rev-parse', '--show-toplevel'],
+        { stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).toString().trim() || null;
+    } catch { cwdTop = null; }
+  }
+  return cwdTop;
+}
 function resolveRoot() {
   if (process.env.GTG_HUB) return process.env.GTG_HUB;
-  try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { stdio: ['ignore', 'pipe', 'ignore'] })
-      .toString().trim();
-  } catch {
-    console.error('gtg: not inside a git repository and GTG_HUB is not set');
-    process.exit(2);
-  }
+  const top = callerRepo();
+  if (top) return top;
+  console.error('gtg: not inside a git repository and GTG_HUB is not set');
+  process.exit(2);
 }
 // help reads no store, so it skips the git spawn, which was about 80 ms of a 137 ms `gtg help`.
 const HELP_ONLY = ['help', '--help', '-h'].includes(process.argv[2]);
@@ -370,11 +380,8 @@ function samePath(x, y) {
 }
 // The repo the caller stands in, unless that repo is the hub itself.
 function inferWorktree() {
-  try {
-    const top = execFileSync('git', ['rev-parse', '--show-toplevel'],
-      { stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).toString().trim();
-    return top && !samePath(top, ROOT) ? top : 'repo root';
-  } catch { return 'repo root'; }
+  const top = callerRepo();
+  return top && !samePath(top, ROOT) ? top : 'repo root';
 }
 // Body of one `## <heading>` section, '' when absent.
 //
@@ -485,10 +492,11 @@ async function writeHandoff(argv, { which, verb }) {
   // there the caller names its own files. A clean tree is not an error. Runs BEFORE the
   // git-derived sections below so the checkpoint shows up in them.
   if (a.wip && ownWorktree && !a['dry-run']) {
-    const wt = { cwd: worktree, stdio: ['ignore', 'pipe', 'pipe'] };
+    // runGit, so another session's index.lock is waited out and a hung git times out.
+    const wt = { cwd: worktree };
     try {
-      execFileSync('git', ['add', '-A'], wt);
-      execFileSync('git', ['commit', '-q', '-m', `wip: gtg checkpoint - ${a.project}`], wt);
+      runGit(['add', '-A'], wt);
+      runGit(['commit', '-q', '-m', `wip: gtg checkpoint - ${a.project}`], wt);
       console.log('wip: committed');
     } catch (e) {
       const out = `${e.stdout || ''}${e.stderr || ''}`;
@@ -556,7 +564,7 @@ Say: "gtg ${a.slug}"
     duration_min: a.checkpoint ? undefined : sessionDurationMin(),
     harness: (typeof a.harness === 'string' ? a.harness : undefined) ?? detectHarness(),
     eta: a.eta || prior?.eta,
-    // On the forge store the body is a comment, not a file, so there is no path to record.
+    // On the forge store the body lives inside the record, so there is no path to record.
     next: String(a.next).slice(0, 150), file: FORGE ? undefined : relFile, updated: nowIso(),
   };
   if (a['dry-run']) {
@@ -598,7 +606,7 @@ Say: "gtg ${a.slug}"
     // The body came from stdin, so a failed write must not lose it: it goes to the file it would
     // have had on the file store, uncommitted, and the command fails.
     try {
-      console.log((await FORGE.flush(verb))[0] ?? '(forge: no comment posted)');
+      console.log((await FORGE.flush(verb))[0] ?? '(forge: record unchanged)');
     } catch (e) {
       mkdirSync(dirname(join(ROOT, relFile)), { recursive: true });
       writeFileSync(join(ROOT, relFile), doc);
@@ -662,8 +670,6 @@ function resolveDir(e) { return (!e.worktree || e.worktree === 'repo root') ? RO
 
 // Listing is observational. Work remains active until an explicit `back`,
 // `complete`/`remove`, or `supersede` command changes its state.
-function list(argv) { renderList(argv); }
-
 function renderList(argv) {
   const filter = argv.find((x) => !x.startsWith('--'));
   // displayOrder, not sortByProject: numbering must run 1..N top-to-bottom in the
@@ -852,7 +858,7 @@ After a move (back/active/remove/resume/undo) the updated list auto-prints when
 stdout is a terminal; it stays silent when piped (so an AI wastes no context).
 Force either way with --list / --no-list.
 Storage root: GTG_HUB env var if set, else the enclosing git repo.
-With <root>/.gtg/forge.json the store is Forgejo/Gitea milestones instead of files
+With <root>/.gtg/forge.json the store is record files in a Forgejo/Gitea repo instead
 (skills/gtg/references/forge-store.md). log, undo, stats and report need the file store.
 stats/report ship bundled; unknown commands dispatch to <root>/.gtg/commands/<name>.mjs,
 which overrides a bundled one of the same name - see skills/gtg/references/extending.md.`);
@@ -1361,16 +1367,12 @@ async function resumeConsume(argv) {
     : file && existsSync(file) ? readFileSync(file, 'utf8').trim() : null;
   const progress = readProgress(ROOT, match.slug, { optional: true });
   const when = typeof match.updated === 'string' ? match.updated.slice(0, 16).replace('T', ' ') : '?';
-  const where = FORGE ? (FORGE.locationOf?.(match) ?? `tracking issue #${FORGE.issueOf(match)}`) : match.file;
+  const where = FORGE ? FORGE.locationOf(match) : match.file;
   console.log(`RESUME: "${match.project}" - handoff of ${when}${where ? ` (${where})` : ''}`);
   if (progress) {
     console.log(`CURRENT PROGRESS (supersedes handoff snapshot)\n${renderProgress(progress)}`);
   }
   console.log(body ?? `(no handoff at ${where ?? 'none'}; the entry's next action is all there is: ${match.next})`);
-  if (FORGE) {
-    const tasks = await FORGE.openTasks(match);
-    if (tasks.length) console.log(`Open issues in this milestone:\n${tasks.join('\n')}`);
-  }
   console.log(fromBacklog
     ? `Kept on backlog: ${match.project} (current handoff retained)`
     : `Kept: ${match.project} (current handoff retained)`);
@@ -1522,8 +1524,7 @@ function undo() {
 // After a move (back/active/remove/resume/undo) a HUMAN wants the updated list;
 // an AI does not - gtg runs piped when a tool invokes it (stdout not a TTY), so
 // TTY-gating suppresses the render for models with zero wasted context, no flag
-// needed. --list / --no-list force it either way. renderList (not list) so undo's
-// without another command dispatch.
+// needed. --list / --no-list force it either way.
 function maybeAutoList(argv) {
   const a = parseFlags(argv);
   if (a['no-list']) return;
@@ -1534,7 +1535,7 @@ const MOVE_CMDS = new Set(['back', 'active', 'complete', 'remove', 'rm', 'prune'
 // --- dispatch -----------------------------------------------------------------
 const [cmd, ...rest] = process.argv.slice(2);
 const builtins = {
-  handoff, backlog, list, help, '--help': help, '-h': help,
+  handoff, backlog, list: renderList, help, '--help': help, '-h': help,
   back, active: activate, complete, remove, rm: remove, prune: remove, resume: resumeConsume, undo,
   rename, unparent, log, supersede, keep,
 };
@@ -1547,7 +1548,7 @@ if (!NO_STORE.has(cmd)) {
   let cfg;
   try { cfg = forgeConfig(ROOT); } catch (e) { console.error(`gtg: ${e.message}`); process.exit(2); }
   if (cfg && FORGE_REFUSED.has(cmd)) {
-    console.error(`gtg ${cmd}: not available on the forge store. The history is the milestone and issue timeline on ${cfg.repo}.`);
+    console.error(`gtg ${cmd}: not available on the forge store. The history is the commit log of ${cfg.repo}.`);
     process.exit(2);
   }
   if (cfg) {
@@ -1564,7 +1565,7 @@ const flushForge = async () => {
     process.exitCode = 1; // not process.exit, see writeHandoff's forge branch
   }
 };
-if (!cmd) { list([]); printReview('list', []); }
+if (!cmd) { renderList([]); printReview('list', []); }
 // hasOwn, not truthiness: every inherited Object key resolved here, so `gtg constructor` and
 // `gtg toString` called something that is not a verb instead of falling through to the
 // extension lookup and then the unknown-command error.
@@ -1590,8 +1591,8 @@ else {
       const mod = await import(pathToFileURL(ext).href);
       if (typeof mod.default !== 'function') throw new Error('no default export function');
       const ownParent = EXTENSIONS[cmd] ?? null;
-      // Both stores, always. An entry idle over 7 days is auto-shelved onto the backlog by
-      // `list`, so an active-only read reports a live package as missing.
+      // Both stores, always: a shelved package is still live, so an active-only read would
+      // report it as missing.
       //
       // Through `entries`, NOT `readStore`: readStore is a whole-file JSON reader, kept at its
       // packed shape for the published extension context, so reading records through it here

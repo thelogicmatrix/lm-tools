@@ -410,3 +410,17 @@ test('help documents checkpoint hook intent on the existing handoff command', ()
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /--checkpoint.*current handoff.*hook/i);
 });
+
+test('gtg learn never warns that a stale sprint auto-shelves, because list no longer shelves anything', () => {
+  const root = hub();
+  const r = gtg(root, ['handoff', '--project', 'Learning: Go', '--slug', 'learning-go', '--next', 'Continue', '--parent', 'learning'], BODY);
+  assert.equal(r.status, 0, r.stderr);
+  const file = join(root, ACTIVE, 'learning-go.json');
+  const record = JSON.parse(readFileSync(file, 'utf8'));
+  record.updated = new Date(Date.now() - 10 * 86400000).toISOString();
+  writeFileSync(file, JSON.stringify(record, null, 2) + '\n');
+  const learn = gtg(root, ['learn']);
+  assert.equal(learn.status, 0, learn.stderr);
+  assert.match(learn.stdout, /Learning: Go \(learning-go\).*\(10d ago\)/);
+  assert.doesNotMatch(learn.stdout, /auto-shel|auto-park/i);
+});

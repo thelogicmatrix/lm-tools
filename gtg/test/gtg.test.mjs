@@ -2108,7 +2108,7 @@ const patchActive = (root, fn) => {
   const dir = tempRepo();
   gtg(dir, ['handoff', '--project', 'Alpha', '--slug', 'alpha', '--next', 'x',
     '--parent', 'ghost'], { input: 'body\n' });
-  // Bookkeeping is not work, so the idle clock `list` auto-shelves on must not restart.
+  // Bookkeeping is not work, so the idle clock the review question runs on must not restart.
   // Backdated first, and captured BEFORE the unparent:
   // reading `updated` afterwards can only catch a deletion, and nowIso() is second-
   // granularity, so a stamp taken "now" would compare equal to a restamp in the same second.
