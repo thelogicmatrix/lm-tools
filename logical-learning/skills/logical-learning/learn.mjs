@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, renameSync, rmSync } from 'node:fs';
 import { join, dirname, basename, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -41,7 +41,34 @@ export const sprintPath = (root, slug) => join(root, sprintRel(slug));
 export function readSprint(root, slug) {
   const p = sprintPath(root, slug);
   if (!existsSync(p)) return null;
-  return JSON.parse(readFileSync(p, 'utf8'));
+  // A hand-edited or half-synced file is the user's to fix, so it is a one-line UsageError naming
+  // the file, not a SyntaxError that main re-throws as a bug with a stack.
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'));
+  } catch (e) {
+    throw new UsageError(`cannot parse ${p}: ${e.message}`);
+  }
+}
+
+// Write beside the target and rename over it, so a concurrent reader never meets a half-written
+// sprint. Windows refuses to replace a file another process is reading (EPERM, EACCES or EBUSY)
+// for as long as that read lasts, which is milliseconds, so the rename is retried briefly.
+// ponytail: the twin of writeAtomic in gtg's and projects' lib/store.mjs, gives up after about
+// 0.5 s. Upgrade path: move it into a shared twin file under the parity test if a third caller appears.
+function writeAtomic(p, body) {
+  const tmp = `${p}.${process.pid}.tmp`;
+  writeFileSync(tmp, body);
+  for (let i = 0; ; i++) {
+    try {
+      return renameSync(tmp, p);
+    } catch (e) {
+      if (i >= 50 || !['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) {
+        rmSync(tmp, { force: true });
+        throw e;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
 }
 
 // A failed write must never read as a success, so it reports what is actually on disk
@@ -51,7 +78,7 @@ export function writeSprint(root, sprint) {
   try {
     mkdirSync(dirname(p), { recursive: true });
     if (existsSync(p) && !(statSync(p).mode & 0o222)) throw new Error('sprint file is read-only');
-    writeFileSync(p, `${JSON.stringify(sprint, null, 2)}\n`);
+    writeAtomic(p, `${JSON.stringify(sprint, null, 2)}\n`);
   } catch (e) {
     console.error(`learn: could not write ${p}: ${e.message}`);
     console.error(existsSync(p) ? `learn: on disk now:` : `learn: ${p} is absent`);

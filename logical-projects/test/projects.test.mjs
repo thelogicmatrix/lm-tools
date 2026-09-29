@@ -2226,3 +2226,33 @@ test('a commit waits out a briefly held index.lock', async () => {
   assert.equal(git('log', '--format=%s').toString().trim(), 'after the lock');
   await new Promise((r) => (child.exitCode === null ? child.on('exit', r) : r()));
 });
+
+// Issue #36. `projects sync` asked git for each row's last commit date one spawn at a time.
+// lastCommitDates asks for them all at once and must agree with lastCommitDate row by row.
+import * as projectsLib from '../skills/logical-projects/projects.mjs';
+
+test('lastCommitDates answers every repo at once, the same as lastCommitDate', async () => {
+  const a = gitFixture();
+  writeFileSync(join(a.root, 'x.md'), 'x\n');
+  a.git('add', '--', 'x.md');
+  a.git('commit', '-q', '-m', 'one', '--date', '2026-07-01T00:00:00');
+  const plain = join(a.root, 'plain');
+  mkdirSync(plain);
+  const repos = [a.root, plain, join(a.root, 'not-there')];
+  const dates = await projectsLib.lastCommitDates(repos);
+  assert.deepEqual(repos.map((r) => dates.get(r)), ['2026-07-01', null, null]);
+  assert.deepEqual(repos.map((r) => dates.get(r)), repos.map((r) => lastCommitDate(r)));
+});
+
+test('the sync CLI still flags a row whose code moved after its status', () => {
+  const { root } = gitFixture();
+  const code = gitFixture();
+  writeFileSync(join(code.root, 'x.md'), 'x\n');
+  code.git('add', '--', 'x.md');
+  code.git('commit', '-q', '-m', 'later', '--date', '2099-01-01T00:00:00');
+  assert.equal(runCli(root, ['register', 'beacon', '--name', 'Beacon', '--theme', 'tooling',
+    '--repo', code.root]).status, 0);
+  assert.equal(runCli(root, ['current', 'beacon'], 'Sweep is green.\n').status, 0);
+  const sync = runCli(root, ['sync']);
+  assert.match(sync.stdout, /STALE beacon: .*last commit 2099-01-01/, sync.stdout + sync.stderr);
+});

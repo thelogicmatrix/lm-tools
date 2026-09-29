@@ -160,3 +160,36 @@ test('a write never deletes a record another session created after this one read
   assert.deepEqual(res.deleted, ['d/c.json']);
   assert.deepEqual(readCollection(root, 'd').map((e) => e.slug), ['a', 'b']);
 });
+
+// Issue #36. Writes go to a temp file and are renamed over the target, so a reader or a second
+// writer never meets a half-written record. Four processes rewrite one record while reading the
+// collection back, and not one read may fail to parse.
+import { spawn as spawnWriter } from 'node:child_process';
+import { fileURLToPath as toPath, pathToFileURL as toUrl } from 'node:url';
+import { dirname as dirOf } from 'node:path';
+
+test('concurrent writers of one record never leave a torn file', async () => {
+  const root = tmp();
+  const store = toUrl(join(dirOf(toPath(import.meta.url)), '../skills/logical-projects/lib/store.mjs')).href;
+  const code = `
+    import { readCollection, writeCollection } from ${JSON.stringify(store)};
+    const root = ${JSON.stringify(root)};
+    let torn = 0;
+    for (let i = 0; i < 150; i++) {
+      writeCollection(root, 'd', [{ slug: 'a', w: process.pid, i, pad: 'x'.repeat(2000 + i * 7) }]);
+      try { readCollection(root, 'd'); } catch { torn++; }
+    }
+    process.stdout.write(String(torn));
+  `;
+  const runs = await Promise.all([1, 2, 3, 4].map(() => new Promise((done) => {
+    const c = spawnWriter(process.execPath, ['--input-type=module', '-e', code]);
+    let out = '';
+    let err = '';
+    c.stdout.on('data', (d) => { out += d; });
+    c.stderr.on('data', (d) => { err += d; });
+    c.on('close', (status) => done({ status, out, err }));
+  })));
+  for (const r of runs) assert.deepEqual([r.status, r.out], [0, '0'], r.err);
+  const [rec] = readCollection(root, 'd');
+  assert.equal(rec.slug, 'a');
+});

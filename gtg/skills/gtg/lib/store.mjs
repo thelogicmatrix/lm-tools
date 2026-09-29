@@ -34,6 +34,28 @@ const SLUG_OK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 // a hand read) cannot delete them through here. Upgrade path: pass the seen set explicitly.
 const SEEN = new Map();
 
+// Write beside the target and rename over it, so a reader or a second writer never meets a
+// half-written record. The temp name ends in .tmp, never .json, so readCollection cannot list it.
+// Windows refuses to replace a file another process is reading (EPERM, EACCES or EBUSY) for as
+// long as that read lasts, which is milliseconds, so the rename is retried briefly.
+// ponytail: gives up after about 0.5 s and throws, leaving the old record whole. Upgrade path:
+// a longer budget if a slow reader (an indexer, antivirus) ever holds a record that long.
+function writeAtomic(p, body) {
+  const tmp = `${p}.${process.pid}.tmp`;
+  writeFileSync(tmp, body);
+  for (let i = 0; ; i++) {
+    try {
+      return renameSync(tmp, p);
+    } catch (e) {
+      if (i >= 50 || !['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) {
+        rmSync(tmp, { force: true });
+        throw e;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
+}
+
 function slugFile(slug) {
   if (typeof slug !== 'string' || !SLUG_OK.test(slug)) {
     throw new Error(`gtg: record has an unusable slug ${JSON.stringify(slug)} - cannot name its file`);
@@ -142,7 +164,7 @@ export function writeCollection(root, dir, items) {
     const body = JSON.stringify(it, null, 2) + '\n';
     const p = join(abs, f);
     if (existsSync(p) && readFileSync(p, 'utf8') === body) continue; // unchanged: leave it alone
-    writeFileSync(p, body);
+    writeAtomic(p, body);
     written.add(`${dir}/${f}`);
   }
 

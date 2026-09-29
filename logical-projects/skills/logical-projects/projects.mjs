@@ -5,7 +5,8 @@
 // INDEX.md is RENDERED from it and committed, because it is what makes the list readable on
 // Forgejo and what gtg's inferParent reads to resolve project families.
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync } from 'node:fs';
-import { execSync, execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { join, dirname, resolve } from 'node:path';
 import { readCollection, writeCollection } from './lib/store.mjs';
 import { runGit, firstMeaningfulLine } from './lib/git.mjs';
@@ -60,7 +61,7 @@ const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 export function resolveRoot() {
   if (process.env.PROJECTS_ROOT) return process.env.PROJECTS_ROOT;
   try {
-    return execSync('git rev-parse --show-toplevel', { stdio: ['ignore', 'pipe', 'ignore'] })
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { stdio: ['ignore', 'pipe', 'ignore'] })
       .toString().trim();
   } catch {
     console.error('projects: not inside a git repository and PROJECTS_ROOT is not set');
@@ -884,12 +885,21 @@ export function lastVerifiedDate(pageText) {
 // at all is the other shape and it does not come back empty, it makes git fail with "not a git
 // repository", which the catch turns into the same null. All three mean "no commit date to
 // compare against", and the absent directory is reported separately as MISSING-REPO.
+const commitDateArgs = (repo) => ['-C', repo, 'log', '-1', '--format=%ad', '--date=short', '--', '.'];
 export function lastCommitDate(repo) {
   try {
-    return execFileSync('git',
-      ['-C', repo, 'log', '-1', '--format=%ad', '--date=short', '--', '.'],
+    return execFileSync('git', commitDateArgs(repo),
       { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || null;
   } catch { return null; }
+}
+
+// The same question for every repo at once. sync used to ask it one spawn at a time, 18 rows in
+// series. A failure is null, as in lastCommitDate.
+export async function lastCommitDates(repos) {
+  const run = promisify(execFile);
+  const dates = await Promise.all(repos.map((repo) => run('git', commitDateArgs(repo))
+    .then(({ stdout }) => stdout.trim() || null, () => null)));
+  return new Map(repos.map((repo, i) => [repo, dates[i]]));
 }
 
 export function cmdSync(root, _args, opts = {}) {
@@ -1044,8 +1054,12 @@ export const builtins = {
   // or a quoted reason merely containing the word cannot promote a clean report to a failure.
   // That guarantee rests on cmdSync squashing each flag to one line: a newline in a hand-edited
   // slug used to plant a MALFORMED line here and force exit 1 with nothing actually wrong.
-  sync: (root, rest) => {
-    const out = cmdSync(root, rest);
+  // The commit dates are fetched in parallel first, for every row cmdSync would ask about.
+  sync: async (root, rest) => {
+    const repos = readStore(root).projects.filter((p) => p.page && p.repo)
+      .map((p) => resolve(root, p.repo)).filter((r) => existsSync(r));
+    const dates = await lastCommitDates(repos);
+    const out = cmdSync(root, rest, { commitDateFor: (r) => dates.get(r) ?? null });
     process.stdout.write(out);
     if (/^MALFORMED /m.test(out)) process.exit(1);
   },
@@ -1101,30 +1115,37 @@ export function main(argv = process.argv.slice(2)) {
       console.error(`projects: unknown command "${cmd}"\n\n${HELP}`);
       process.exit(2);
     }
-    return builtins[cmd](root, rest);
+    const out = builtins[cmd](root, rest);
+    // sync is async, so its refusals arrive as a rejection and take the same exit path.
+    if (out instanceof Promise) return out.catch(fail);
+    return out;
   } catch (e) {
-    const message = (e && e.message) || String(e);
-    // Every deliberate refusal in this file carries a message we wrote. Anything else is a bug
-    // HERE, and printing only its one-line message throws the stack away, which is how a typo
-    // becomes an unexplained exit 1. A real bug gets to be loud.
-    if (!DELIBERATE.test(message)) {
-      console.error('projects: internal error, this is a bug in projects.mjs');
-      console.error((e && e.stack) || message);
-      process.exit(1);
-    }
-    console.error(message);
-    // 2 is "you asked for something that is not a thing", 1 is "the operation failed".
-    // A refused page write is a 1: the request was valid, the file on disk is not.
-    // `Migrate it first` rides along here rather than in a code on the error, because classifying by
-    // message fragment is what this function already does and one more fragment is less machinery
-    // than a second convention. An unmigrated root is an environment problem, so 2.
-    // No `unknown command` fragment: that branch above exits directly and never throws.
-    // `is required` is the same class as `was given`: an invocation missing a required field is a
-    // malformed command, not a failed operation, and without it ONE user mistake exits two
-    // different ways depending on argv shape (`register demo --theme --name X` throws
-    // `was given` → 2, `register demo` with no --theme at all → 1).
-    process.exit(/unknown status|unknown theme|unknown project|invalid slug|was given|is required|no page|Migrate it first/.test(message) ? 2 : 1);
+    fail(e);
   }
+}
+
+function fail(e) {
+  const message = (e && e.message) || String(e);
+  // Every deliberate refusal in this file carries a message we wrote. Anything else is a bug
+  // HERE, and printing only its one-line message throws the stack away, which is how a typo
+  // becomes an unexplained exit 1. A real bug gets to be loud.
+  if (!DELIBERATE.test(message)) {
+    console.error('projects: internal error, this is a bug in projects.mjs');
+    console.error((e && e.stack) || message);
+    process.exit(1);
+  }
+  console.error(message);
+  // 2 is "you asked for something that is not a thing", 1 is "the operation failed".
+  // A refused page write is a 1: the request was valid, the file on disk is not.
+  // `Migrate it first` rides along here rather than in a code on the error, because classifying by
+  // message fragment is what this function already does and one more fragment is less machinery
+  // than a second convention. An unmigrated root is an environment problem, so 2.
+  // No `unknown command` fragment: that branch above exits directly and never throws.
+  // `is required` is the same class as `was given`: an invocation missing a required field is a
+  // malformed command, not a failed operation, and without it ONE user mistake exits two
+  // different ways depending on argv shape (`register demo --theme --name X` throws
+  // `was given` → 2, `register demo` with no --theme at all → 1).
+  process.exit(/unknown status|unknown theme|unknown project|invalid slug|was given|is required|no page|Migrate it first/.test(message) ? 2 : 1);
 }
 
 if (process.argv[1] && process.argv[1].endsWith('projects.mjs')) main();

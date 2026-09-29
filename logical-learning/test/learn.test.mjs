@@ -1042,3 +1042,47 @@ test('a failed commit leaves nothing staged', () => {
   assert.equal(gitOut(dir, 'diff', '--cached', '--name-only'), '', 'the failed commit must unstage what its add staged');
   rmSync(dir, { recursive: true, force: true });
 });
+
+// Issue #36. A corrupt sprint file is a one-line usage error naming the file, not a stack.
+// A sprint write is a temp file renamed over the target, so a concurrent reader never meets a
+// half-written file.
+import { spawn } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+
+test('a corrupt sprint file gives a one-line error naming the file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-corrupt-'));
+  mkdirSync(join(dir, '.learn', 'sprints'), { recursive: true });
+  writeFileSync(join(dir, '.learn', 'sprints', 'broken.json'), '{ not json');
+  const r = run(dir, 'week', '--sprint', 'broken');
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(r.stderr.trim().split('\n').length, 1, `one line, not a stack:\n${r.stderr}`);
+  assert.match(r.stderr, /broken\.json/);
+  assert.throws(() => readSprint(dir, 'broken'), UsageError);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('concurrent sprint writes never leave a torn file', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'learn-race-'));
+  const mod = pathToFileURL(learnCli).href;
+  const code = `
+    import { readSprint, writeSprint } from ${JSON.stringify(mod)};
+    const root = ${JSON.stringify(dir)};
+    let torn = 0;
+    for (let i = 0; i < 150; i++) {
+      writeSprint(root, { slug: 'race', week: i, pid: process.pid, pad: 'x'.repeat(2000 + i * 7) });
+      try { readSprint(root, 'race'); } catch { torn++; }
+    }
+    process.stdout.write(String(torn));
+  `;
+  const runs = await Promise.all([1, 2, 3, 4].map(() => new Promise((done) => {
+    const c = spawn(process.execPath, ['--input-type=module', '-e', code]);
+    let out = '';
+    let err = '';
+    c.stdout.on('data', (d) => { out += d; });
+    c.stderr.on('data', (d) => { err += d; });
+    c.on('close', (status) => done({ status, out, err }));
+  })));
+  for (const r of runs) assert.deepEqual([r.status, r.out], [0, '0'], r.err);
+  assert.equal(readSprint(dir, 'race').slug, 'race');
+  rmSync(dir, { recursive: true, force: true });
+});
