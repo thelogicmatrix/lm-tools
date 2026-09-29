@@ -16,7 +16,21 @@ const USAGE = `Usage:
   gtg progress add <slug> --expected-revision <n>  (task JSON array on stdin)
   gtg progress show <slug> [--json]
   gtg progress list [--json]
-  gtg progress update <slug> [<task-id>] --expected-revision <n> [--status <state>] [--worker <id>] [--role <role>] [--model <model>] [--effort <effort>] [--evidence <note>] [--note <reason>] [--stage <text>] [--next-action <text>]`;
+  gtg progress update <slug> [<task-id>] --expected-revision <n> [--status <state>] [--worker <id>] [--role <role>] [--model <model>] [--effort <effort>] [--evidence <note>] [--note <reason>] [--stage <text>] [--next-action <text>]
+Exit 3: the record was written at the revision printed, but its git commit failed. Carry on from
+that revision (do not retry with the old one) and commit the path it names.`;
+
+// commit() returns false when git failed after the record was written. The record is on disk at
+// its new revision, so this exits 3, not 1: a caller that retried with its old --expected-revision
+// would hit a revision conflict for a change that already landed.
+const UNCOMMITTED = 3;
+function committed(commit, record, message) {
+  const path = progressRelativePath(record.slug);
+  if (commit([path], message) !== false) return true;
+  console.error(`gtg progress: written at revision ${record.revision}, uncommitted (${path}). Next --expected-revision is ${record.revision}.`);
+  process.exitCode = UNCOMMITTED;
+  return false;
+}
 
 function usage(message) {
   if (message) console.error(`gtg progress: ${message}`);
@@ -69,7 +83,7 @@ function init(root, argv, commit, sessionId) {
     slug, project: options.project, plan: options.plan,
     stage: options.stage ?? 'planned', nextAction: options.nextAction ?? '', tasks,
   }, sessionId);
-  commit([progressRelativePath(record.slug)], `gtg progress: initialize ${record.project}`);
+  if (!committed(commit, record, `gtg progress: initialize ${record.project}`)) return;
   console.log(`Initialized ${record.project} progress at revision ${record.revision}.`);
 }
 
@@ -82,7 +96,7 @@ function add(root, argv, commit, sessionId) {
   const tasks = parseTaskDefinitions(readFileSync(0, 'utf8'));
   if (!tasks.length) return usage('add needs at least one task definition');
   const record = addProgressTasks(root, slug, options.expectedRevision, tasks, sessionId);
-  commit([progressRelativePath(record.slug)], `gtg progress: add tasks to ${record.project}`);
+  if (!committed(commit, record, `gtg progress: add tasks to ${record.project}`)) return;
   console.log(`Added ${tasks.length} task${tasks.length === 1 ? '' : 's'} to ${record.project}; revision ${record.revision}.`);
 }
 
@@ -125,7 +139,7 @@ function update(root, argv, commit, sessionId) {
     model: options.model, effort: options.effort, evidence: options.evidence,
     note: options.note, stage: options.stage, nextAction: options.nextAction,
   }, sessionId);
-  commit([progressRelativePath(record.slug)], `gtg progress: update ${record.project} to revision ${record.revision}`);
+  if (!committed(commit, record, `gtg progress: update ${record.project} to revision ${record.revision}`)) return;
   console.log(`Updated ${record.project} progress to revision ${record.revision}.`);
 }
 

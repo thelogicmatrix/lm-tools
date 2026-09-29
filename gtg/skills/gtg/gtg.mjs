@@ -175,6 +175,7 @@ function commit(paths, message) {
     // staged and ownerless in the shared checkout. exitCode rather than a throw because the
     // store write already landed - this reports a partial success, it does not roll back.
     process.exitCode = 1;
+    return false; // so a caller can say which write landed, see extensions/commands/progress.mjs
   }
 }
 // `which` is 'active' | 'backlog'. Order is NOT stored: sortByProject/displayOrder recompute

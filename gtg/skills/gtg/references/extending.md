@@ -27,6 +27,8 @@ export default async ({ root, args, ownEntries, readStore, writeStore, commit })
 
 `ctx` = `{ root, args, readStore(path), writeStore(path, data), commit(paths, message), countHandoffFiles(slug), ownEntries(), ownParent, sessionId }`.
 
+- `commit(paths, message)` returns `false` when git failed. The files are still written, the paths are named on stderr and the exit code is 1.
+
 - `ownEntries()` returns `{ active, shelved }`, this command's own entries, read from `docs/handoffs/active/` and `docs/handoffs/backlog/` and filtered to the `parent` namespace it owns. It goes through the same reader the CLI uses. It reads both shelves every time, because explicit shelving can move entries to the backlog and an active-only read would report a live package as missing. A command that owns no namespace gets two empty arrays.
 - `ownParent` is that namespace (`null` for a command that owns none), so an extension that writes an entry uses the same value its reader filters on.
 - `sessionId` is the calling session's id, from `GTG_SESSION_ID`, `CODEX_THREAD_ID`, `CODEX_SESSION_ID` or `CLAUDE_CODE_SESSION_ID`, or `undefined`.

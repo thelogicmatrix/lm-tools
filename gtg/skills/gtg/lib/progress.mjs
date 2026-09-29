@@ -8,6 +8,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -116,18 +117,66 @@ function writeAtomic(file, record) {
   }
 }
 
+// A held lock is waited out: 5 tries 200 ms apart, since a write takes milliseconds and two parallel
+// SDD workers updating one slug used to fail at once. A lock is stale, and removed, when the pid it
+// records is dead or it is older than 60 s, so a crashed writer no longer blocks the slug forever.
+const LOCK_TRIES = 5;
+const LOCK_WAIT_MS = 200;
+const LOCK_STALE_MS = 60000;
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+function readLock(lock) {
+  let text;
+  try { text = readFileSync(lock, 'utf8'); } catch { return null; } // released meanwhile
+  let held = {};
+  try { held = JSON.parse(text); } catch { /* still being written, or not ours */ }
+  let createdMs = Date.parse(held?.createdAt);
+  if (!Number.isFinite(createdMs)) {
+    try { createdMs = statSync(lock).mtimeMs; } catch { return null; }
+  }
+  return { text, pid: held?.pid, createdMs };
+}
+
+function isStale({ pid, createdMs }) {
+  if (Date.now() - createdMs > LOCK_STALE_MS) return true;
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false;
+  try { process.kill(pid, 0); return false; } catch (e) { return e?.code === 'ESRCH'; }
+}
+
+// Moved aside before it is deleted, and put back if what moved is not the lock judged stale, so
+// two contenders clearing one stale lock cannot delete the fresh lock the faster one just took.
+// ponytail: the put-back itself can race a third contender. Upgrade path: an O_EXCL lock directory.
+function clearStale(lock, held) {
+  const aside = `${lock}.${process.pid}.stale`;
+  try { renameSync(lock, aside); } catch { return true; } // already gone, so try again
+  let moved = null;
+  try { moved = readFileSync(aside, 'utf8'); } catch { /* unreadable */ }
+  if (moved === held.text) { rmSync(aside, { force: true }); return true; }
+  try { renameSync(aside, lock); } catch { rmSync(aside, { force: true }); }
+  return false;
+}
+
 function withLockFile(lock, description, action) {
   mkdirSync(dirname(lock), { recursive: true });
   let fd;
-  try {
-    fd = openSync(lock, 'wx');
-    writeFileSync(fd, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }) + '\n');
-  } catch (e) {
-    if (fd !== undefined) {
-      try { closeSync(fd); } finally { rmSync(lock, { force: true }); }
+  for (let attempt = 1, cleared = 0; ; attempt++) {
+    try {
+      fd = openSync(lock, 'wx');
+      writeFileSync(fd, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }) + '\n');
+      break;
+    } catch (e) {
+      if (fd !== undefined) {
+        try { closeSync(fd); } finally { rmSync(lock, { force: true }); }
+      }
+      if (e?.code !== 'EEXIST') throw e;
+      const held = readLock(lock); // null: released between the open and the read, so retry now
+      if (held && cleared < LOCK_TRIES && isStale(held) && clearStale(lock, held)) { cleared++; continue; }
+      if (attempt >= LOCK_TRIES) {
+        const by = held ? ` by pid ${held.pid ?? '?'} since ${new Date(held.createdMs).toISOString()}` : '';
+        throw new Error(`${description} is locked${by}. Retry after that writer finishes`);
+      }
+      if (held) pause(LOCK_WAIT_MS);
     }
-    if (e?.code === 'EEXIST') throw new Error(`${description} is locked; retry after the active writer finishes`);
-    throw e;
   }
   try {
     return action();

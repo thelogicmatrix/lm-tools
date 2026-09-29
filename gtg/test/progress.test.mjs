@@ -445,20 +445,74 @@ test('progress update supports project-only changes and rejects malformed stored
   assert.equal(readFileSync(recordPath(root), 'utf8'), malformed);
 });
 
-test('progress lock contention refuses mutation and never steals or removes another writer lock', () => {
+// A writer that is alive: this test process, which outlives every gtg child it spawns.
+const liveLock = (createdAt = new Date().toISOString()) => `${JSON.stringify({ pid: process.pid, createdAt })}\n`;
+// A pid that was real a moment ago and has exited.
+function deadPid() {
+  return spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout.trim() * 1;
+}
+const UPDATE_TASK_1 = ['progress', 'update', 'alpha', 'task-1', '--expected-revision', '1', '--status', 'implementing'];
+
+test('a live writer lock is waited out, then refused, and never stolen or removed', () => {
   const root = tempHub();
   assert.equal(init(root).status, 0);
   const before = readFileSync(recordPath(root), 'utf8');
   const lock = `${recordPath(root)}.lock`;
-  writeFileSync(lock, '{"pid":999}\n');
-  const r = gtg(root, [
-    'progress', 'update', 'alpha', 'task-1', '--expected-revision', '1', '--status', 'implementing',
-  ]);
+  const held = liveLock();
+  writeFileSync(lock, held);
+  const started = Date.now();
+  const r = gtg(root, UPDATE_TASK_1);
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /is locked/);
+  assert.match(r.stderr, new RegExp(`is locked by pid ${process.pid}`));
+  assert.ok(Date.now() - started >= 800, 'it waited before refusing');
   assert.equal(readFileSync(recordPath(root), 'utf8'), before);
-  assert.equal(existsSync(lock), true, 'contender stole or removed the existing lock');
+  assert.equal(readFileSync(lock, 'utf8'), held, 'contender stole or removed the existing lock');
   rmSync(lock);
+});
+
+test('a lock whose writer died, or older than 60 s, is stale and replaced', () => {
+  for (const held of [JSON.stringify({ pid: deadPid(), createdAt: new Date().toISOString() }), liveLock(new Date(Date.now() - 120000).toISOString())]) {
+    const root = tempHub();
+    assert.equal(init(root).status, 0);
+    const lock = `${recordPath(root)}.lock`;
+    writeFileSync(lock, held);
+    const r = gtg(root, UPDATE_TASK_1);
+    assert.equal(r.status, 0, `${held}: ${r.stderr}`);
+    assert.equal(readRecord(root).revision, 2);
+    assert.equal(existsSync(lock), false, 'the new writer releases its own lock');
+  }
+});
+
+test('a writer waits for a lock that is released while it retries', async () => {
+  const root = tempHub();
+  assert.equal(init(root).status, 0);
+  const lock = `${recordPath(root)}.lock`;
+  writeFileSync(lock, liveLock());
+  const pending = gtgAsync(root, UPDATE_TASK_1);
+  setTimeout(() => rmSync(lock), 300);
+  const r = await pending;
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readRecord(root).revision, 2);
+});
+
+test('a write whose git commit fails says it landed at the new revision and exits 3, not 1', () => {
+  const root = tempHub();
+  assert.equal(init(root).status, 0);
+  // Another session's index.lock that never clears: runGit gives up after its retries.
+  const indexLock = join(root, '.git', 'index.lock');
+  writeFileSync(indexLock, '');
+  let r = gtg(root, UPDATE_TASK_1);
+  assert.equal(r.status, 3, r.stderr);
+  assert.match(r.stderr, /written at revision 2, uncommitted/);
+  assert.equal(readRecord(root).revision, 2);
+  r = gtg(root, ['progress', 'add', 'alpha', '--expected-revision', '2'], JSON.stringify([{ id: 'task-3', purpose: 'Added while git is locked' }]));
+  assert.equal(r.status, 3, r.stderr);
+  assert.match(r.stderr, /written at revision 3, uncommitted/);
+  rmSync(indexLock);
+  // The caller carries on from the revision the message named.
+  r = gtg(root, ['progress', 'update', 'alpha', 'task-1', '--expected-revision', '3', '--status', 'reviewing']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readRecord(root).revision, 4);
 });
 
 test('two writers using the same revision cannot silently overwrite each other', async () => {
