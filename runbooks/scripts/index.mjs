@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { loadConfig, loadExtensions, settings } from "./config.mjs";
 
 // The plugin root, so the lint's advisory names a command that runs from any cwd. The advisory
@@ -430,8 +430,10 @@ async function main() {
   process.stdout.write(out ? JSON.stringify(out) + "\n" : "", () => process.exit());
 }
 
-// argv[1] is undefined under `node -e`, and pathToFileURL throws on undefined rather than
-// returning nothing, which made this module unimportable from an inline script.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Real paths on both sides. Launched through a junction, argv[1] keeps the link while node
+// resolves this module to its target, and a URL compare never ran main (#32). argv[1] is
+// undefined under `node -e`, so the throw is caught to keep this module importable inline.
+const isEntry = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
+if (isEntry()) {
   main();
 }

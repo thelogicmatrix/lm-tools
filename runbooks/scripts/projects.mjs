@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -184,6 +184,8 @@ function cli() {
   } else throw new Error("usage: projects.mjs pack --project <slug> --output <path.zip> [--exclude <path>] | retire --project <slug> [--apply]");
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Real paths on both sides, so a launch through a junction still runs the CLI (#32).
+const isEntry = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
+if (isEntry()) {
   try { cli(); } catch (e) { console.error(e.message); process.exitCode = 1; }
 }

@@ -39,7 +39,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { buildIndex, shortlist } from './prefilter.mjs';
 import { settings, STATE_DIR } from './config.mjs';
 
@@ -598,7 +598,11 @@ if (process.argv.includes('--selftest')) { console.log(await selftest()); proces
 
 // --- hook entry ---
 // Only run the hook when this file IS the command. An import wants the exports, not a stdin read.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Real paths on both sides. Launched through a junction, argv[1] keeps the link while node
+// resolves this module to its target, and a URL compare never ran the hook (#32). realpathSync
+// throws on a missing or undefined argv[1], which is not this file either.
+const isEntry = () => { try { return fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
+if (isEntry()) {
   let raw = '';
   for await (const c of process.stdin) raw += c;
   let prompt = '';
