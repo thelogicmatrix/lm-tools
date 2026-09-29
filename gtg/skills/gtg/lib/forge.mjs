@@ -36,7 +36,8 @@ function readToken(cfg, env) {
 }
 
 // Reads are retried, writes never are: a PUT or POST that timed out may have landed, and sending it
-// again would double it or trip the SHA check. 2026-09-29: with a dozen gtg processes starting at
+// again would double it or trip the SHA check. openForge's write() reads the record back and
+// decides instead. 2026-09-29: with a dozen gtg processes starting at
 // once (session hooks, parallel sessions) one slow GET of 15 aborted the whole read. Three tries of
 // 8s each, since a healthy call takes under a second.
 const RETRIES = 3;
@@ -108,19 +109,71 @@ export async function readFileRecords(cfg, fetchImpl = fetch) {
   });
 }
 
+// Our edit since the read, put on top of the record another session wrote meanwhile. A field only
+// we changed takes our value, every other field keeps theirs. A field both sides changed to
+// different values is a conflict, except `updated`, a timestamp, where the later one wins. The
+// handoff goes last, the order flush() writes, so a second flush sees no difference.
+function reapply(base, mine, theirs) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const merged = { ...theirs };
+  const clash = [];
+  for (const k of new Set([...Object.keys(base), ...Object.keys(mine)])) {
+    if (same(mine[k], base[k]) || same(mine[k], theirs[k])) continue;
+    if (k === 'updated') { if (!(theirs[k] > mine[k])) merged[k] = mine[k]; continue; }
+    if (!same(theirs[k], base[k])) { clash.push(k); continue; }
+    if (mine[k] === undefined) delete merged[k]; else merged[k] = mine[k];
+  }
+  if ('handoff' in merged) { const { handoff } = merged; delete merged.handoff; merged.handoff = handoff; }
+  return clash.length ? { clash } : { merged };
+}
+
 // One JSON file contains both record and current handoff. One SHA-protected PUT changes both.
 export async function openForge(cfg, fetchImpl = fetch) {
   const sourceSlug = Symbol('gtg-file-source-slug');
   const base = `${cfg.api}/repos/${cfg.repo}/contents/`;
   const records = RECORDS;
-  const call = async (method, path, body) => {
-    const res = await send(fetchImpl, base + path, {
-      method,
-      headers: { Authorization: `token ${cfg.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`forge ${method} ${path} -> ${res.status} ${(await res.text()).slice(0, 200)}`);
-    return res.status === 204 ? null : res.json();
+  // Errors name the method and path, never the headers, so the token cannot reach a transcript.
+  const request = (method, path, body) => send(fetchImpl, base + path, {
+    method,
+    headers: { Authorization: `token ${cfg.token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const failure = async (method, path, res) => new Error(`forge ${method} ${path} -> ${res.status} ${(await res.text()).slice(0, 200)}`);
+  // The record at path as the server holds it now, or null when there is none.
+  const current = async (path) => {
+    const res = await request('GET', path);
+    if (res.status === 404) return null;
+    if (!res.ok) throw await failure('GET', path, res);
+    const f = await res.json();
+    return { sha: f.sha, url: f.html_url, rec: JSON.parse(Buffer.from(f.content.replace(/\s/g, ''), 'base64').toString('utf8')) };
+  };
+  // One write, safe to repeat (#28). When the answer is lost (no response, or a 5xx) or the server
+  // refuses the sha (409, 422), this reads the record back and decides from what it finds:
+  //   - what we meant to write (want, a serialized record, or null for a delete): it landed
+  //   - the record as we read it (oldSha, or absent for a create): it never landed, so a lost
+  //     answer is sent once more, and a refusal is thrown as it came, since no session caused it
+  //   - anything else: another session wrote it meanwhile, handed back as { theirs } to re-apply
+  // Never a blind resend: the read-back is what makes the second send safe.
+  const write = async (method, path, payload, want, oldSha) => {
+    for (let resent = false; ; resent = true) {
+      let res, err;
+      try { res = await request(method, path, payload); } catch (e) { err = e; }
+      if (res?.ok) {
+        const out = res.status === 204 ? null : await res.json();
+        return { sha: out?.content?.sha, url: out?.content?.html_url };
+      }
+      if (method === 'DELETE' && res?.status === 404) return {}; // already gone
+      const lost = !res || res.status >= 500;
+      if (!lost && res.status !== 409 && res.status !== 422) throw await failure(method, path, res);
+      err ??= await failure(method, path, res);
+      const now = await current(path);
+      if (want === null ? !now : now && JSON.stringify(now.rec) === want) return { sha: now?.sha, url: now?.url };
+      if ((now?.sha ?? null) === (oldSha ?? null)) {
+        if (lost && !resent) continue;
+        throw err;
+      }
+      return { theirs: now };
+    }
   };
   const loaded = (await readFileRecords(cfg, fetchImpl)).map((f) => {
     let rec;
@@ -157,6 +210,7 @@ export async function openForge(cfg, fetchImpl = fetch) {
       const urls = [];
       const seen = new Set();
       const slugs = new Set();
+      const moves = [];
       for (const shelf of ['active', 'backlog']) for (const item of shelves[shelf]) {
         const rec = { ...item, shelf };
         delete rec.file;
@@ -172,22 +226,43 @@ export async function openForge(cfg, fetchImpl = fetch) {
         const old = saved.get(fileSlug);
         if (old?.rec === serialized) continue;
         const path = `${records}${encodeURIComponent(fileSlug)}.json`;
+        const payload = (r, sha) => ({
+          content: Buffer.from(JSON.stringify(r, null, 2) + '\n').toString('base64'),
+          message: `gtg ${verb}: ${slug}`,
+          ...(sha ? { sha } : {}),
+        });
         let out;
+        let final = rec;
         try {
-          out = await call(old ? 'PUT' : 'POST', path, {
-            content: Buffer.from(JSON.stringify(rec, null, 2) + '\n').toString('base64'),
-            message: `gtg ${verb}: ${slug}`,
-            ...(old ? { sha: old.sha } : {}),
-          });
+          out = await write(old ? 'PUT' : 'POST', path, payload(rec, old?.sha), serialized, old?.sha);
+          if ('theirs' in out) {
+            const { merged, clash = [] } = old && out.theirs ? reapply(JSON.parse(old.rec), rec, out.theirs.rec) : {};
+            if (!merged) throw new Error(`${slug} changed in another session while this command ran${clash.length ? ` (both changed ${clash.join(', ')})` : ''}. Re-run it`);
+            final = merged;
+            out = await write('PUT', path, payload(merged, out.theirs.sha), JSON.stringify(merged), out.theirs.sha);
+            if ('theirs' in out) throw new Error(`${slug} changed in another session again while this command re-applied its edit. Re-run it`);
+          }
         } catch (e) { if (pending.has(slug)) failedHandoff = true; throw e; }
-        saved.set(fileSlug, { rec: serialized, sha: out.content.sha });
-        bodyBySlug.set(fileSlug, body);
+        saved.set(fileSlug, { rec: JSON.stringify(final), sha: out.sha });
+        bodyBySlug.set(fileSlug, final.handoff);
         item[sourceSlug] = fileSlug;
-        if (pending.has(slug)) urls.push(out.content.html_url ?? `${cfg.api.replace(/\/api\/v1$/, '')}/${cfg.repo}/src/branch/main/${path}`);
+        // Re-applied: the entry takes their fields too, so a second flush finds nothing to write.
+        if (final !== rec) {
+          for (const k of Object.keys(item)) delete item[k];
+          Object.assign(item, entry(final, fileSlug));
+          if (final.shelf !== shelf) moves.push([item, shelf, final.shelf]);
+        }
+        if (pending.has(slug)) urls.push(out.url ?? `${cfg.api.replace(/\/api\/v1$/, '')}/${cfg.repo}/src/branch/main/${path}`);
+      }
+      for (const [item, from, to] of moves) {
+        shelves[from] = shelves[from].filter((x) => x !== item);
+        shelves[to].push(item);
       }
       for (const [fileSlug, old] of saved) {
         if (seen.has(fileSlug)) continue;
-        await call('DELETE', `${records}${encodeURIComponent(fileSlug)}.json`, { sha: old.sha, message: `gtg ${verb}: ${fileSlug}` });
+        const path = `${records}${encodeURIComponent(fileSlug)}.json`;
+        const out = await write('DELETE', path, { sha: old.sha, message: `gtg ${verb}: ${fileSlug}` }, null, old.sha);
+        if ('theirs' in out) throw new Error(`${fileSlug} changed in another session since this command read it, so it was not deleted. Re-run it`);
         saved.delete(fileSlug);
       }
       pending.clear();

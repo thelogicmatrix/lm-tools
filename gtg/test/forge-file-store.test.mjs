@@ -125,7 +125,7 @@ test('file store handoff, resume, shelf move and complete use versioned files on
   assert.match((await run(['list'])).stdout, /No active gtg projects/);
 });
 
-test('file store retries a failed read, but never retries a write', async (t) => {
+test('file store retries a failed read, and resends a failed write only once, after reading it back unchanged', async (t) => {
   const record = JSON.stringify({ slug: 'alpha', project: 'Alpha', shelf: 'active', next: 'Ship it', handoff: 'x' });
   let reads = 0, writes = 0, failReadsUntil = 0, failWrites = false;
   const server = createServer(async (req, res) => {
@@ -172,7 +172,7 @@ test('file store retries a failed read, but never retries a write', async (t) =>
   const before = writes;
   const write = await run(['handoff', '--project', 'Alpha', '--slug', 'alpha'], '## Next Action\nAgain\n');
   assert.equal(write.status, 1);
-  assert.equal(writes - before, 1, 'a failed PUT is sent once');
+  assert.equal(writes - before, 2, 'a PUT that keeps failing is read back and sent once more, never a third time');
 });
 
 test('file store reads records from the git tree and one batch of blobs, with fallbacks for a truncated tree and a server without the batch route', async (t) => {

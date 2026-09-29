@@ -41,6 +41,15 @@ they edit the file store, through the same `entries()` and `saveEntries()`. When
 finishes, one flush writes the difference: a new record is created, a changed one is updated with
 its previous sha, and a missing one is deleted.
 
+A write is never resent blind, because one whose answer was lost may have landed. When the answer
+is lost (a timeout, a dropped connection, a 5xx) or the sha is refused (409, 422), gtg reads the
+record back. If it holds what gtg meant to write, the write landed. If it is unchanged, a lost
+write is sent once more. If another session changed it, gtg re-applies its own edit on top once:
+fields only this command changed take its values, the rest keep theirs, and the later `updated`
+wins. A field both sides changed, or a second change during the re-apply, is an error naming the
+record, and nothing of theirs is overwritten. A DELETE of a record already gone is success, and a
+DELETE of one changed since the read is refused.
+
 If the forge write fails during `handoff`, the body (read from stdin, so otherwise gone) is written to
 `docs/handoffs/current/<slug>.md`, uncommitted, and the command exits 1.
 
