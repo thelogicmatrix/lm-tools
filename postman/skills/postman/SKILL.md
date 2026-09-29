@@ -80,6 +80,7 @@ Per-block headers:
 | `Third-party:` | Why the address does not match the source domain. |
 | `Attach:` | Comma-separated for several files, one line only. Paths resolve against the batch file's own directory. A `.ics` goes out as `text/calendar` with the METHOD it declares and CRLF endings, so Gmail shows an invitation and not a download. |
 | `Sent:` | Written by the tool, never by hand. |
+| `Attempting:` | Written by the tool just before a send, replaced by `Sent:` once it is stamped. Left behind, it marks the block UNKNOWN. |
 
 A repeated `Attach:` line is a hard error - a repeat would silently overwrite the first,
 and the send would look normal. A repeated `Sent:` is the one exception: both stamps mean
@@ -121,6 +122,17 @@ others (a bad Cc, one of several To addresses), the stamp reads
 `Sent: <when> PARTIAL, refused <address>`, the refused addresses and the server's reply
 are printed, and the batch stops there. The block is still stamped, because the
 recipients who took it would get a second copy on a rerun.
+
+**An ambiguous send holds the batch.** Before each send the block gets an
+`Attempting: <when>` line, and the `Sent:` stamp replaces it. If the connection fails after
+the message went to the server, the server may have accepted it, so the block is marked
+UNKNOWN, nothing is retried and the batch stops. The same holds when the send worked but the
+`Sent:` stamp could not be written (an editor holding the file). On a rerun an UNKNOWN block
+is checked against Sent Mail by recipient, subject and time since the attempt, never by
+Message-ID, which Gmail rewrites. Found, it is stamped `Sent:` and the batch goes on. Not
+found, nothing sends: check the thread, then delete the `Attempting:` line to send it or
+replace it with a `Sent:` line to skip it. A send the server refused outright clears its
+`Attempting:` line and can be rerun.
 
 Bodies are written unwrapped, one line per paragraph: a newline in the body is a real
 line break in the email, so a labelled block (`Guests: 100` / `Dates: flexible`) stays a

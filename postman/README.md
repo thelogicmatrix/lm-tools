@@ -21,7 +21,7 @@ Most mail tooling is built to get the message out. postman is built around the f
 - **A signature that looks nearly right.** Your HTML signature is an exact copy of one from a real email you sent. postman attaches it as is and never rebuilds it.
 - **A body that reads like a machine wrote it.** A banned-phrase list, which you own, stops the build if a phrase appears in the subject or the body.
 
-Nothing sends without a mode flag that says so. As each email leaves, postman writes a `Sent:` line into the batch file, so a batch that dies at recipient 7 resumes at 7 when you run it again. Close the file in your editor before sending, because an editor saving an old copy erases those lines and the next run sends everything twice.
+Nothing sends without a mode flag that says so. As each email leaves, postman writes a `Sent:` line into the batch file, so a batch that dies at recipient 7 resumes at 7 when you run it again. A send whose outcome was lost (the connection dropped after the server had the message) stops the batch, and the rerun will not send that one again until Sent Mail shows whether it went. Close the file in your editor before sending, because an editor saving an old copy erases those lines and the next run sends everything twice.
 
 On the read side, `inbox` accounts for every message in the window, and its header prints the sums that prove it. Two caps keep the file small enough for a model to read. When either cuts something, a `TRIMMED:` line says so at the top, because a trimmed file that reads as whole is the real danger.
 
