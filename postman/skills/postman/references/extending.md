@@ -35,7 +35,7 @@ A JSON object of identity name to identity. The shipped `.postman/identities.exa
 | `pw_env` | | the env var holding the app password, `POSTMAN_PW_<NAME>` by default, with the identity name in capitals |
 | `pw_cmd` | | a command that prints the app password (below) |
 | `imap_host` | | the IMAP server every read connects to, `imap.gmail.com` by default. Sent, All Mail and Drafts are found by their SPECIAL-USE flags, so a mailbox in another language works. An empty value is refused |
-| `smtp_host` | | the SMTP server `--send` and `--test` connect to, `smtp.gmail.com` by default, always on port 587 with STARTTLS. An empty value is refused |
+| `smtp_host` | | the SMTP server `--send` and `--test` connect to, `smtp.gmail.com` by default, always on port 587 with STARTTLS. An empty value is refused. A server that files no copy under the mailbox's Sent folder never clears an UNKNOWN block on its own: check the mailbox, then edit the block's `Attempting:` line by hand (SKILL.md, "An ambiguous send holds the batch") |
 
 An identity missing a required field is refused by name rather than half-loaded. More than one `"default": true` is refused too. With no default and more than one identity, a batch with no `Identity:` line and no `--as` is refused rather than guessed.
 

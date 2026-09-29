@@ -723,9 +723,11 @@ def smtp_send(msg, password, conn=None, host=None):
         # identity can never leave over the other identity's authenticated session
         with smtp_session(password, msg["From"], host) as s:
             return smtp_send(msg, password, conn=s)
-    # Once DATA is under way the server may hold the whole message, and a connection
-    # that drops before its 250 arrives looks exactly like one that dropped before it had
-    # anything. smtplib cannot tell them apart, so this marks when DATA began (#48).
+    # Once the DATA step begins the server may end up holding the whole message, and a
+    # connection that drops before its 250 arrives looks exactly like one that dropped
+    # before it had anything. smtplib cannot tell them apart, so this marks the moment
+    # data() is called, before the DATA command itself goes out. A drop on that command
+    # also reads as ambiguous, which is the safe direction (#48).
     reached, real_data = [], conn.data
 
     def data(m):
@@ -1053,9 +1055,13 @@ def imap_session(password, sender, host=None):
         M.login(sender, password)
         yield M
     finally:
-        # the same as smtp_session: a failed LOGOUT must not mask the original error
-        with contextlib.suppress(OSError, imaplib.IMAP4.error):
+        # the same as smtp_session: a failed LOGOUT must not mask the original error.
+        # IMAP4.logout only shuts the socket after the command returns, so close it here.
+        try:
             M.logout()
+        except (OSError, imaplib.IMAP4.error):
+            with contextlib.suppress(OSError):
+                M.shutdown()
 
 
 def append_draft(msg, password, conn=None):
@@ -1086,13 +1092,16 @@ def draft_exists(M, rec):
 
 
 ATTEMPT_RE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d)")
-# how far before its Attempting: minute a Sent Mail copy still counts, for clock skew
-# between this machine and the server that stamped the Date header
+# how far either side of its Attempting: minute a Sent Mail copy still counts, for clock
+# skew between this machine and the server that stamped the Date header. The window is
+# closed at the far end too: a later mail in the same thread to the same address, sent
+# by hand or by a later batch, is not this send and must not clear it.
 ATTEMPT_SKEW = timedelta(minutes=5)
 
 
 def sent_copy(M, rec):
-    """When Sent Mail holds rec as sent since its Attempting: time, else None.
+    """When Sent Mail holds rec as sent within ATTEMPT_SKEW of its Attempting: minute,
+    else None.
 
     Matched on the first To address, the unfolded subject and the Date header. Never on
     Message-ID: Gmail replaces the one smtplib sent with its own, so the id we built never
@@ -1102,7 +1111,9 @@ def sent_copy(M, rec):
     m = ATTEMPT_RE.match(rec.get("attempting") or "")
     if not m:
         return None
-    since = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M").astimezone() - ATTEMPT_SKEW
+    tried = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M").astimezone()
+    # the stamp is truncated to the minute, so the send itself fell inside that minute
+    since, until = tried - ATTEMPT_SKEW, tried + timedelta(minutes=1) + ATTEMPT_SKEW
     subj = " ".join(rec["subject"].split())
     for hdrs in _address_headers(M, special_folder(M, "\\Sent"), "TO",
                                  _to_addrs(rec)[:1])[0]:
@@ -1114,7 +1125,7 @@ def sent_copy(M, rec):
             continue
         if when.tzinfo is None:                 # a naive Date is read as UTC
             when = when.replace(tzinfo=timezone.utc)
-        if when >= since:
+        if since <= when <= until:
             return when.astimezone().strftime("%Y-%m-%d %H:%M")
     return None
 
@@ -2688,6 +2699,9 @@ Body.
             if self.logout_error:
                 raise self.logout_error
 
+        def shutdown(self):
+            self.events.append(("IMAP SHUTDOWN",))
+
         def append(self, mailbox, flags, when, raw):
             self.events.append(("APPEND", email.message_from_bytes(raw)["Subject"]))
             return "OK", [b""]
@@ -2832,6 +2846,69 @@ Body.
             finally:
                 os.environ.pop("POSTMAN_TEST_TO", None)
                 os.environ.pop(pw_env(resolve_identity("plain", None)), None)
+            # review of #81 to #83. A Sent copy dated an hour after the attempt is a later
+            # mail in that thread, not this send, so it does not clear an UNKNOWN block
+            bp.write_text(_two, encoding="utf-8")
+            rc, out, ev = _run(["--send", str(bp)], smtp={"drop": "after-data"})
+            assert rc == 1 and "UNKNOWN: one" in out, out
+            _later = {SENT: [(_me, "a@b.example", "s1", -1, "<later@a.example>")]}
+            rc, out, ev = _run(["--send", str(bp)], boxes=_later)
+            assert isinstance(rc, SystemExit) and str(rc).startswith("UNKNOWN: one"), rc
+            assert not [e for e in ev if e[0] in ("SMTP", "DATA")], ev
+            # a PARTIAL whose Sent: stamp fails: the stop names who was refused, the
+            # Attempting: line carries it, and the rerun's Sent Mail stamp keeps it
+            _real_stamp, _fails = stamp_block, []
+
+            def _flaky(path, slug, when, key="Sent"):
+                if key == "Sent" and when and not _fails:
+                    _fails.append(slug)
+                    raise PermissionError("the editor holds the file")
+                return _real_stamp(path, slug, when, key)
+            bp.write_text(_two, encoding="utf-8")
+            globals()["stamp_block"] = _flaky
+            try:
+                rc, out, ev = _run(["--send", str(bp)], smtp={"refuse": ["c@b.example"]})
+            finally:
+                globals()["stamp_block"] = _real_stamp
+            assert rc == 1 and "UNKNOWN: one" in out and "c@b.example (550" in out, out
+            assert "refused c@b.example" in (_blocks(bp)[0]["attempting"] or ""), _blocks(bp)
+            _found = {SENT: [(_me, "a@b.example", "s1", 0, "<gmail-rewrote@a.example>")]}
+            rc, out, ev = _run(["--send", str(bp)], boxes=_found)
+            assert rc == 0 and "refused c@b.example" in out, (rc, out)
+            _r = _blocks(bp)[0]
+            assert "Sent Mail" in _r["sent"] and "refused c@b.example" in _r["sent"], _r
+            # the Attempting: write failing, or build_message raising, sends nothing and
+            # is a counted FAILED stop with the summary line, not a traceback
+            _real_build = build_message
+
+            def _locked(path, slug, when, key="Sent"):
+                if key == "Attempting" and slug == "two":
+                    raise PermissionError("locked")
+                return _real_stamp(path, slug, when, key)
+
+            def _broken(rec, *a, **kw):
+                if rec["slug"] == "two":
+                    raise BatchError("two: broken")
+                return _real_build(rec, *a, **kw)
+            for _name, _bad in (("stamp_block", _locked), ("build_message", _broken)):
+                bp.write_text(_two, encoding="utf-8")
+                globals()[_name] = _bad
+                try:
+                    rc, out, ev = _run(["--send", str(bp)])
+                finally:
+                    globals()["stamp_block"], globals()["build_message"] = \
+                        _real_stamp, _real_build
+                assert rc == 1 and "FAILED: two" in out and "1 sent | 1 failed" in out, \
+                    (_name, rc, out)
+                assert [e[1] for e in ev if e[0] == "DATA"] == ["s1"], ev
+                assert _blocks(bp)[1]["attempting"] is None, _blocks(bp)[1]
+        # a LOGOUT that fails still closes the socket
+        _ev = []
+        imaplib.IMAP4_SSL = lambda host, **kw: _SendBox(
+            {}, _ev, logout_error=imaplib.IMAP4.abort("logout"))
+        with imap_session("x", work["sender"]):
+            pass
+        assert ("IMAP SHUTDOWN",) in _ev, _ev
         # cleanup never masks the error that killed the session
         for _cm, _kw in ((smtp_session, {}), (imap_session, {})):
             _ev = []
@@ -3302,10 +3379,14 @@ def main(argv=None):
                     raise SystemExit(
                         f"UNKNOWN: {rec['slug']} was attempted at {rec['attempting']} and "
                         f"Sent Mail has no copy to {_to_addrs(rec)[0]} with its subject "
-                        f"since then. It may still have gone. Check that thread, then "
-                        f"delete its Attempting: line to send it, or replace that line "
-                        f"with a Sent: line to skip it. Nothing was sent.")
-                stamp_block(Path(batch), rec["slug"], f"{found} (found in Sent Mail)")
+                        f"from around then. It may still have gone. Check that thread, "
+                        f"then delete its Attempting: line to send it, or replace that "
+                        f"line with a Sent: line to skip it. Nothing was sent.")
+                # a PARTIAL whose Sent: stamp failed left its refusals on this line, and
+                # they ride into the stamp so nobody loses who was not reached
+                partial = rec["attempting"].partition(" PARTIAL, ")[2]
+                found += " (found in Sent Mail)" + (f" PARTIAL, {partial}" if partial else "")
+                stamp_block(Path(batch), rec["slug"], found)
                 rec["sent"] = found
                 print(f"found one in Sent Mail: {rec['slug']} {rec['to']} at {found}, "
                       f"stamped Sent", flush=True)
@@ -3342,14 +3423,21 @@ def main(argv=None):
         if args.send and plan:
             with smtp_session(pw, ident["sender"], ident.get("smtp_host")) as conn:
                 for rec, irt, refs in plan:
-                    msg = build_message(rec, ident, in_reply_to=irt, references=refs,
-                                        base_dir=Path(batch).parent)
                     mark = "  [thread]" if irt else ""
                     # into the file before the message goes on the wire. Until a Sent:
                     # line replaces it the block is UNKNOWN, and a rerun will not send it
-                    # before Sent Mail has been checked. If this write fails, nothing went.
+                    # before Sent Mail has been checked. If the build or this write fails,
+                    # nothing went, and the stamp is atomic, so the file is unchanged.
                     tried = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    stamp_block(Path(batch), rec["slug"], tried, key="Attempting")
+                    try:
+                        msg = build_message(rec, ident, in_reply_to=irt, references=refs,
+                                            base_dir=Path(batch).parent)
+                        stamp_block(Path(batch), rec["slug"], tried, key="Attempting")
+                    except (OSError, BatchError, SystemExit) as e:
+                        stop = (f"FAILED: {rec['slug']} {rec['to']}: {type(e).__name__}: "
+                                f"{e}. Nothing was sent for it. Nothing further has been "
+                                f"sent.")
+                        break
                     try:
                         refused = smtp_send(msg, pw, conn=conn)
                     except AmbiguousSend as e:
@@ -3359,8 +3447,8 @@ def main(argv=None):
                             stamp_block(Path(batch), rec["slug"], f"{tried} UNKNOWN, {e}",
                                         key="Attempting")
                         stop = (f"UNKNOWN: {rec['slug']} {rec['to']}: the connection "
-                                f"failed after the message went to the server ({e}), so "
-                                f"it may have been sent. It was not retried. A rerun "
+                                f"failed once the DATA step had begun ({e}), so the server "
+                                f"may have the message. It was not retried. A rerun "
                                 f"checks Sent Mail before it will send this block. Nothing "
                                 f"further has been sent.")
                         break
@@ -3390,11 +3478,21 @@ def main(argv=None):
                     try:
                         stamp_block(Path(batch), rec["slug"], line)
                     except (OSError, BatchError) as e:
+                        # the refusals are the one thing Sent Mail cannot give back, so
+                        # they go on the Attempting: line if the file takes a write at all,
+                        # and into this message whether it does or not
+                        if refused:
+                            with contextlib.suppress(OSError, BatchError):
+                                stamp_block(Path(batch), rec["slug"],
+                                            f"{tried} PARTIAL, refused "
+                                            f"{', '.join(refused)}", key="Attempting")
                         stop = (f"UNKNOWN: {rec['slug']} {rec['to']} was sent, but its "
                                 f"Sent: stamp could not be written ({type(e).__name__}: "
                                 f"{e}). Its Attempting: line holds it, so a rerun checks "
-                                f"Sent Mail before sending it again. Nothing further has "
-                                f"been sent.")
+                                f"Sent Mail before sending it again. "
+                                + (f"The server refused {refusal_text(refused)}. "
+                                   if refused else "")
+                                + "Nothing further has been sent.")
                         break
                     if refused:
                         # the others have it, so the block is stamped (a rerun would send

@@ -124,15 +124,25 @@ are printed, and the batch stops there. The block is still stamped, because the
 recipients who took it would get a second copy on a rerun.
 
 **An ambiguous send holds the batch.** Before each send the block gets an
-`Attempting: <when>` line, and the `Sent:` stamp replaces it. If the connection fails after
-the message went to the server, the server may have accepted it, so the block is marked
-UNKNOWN, nothing is retried and the batch stops. The same holds when the send worked but the
-`Sent:` stamp could not be written (an editor holding the file). On a rerun an UNKNOWN block
-is checked against Sent Mail by recipient, subject and time since the attempt, never by
-Message-ID, which Gmail rewrites. Found, it is stamped `Sent:` and the batch goes on. Not
-found, nothing sends: check the thread, then delete the `Attempting:` line to send it or
-replace it with a `Sent:` line to skip it. A send the server refused outright clears its
+`Attempting: <when>` line, and the `Sent:` stamp replaces it. If the connection fails once
+the DATA step has begun, the server may have the message. postman cannot tell whether the
+body got there, so it treats a drop anywhere in that step as a possible send: the block is
+marked UNKNOWN, nothing is retried and the batch stops. The same holds when the send worked
+but the `Sent:` stamp could not be written (an editor holding the file). A PARTIAL whose
+stamp failed keeps its refused addresses on the `Attempting:` line and in the stop message.
+On a rerun an UNKNOWN block is checked against Sent Mail by recipient, subject and a Date
+within a few minutes of the attempt, never by Message-ID, which Gmail rewrites. Found, it
+is stamped `Sent:` (with any refusals carried over) and the batch goes on. Not found,
+nothing sends: check the thread, then delete the `Attempting:` line to send it or replace
+it with a `Sent:` line to skip it. A send the server refused outright clears its
 `Attempting:` line and can be rerun.
+
+**An SMTP server that keeps no Sent copy never clears an UNKNOWN block on its own.** Gmail
+files everything sent through its SMTP under Sent Mail. A server that does not (many
+relays and some hosted providers) leaves the check nothing to find, so every UNKNOWN block
+holds the batch until you decide. Look in the mailbox, or ask the recipient, then edit the
+block by hand: delete the `Attempting:` line to send it, or replace it with a `Sent:` line
+to skip it.
 
 A batch that stops mid-send (PARTIAL, UNKNOWN or FAILED) prints why, counts that block in
 the `failed` column of the summary line, and exits 1.
