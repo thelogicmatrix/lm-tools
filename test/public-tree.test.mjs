@@ -19,6 +19,10 @@ export const RULES = [
   // 100.64.0.0/10, the range Tailscale hands out. 100.63.x and 100.128.x are public addresses.
   ['Tailscale address', /\b100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}\b/],
   ['Tailscale hostname', /\.ts\.net\b/i],
+  // A third element limits a rule to the files whose path it matches.
+  // ponytail: scoped to statusline and jevtools, the two trees issue #46 cleaned. A gtg test still
+  // names the project in a rename fixture. Drop the scope once that fixture is renamed too.
+  ['private project name', /orion/i, /^(statusline|jevtools)\//],
 ];
 
 // The author credit is the one place the name belongs: the license holder, the manifest author
@@ -29,7 +33,7 @@ const isCreditFile = (file) =>
 
 export function scanLine(file, line) {
   const text = isCreditFile(file) ? line.split(CREDIT).join('') : line;
-  return RULES.filter(([, re]) => re.test(text)).map(([name]) => name);
+  return RULES.filter(([, re, scope]) => (!scope || scope.test(file)) && re.test(text)).map(([name]) => name);
 }
 
 function scanTree() {
@@ -55,6 +59,9 @@ test('each rule catches its named case and leaves the near misses alone', () => 
   assert.deepEqual(scanLine('jevtools/x.mjs', 'http://100.64.0.1 and 100.127.255.255'), ['Tailscale address']);
   assert.deepEqual(scanLine('x.md', 'box.tail1234.ts.net'), ['Tailscale hostname']);
   assert.deepEqual(scanLine('x.md', '100.63.0.1 and 100.128.0.1 are public'), []);
+  assert.deepEqual(scanLine('statusline/README.md', 'Opus 5 | hi | Orion | 12%'), ['private project name']);
+  assert.deepEqual(scanLine('jevtools/scripts/x.mjs', "cwd: '/home/user/projects/orion'"), ['private project name']);
+  assert.deepEqual(scanLine('gtg/test/x.mjs', 'orion'), [], 'the project-name rule is scoped to statusline and jevtools');
 });
 
 test('the credit allowance is the full name in credit files only', () => {

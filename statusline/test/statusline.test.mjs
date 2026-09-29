@@ -17,12 +17,12 @@ const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 {
   const [row1, row2] = render({
     model: { display_name: 'Opus 5' },
-    workspace: { current_dir: '/home/user/projects/orion' },
+    workspace: { current_dir: '/home/user/projects/my-app' },
     context_window: { used_percentage: 12 },
     cost: { total_cost_usd: 3.4567 },
     rate_limits: { five_hour: { used_percentage: 41.2 }, seven_day: { used_percentage: 8 } },
   }).split('\n');
-  assert.match(strip(row1), /^Opus 5 \| (lo|med|hi|\w+ \| )?.*orion \| █░{9} 12% \| \w+$/);
+  assert.match(strip(row1), /^Opus 5 \| (lo|med|hi|\w+ \| )?.*my-app \| █░{9} 12% \| \w+$/);
   assert.equal(strip(row2), '5h:42% | 7d:8% | $3.46');   // ceil, and cost to 2dp
 }
 

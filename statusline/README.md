@@ -7,7 +7,7 @@ Your context fill and usage limits in the footer of Claude Code and Codex, with 
 Claude Code gets two rows:
 
 ```
-Opus 5 | hi | orion | █░░░░░░░░░ 12% | personal
+Opus 5 | hi | my-app | █░░░░░░░░░ 12% | personal
 5h:42% ↺ 7:26p | 7d:8% | $3.46
 ```
 

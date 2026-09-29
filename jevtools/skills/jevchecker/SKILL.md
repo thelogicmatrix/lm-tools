@@ -24,14 +24,15 @@ text of every candidate, torn, unanswered and clean chunk is written to the file
 > ever.
 
 ```
-node C:/dev/logical-tools/jevtools/skills/jevchecker/jevchecker.mjs <body> --sweep <sweep.json> [--source <file>] [--json <out>] [--text]
-node C:/dev/logical-tools/jevtools/skills/jevchecker/jevchecker.mjs --selftest
+node "${CLAUDE_PLUGIN_ROOT}/skills/jevchecker/jevchecker.mjs" <body> --sweep <sweep.json> [--source <file>] [--json <out>] [--text]
+node "${CLAUDE_PLUGIN_ROOT}/skills/jevchecker/jevchecker.mjs" --selftest
 ```
 
 Node 18 or newer, for global `fetch`. The self-check's CLI cases use `node --import` with a
 `data:` URL, which needs Node 20.6 or newer. No dependencies beyond that and no lockfile.
 
-The paths above assume logical-tools is cloned at `C:/dev/logical-tools`. Substitute your own clone path.
+`CLAUDE_PLUGIN_ROOT` is the jevtools plugin root, which Claude Code sets. In Codex, or wherever it
+is absent, run the `jevchecker.mjs` beside this loaded skill.
 The working directory itself does not matter: the imports resolve relative to the file, so a full
 path to `jevchecker.mjs` runs from anywhere. What matters is where the skill sits in the tree, which
 the paragraph below states.

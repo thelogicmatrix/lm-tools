@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Compress a mailbox window into tags, so code can query what only prose held.
 //
-// This is the second shape in docs/runbooks/system-one-models.md: many semi-structured fields
-// reduced to a few typed columns. An email's subject and snippet carry meaning no column holds, so
+// A cheap judgement model like Jev fits two jobs: surfacing candidates in a body too large to read,
+// and compressing many semi-structured fields into a few typed tags. This is the second, and the
+// stronger of the two: many semi-structured fields reduced to a few typed columns. An email's subject and snippet carry meaning no column holds, so
 // nothing downstream can filter on it. Eight nouls turn each message into eight numbers that sort,
 // group and go in a WHERE clause.
 //
@@ -55,7 +56,7 @@ const TAGS = {
   is_recruiter_outreach: 'This is a recruiter approaching the applicant about a role, unprompted',
   is_from_agency: 'The sender is a recruitment agency or staffing firm rather than the hiring employer',
   // ⚠ BOTH OF THESE WERE REWORDED 2026-09-22 after the first live sweep, and the originals are the
-  // worked example of how a tag goes wrong. 391 messages, 30-day jobhunt window:
+  // worked example of how a tag goes wrong. 391 messages, 30-day window of a job-hunt mailbox:
   //
   //   is_automated: 'an automated or no-reply message rather than one a person wrote'  → fired 97%
   //   needs_reply:  'asks the applicant a question or requests an action from them'    → fired 92%
@@ -304,17 +305,17 @@ export async function selftestSearch() {
   // The refusal, pinned by value, including the spellings a hand might type.
   for (const bad of ['work', 'WORK', ' Work ']) assert.throws(() => checkIdentity(bad), /refusing identity/);
   for (const none of ['', '  ', undefined, null]) assert.throws(() => checkIdentity(none), /--identity is required/);
-  assert.strictEqual(checkIdentity(' jobhunt '), 'jobhunt');
+  assert.strictEqual(checkIdentity(' personal '), 'personal');
 
-  assert.deepStrictEqual(postmanArgs({ identity: 'jobhunt', query: 'from:venue.example booking' }),
-    ['search', 'jobhunt', 'from:venue.example booking']);
-  assert.deepStrictEqual(postmanArgs({ identity: 'jobhunt', from: 'venue.example', days: 90 }),
-    ['inbox', 'jobhunt', '--json', '--from', 'venue.example', '--days', '90']);
-  assert.throws(() => postmanArgs({ identity: 'jobhunt' }), /exactly one/);
-  assert.throws(() => postmanArgs({ identity: 'jobhunt', query: 'q', from: 'f' }), /exactly one/);
+  assert.deepStrictEqual(postmanArgs({ identity: 'personal', query: 'from:venue.example booking' }),
+    ['search', 'personal', 'from:venue.example booking']);
+  assert.deepStrictEqual(postmanArgs({ identity: 'personal', from: 'venue.example', days: 90 }),
+    ['inbox', 'personal', '--json', '--from', 'venue.example', '--days', '90']);
+  assert.throws(() => postmanArgs({ identity: 'personal' }), /exactly one/);
+  assert.throws(() => postmanArgs({ identity: 'personal', query: 'q', from: 'f' }), /exactly one/);
 
   const searchOut = [
-    'reading as: someone@example.com  (identity: jobhunt)',
+    'reading as: someone@example.com  (identity: personal)',
     "3 match(es) for 'booking' in [Gmail]/All Mail",
     '[1/3] Mon, 1 Sep 2026 09:00:00 +0800 | Venue Desk <desk@venue.example> | Your room | booking link',
     '    https://venue.example/book?id=1',
@@ -360,13 +361,13 @@ export async function selftestSearch() {
 
     // Over the cap is refused before any call too.
     const flood = JSON.stringify(Array.from({ length: MAX_MESSAGES + 1 }, (_, i) => ({ subject: `m${i}`, snippet: 'x' })));
-    await assert.rejects(() => searchMail({ ask: 'a', identity: 'jobhunt', from: 'list.example' }, { key: 'k', run: () => flood }), /Narrow the query/);
+    await assert.rejects(() => searchMail({ ask: 'a', identity: 'personal', from: 'list.example' }, { key: 'k', run: () => flood }), /Narrow the query/);
     assert.strictEqual(sent.length, 0);
 
     const seen = [];
-    const rows = await searchMail({ ask: 'the booking link', identity: 'jobhunt', query: 'booking' },
+    const rows = await searchMail({ ask: 'the booking link', identity: 'personal', query: 'booking' },
       { key: 'k', run: (args) => { seen.push(args); return searchOut; } });
-    assert.deepStrictEqual(seen, [['search', 'jobhunt', 'booking']]);
+    assert.deepStrictEqual(seen, [['search', 'personal', 'booking']]);
     assert.strictEqual(sent.length, 2, 'one call per message');
     assert.ok(sent.every((b) => b.questions.message.instructions.endsWith('the booking link')));
     // Ranked: the answered message first, the failed one last with its reason kept.

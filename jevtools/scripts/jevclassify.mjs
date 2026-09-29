@@ -109,5 +109,5 @@ for (const [i, repo] of repos.entries()) {
   const { category, confidence } = label(repo, answers?.[`r${i}`])
   const evidence = [repo.description, repo.language, ...repo.hints].filter(Boolean).join(', ')
   const clean = s => String(s ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ')
-  console.log(`| [${clean(repo.name)}](${HOST}/${encodeURIComponent(repo.owner.login)}/${encodeURIComponent(repo.name)}) | ${repo.original_url ? 'GitHub' : 'Forgejo'} | ${repo.private ? 'Private' : 'Public'} | ${category} | ${confidence} | ${clean(evidence)} |`)
+  console.log(`| [${clean(repo.name)}](${repo.html_url}) | ${repo.original_url ? 'GitHub' : 'Forgejo'} | ${repo.private ? 'Private' : 'Public'} | ${category} | ${confidence} | ${clean(evidence)} |`)
 }
