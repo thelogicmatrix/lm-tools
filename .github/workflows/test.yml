@@ -21,9 +21,7 @@ jobs:
       - run: node --test runbooks/test/*.test.mjs
       # Offline: every model call is a stubbed fetch and jevmail's postman call is injected.
       - run: node jevtools/skills/jevchecker/jevchecker.test.mjs
-      - run: node jevtools/scripts/lib.test.mjs
-      - run: node jevtools/scripts/jevmail.mjs --selftest
-      - run: node jevtools/scripts/jevmail.triage.mjs --selftest
+      - run: node --test jevtools/scripts/*.test.mjs
       - uses: actions/setup-python@v5
         if: github.server_url == 'https://github.com'
         with:

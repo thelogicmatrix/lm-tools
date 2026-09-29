@@ -16,10 +16,10 @@
 // confidence, so the quarantine test uses a Score asked alongside.
 //
 //   node jevmail.triage.mjs --in tags.json --out plan.json
-//   node jevmail.triage.mjs --selftest
+//   node --test jevmail.triage.test.mjs
 
 import fs from 'node:fs';
-import assert from 'node:assert';
+import { isMain, parseArgs, runSelftest } from './lib.mjs';
 
 // Tag to label, in priority order: the FIRST rule that matches wins, so a rejection that also looks
 // automated files as a rejection. Order is the whole logic and it is why this is a list.
@@ -34,7 +34,7 @@ const RULES = [
 
 // A message earns a human's attention only for these. Everything else is filed and forgotten,
 // which is the entire point: the digest has to be shorter than the inbox or it changes nothing.
-const NEEDS_HUMAN = new Set(['reply needed', 'log outcome', 'triage by hand']);
+export const NEEDS_HUMAN = new Set(['reply needed', 'log outcome', 'triage by hand']);
 
 export function planFor(tags) {
   if (!tags) return { label: null, act: 'failed', reason: 'sweep failed for this message, re-run jevmail --in on the tags file' };
@@ -55,79 +55,52 @@ export function suspicious(tags, snippetLen) {
   return strong >= 4 && snippetLen < 400;
 }
 
-export function selftest() {
-  // Priority: an interview invite that also needs a reply files as an interview.
-  assert.strictEqual(planFor({ is_interview_invite: 0.9, needs_reply: 0.9 }).label, 'Jobs/Interview');
-  // A rejection outranks the alert rule even when both fire.
-  assert.strictEqual(planFor({ is_rejection: 0.95, is_job_listing_alert: 0.99 }).label, 'Jobs/Rejected');
-  // Thresholds are respected, and just below one must not file.
-  assert.strictEqual(planFor({ is_interview_invite: 0.69 }).label, null);
-  assert.strictEqual(planFor({ is_interview_invite: 0.70 }).label, 'Jobs/Interview');
-  // Alerts need a high bar because the tag fired on 87% of a real window.
-  assert.strictEqual(planFor({ is_job_listing_alert: 0.79 }).label, null);
-  // A failed sweep is failed, never filed and never 'skip'. Skip read as done, so the row was never
-  // asked again. jevmail re-asks only the untagged rows of its own tags file.
-  assert.deepStrictEqual(planFor(null),
-    { label: null, act: 'failed', reason: 'sweep failed for this message, re-run jevmail --in on the tags file' });
-  assert.ok(!NEEDS_HUMAN.has('failed'), 'a failed row is a re-run, not a digest entry');
-  assert.strictEqual(planFor({}).act, 'leave');
-  // Null tags (missing answers) must not satisfy a threshold.
-  assert.strictEqual(planFor({ is_rejection: null }).label, null);
-  // The digest only carries what a person must act on.
-  assert.ok(NEEDS_HUMAN.has(planFor({ is_rejection: 0.9 }).act));
-  assert.ok(!NEEDS_HUMAN.has(planFor({ is_job_listing_alert: 0.95 }).act));
-  // Injection shape: many decisive tags on a very short body.
-  assert.strictEqual(suspicious({ a: 0.95, b: 0.95, c: 0.95, d: 0.95 }, 120), true);
-  assert.strictEqual(suspicious({ a: 0.95, b: 0.95, c: 0.95, d: 0.95 }, 3000), false, 'a long body is normal');
-  assert.strictEqual(suspicious({ a: 0.95, b: 0.2 }, 120), false);
-  assert.strictEqual(suspicious(null, 100), false);
-  return 'jevmail.triage selftest OK';
+function main(argv) {
+  const { opt, flag } = parseArgs(argv);
+  if (flag('selftest')) return runSelftest(new URL('./jevmail.triage.test.mjs', import.meta.url));
+  const inPath = opt('in');
+  if (!inPath) { console.error('--in <tags.json from jevmail.mjs> required'); process.exit(1); }
+
+  const rows = JSON.parse(fs.readFileSync(inPath, 'utf8'));
+  const planned = rows.map((r) => ({
+    from: r.from, subject: r.subject, date: r.date,
+    ...planFor(r.tags),
+    quarantine: suspicious(r.tags, String(r.snippet ?? '').length),
+  }));
+
+  const counts = {};
+  for (const p of planned) counts[p.label ?? '(none)'] = (counts[p.label ?? '(none)'] ?? 0) + 1;
+  console.log(`\n  ${planned.length} messages\n`);
+  console.log('  label                   count');
+  for (const [l, n] of Object.entries(counts).sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${l.padEnd(22)} ${String(n).padStart(5)}`);
+  }
+
+  const digest = planned.filter((p) => NEEDS_HUMAN.has(p.act));
+  const quar = planned.filter((p) => p.quarantine);
+  console.log(`\n  needs a human   ${digest.length} of ${planned.length} `
+    + `(${(digest.length / planned.length * 100).toFixed(0)}%)`);
+  console.log(`  quarantined     ${quar.length}`);
+  const failed = planned.filter((p) => p.act === 'failed');
+  if (failed.length) {
+    console.log(`  failed          ${failed.length}  <- not judged, re-run \`jevmail.mjs --in ${inPath} --json ${inPath}\` to ask only these`);
+  }
+
+  console.log('\n--- DIGEST ---');
+  for (const p of digest.slice(0, 40)) {
+    console.log(`  [${p.act}] ${String(p.subject ?? '(no subject)').slice(0, 62)}`);
+    console.log(`      ${String(p.from ?? '').slice(0, 44)}   ${p.reason}`);
+  }
+  if (digest.length > 40) console.log(`  ... and ${digest.length - 40} more`);
+  if (quar.length) {
+    console.log('\n--- QUARANTINED (decisive tags on a very short body; read before trusting) ---');
+    for (const p of quar.slice(0, 10)) console.log(`  ${String(p.subject ?? '').slice(0, 66)}`);
+  }
+
+  if (opt('out')) {
+    fs.writeFileSync(opt('out'), JSON.stringify(planned, null, 2));
+    console.log(`\nplan written to ${opt('out')} — nothing has been filed`);
+  }
 }
 
-if (process.argv.includes('--selftest')) { console.log(selftest()); process.exit(0); }
-
-const opt = (n) => { const i = process.argv.indexOf(`--${n}`); return i < 0 ? null : process.argv[i + 1]; };
-const inPath = opt('in');
-if (!inPath) { console.error('--in <tags.json from jevmail.mjs> required'); process.exit(1); }
-
-console.log(selftest());
-const rows = JSON.parse(fs.readFileSync(inPath, 'utf8'));
-const planned = rows.map((r) => ({
-  from: r.from, subject: r.subject, date: r.date,
-  ...planFor(r.tags),
-  quarantine: suspicious(r.tags, String(r.snippet ?? '').length),
-}));
-
-const counts = {};
-for (const p of planned) counts[p.label ?? '(none)'] = (counts[p.label ?? '(none)'] ?? 0) + 1;
-console.log(`\n  ${planned.length} messages\n`);
-console.log('  label                   count');
-for (const [l, n] of Object.entries(counts).sort((a, b) => b[1] - a[1])) {
-  console.log(`  ${l.padEnd(22)} ${String(n).padStart(5)}`);
-}
-
-const digest = planned.filter((p) => NEEDS_HUMAN.has(p.act));
-const quar = planned.filter((p) => p.quarantine);
-console.log(`\n  needs a human   ${digest.length} of ${planned.length} `
-  + `(${(digest.length / planned.length * 100).toFixed(0)}%)`);
-console.log(`  quarantined     ${quar.length}`);
-const failed = planned.filter((p) => p.act === 'failed');
-if (failed.length) {
-  console.log(`  failed          ${failed.length}  <- not judged, re-run \`jevmail.mjs --in ${inPath} --json ${inPath}\` to ask only these`);
-}
-
-console.log('\n--- DIGEST ---');
-for (const p of digest.slice(0, 40)) {
-  console.log(`  [${p.act}] ${String(p.subject ?? '(no subject)').slice(0, 62)}`);
-  console.log(`      ${String(p.from ?? '').slice(0, 44)}   ${p.reason}`);
-}
-if (digest.length > 40) console.log(`  ... and ${digest.length - 40} more`);
-if (quar.length) {
-  console.log('\n--- QUARANTINED (decisive tags on a very short body; read before trusting) ---');
-  for (const p of quar.slice(0, 10)) console.log(`  ${String(p.subject ?? '').slice(0, 66)}`);
-}
-
-if (opt('out')) {
-  fs.writeFileSync(opt('out'), JSON.stringify(planned, null, 2));
-  console.log(`\nplan written to ${opt('out')} — nothing has been filed`);
-}
+if (isMain(import.meta.url)) main(process.argv.slice(2));

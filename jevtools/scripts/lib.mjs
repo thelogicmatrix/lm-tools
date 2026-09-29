@@ -5,10 +5,47 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { recordSpend } from './spend.mjs';
 
 export const ENDPOINT = 'https://openrouter.ai/api/v1/systemone';
 export const MODEL = 'jev-latest';
+
+// Calls in flight per sweep. Six held without a 429 on every measured run.
+export const CONCURRENCY = 6;
+
+// `--name value` and `--name`, the only two shapes these CLIs take. A valued flag reads the next
+// argument whatever it is, so a caller that must refuse `--json --top` checks for a leading `--`.
+export function parseArgs(argv = process.argv.slice(2)) {
+  return {
+    flag: (n) => argv.includes(`--${n}`),
+    opt: (n) => { const i = argv.indexOf(`--${n}`); return i < 0 ? null : argv[i + 1]; },
+  };
+}
+
+// `--selftest` predates the *.test.mjs files and runbooks still name it, so each CLI keeps the flag
+// and hands it to its test file here rather than falling through into a real run. NODE_TEST_CONTEXT
+// is dropped so a --selftest started from inside a test runner reports as a run of its own.
+export function runSelftest(testUrl) {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync(process.execPath, ['--test', fileURLToPath(testUrl)], { stdio: 'inherit', env });
+  process.exitCode = r.status ?? 1;
+}
+
+// True when the module at `url` is the script node was started with. Both sides go through
+// realpathSync, because a plugin reached through a junction runs with argv[1] on the junction path
+// while node resolves import.meta.url to the target, and a plain compare never ran main() there
+// (runbooks #32). A path that does not resolve is not the entry point.
+export function isMain(url, argv1 = process.argv[1]) {
+  if (!argv1) return false;
+  try {
+    return fs.realpathSync(argv1) === fs.realpathSync(fileURLToPath(url));
+  } catch {
+    return false;
+  }
+}
 
 // The key, from the environment first and then from ~/.jev.env.
 //

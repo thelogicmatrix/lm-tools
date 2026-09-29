@@ -1,11 +1,12 @@
 // The network half of lib.mjs, with `fetch` replaced so nothing is spent.
-//   node scripts/jev-sweep/lib.test.mjs
+//   node scripts/lib.test.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import http from 'node:http';
 import path from 'node:path';
-import { ATTEMPTS, askJev, isNoul, postText, readKey, retryAfterMs, toText } from './lib.mjs';
+import { pathToFileURL } from 'node:url';
+import { ATTEMPTS, CONCURRENCY, askJev, isMain, isNoul, parseArgs, postText, readKey, retryAfterMs, toText } from './lib.mjs';
 
 const realFetch = globalThis.fetch;
 try {
@@ -157,5 +158,37 @@ assert.strictEqual(retryAfterMs('2'), 2000);
 assert.strictEqual(retryAfterMs(new Date(10_000).toUTCString(), 7_000), 3000);
 assert.strictEqual(retryAfterMs('86400'), 30_000);
 assert.deepStrictEqual([retryAfterMs(null), retryAfterMs(''), retryAfterMs('soon')], [null, null, null]);
+
+// parseArgs, the one copy of the `opt` and `flag` every CLI used to carry. A valued flag reads the
+// next argument, whatever it is, and an absent one is null, never undefined.
+{
+  const { opt, flag } = parseArgs(['--in', 'a.json', '--json', '--top', '5', 'body.txt']);
+  assert.deepStrictEqual([opt('in'), opt('top'), opt('out'), opt('json')], ['a.json', '5', null, '--top']);
+  assert.deepStrictEqual([flag('json'), flag('in'), flag('out'), flag('a.json')], [true, true, false, false]);
+  assert.strictEqual(parseArgs(['--last']).opt('last'), undefined, 'a trailing valued flag has no value');
+  assert.strictEqual(CONCURRENCY, 6, 'one concurrency for every sweep, pinned by value');
+}
+
+// isMain, compared on real paths. A plugin reached through a junction runs with argv[1] on the
+// junction path while node resolves import.meta.url to the target, and a plain compare then never
+// ran main() (runbooks #32).
+{
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'jev-ismain-')));
+  try {
+    fs.mkdirSync(path.join(dir, 'real'));
+    const file = path.join(dir, 'real', 'cli.mjs');
+    fs.writeFileSync(file, '');
+    fs.writeFileSync(path.join(dir, 'real', 'other.mjs'), '');
+    fs.symlinkSync(path.join(dir, 'real'), path.join(dir, 'link'), 'junction');
+    const url = pathToFileURL(file).href;
+    assert.strictEqual(isMain(url, file), true, 'the file itself');
+    assert.strictEqual(isMain(url, path.join(dir, 'link', 'cli.mjs')), true, 'the same file through a junction');
+    assert.strictEqual(isMain(url, path.join(dir, 'real', 'other.mjs')), false, 'another file');
+    assert.strictEqual(isMain(url, path.join(dir, 'real', 'absent.mjs')), false, 'a path that does not exist');
+    assert.strictEqual(isMain(url, undefined), false, 'no argv[1], as under `node -e`');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 console.log('lib selftest OK');

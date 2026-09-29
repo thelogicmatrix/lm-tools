@@ -1,7 +1,7 @@
 // The check types and what gets shown. Thresholds here control SURFACING and ordering only.
 // Nothing in this file asserts anything: a surfaced chunk is "worth reading", never "wrong".
 import { chunk as chunkBody } from './chunk.mjs';
-import { askJev, runPool } from '../../../scripts/lib.mjs';
+import { CONCURRENCY, askJev, runPool } from '../../../scripts/lib.mjs';
 
 // The torn band for a noul. A noul has no confidence field, so distance from 0.5 is the only proxy
 // available, and it says the model is TORN rather than unsure. Those are different things, which is
@@ -373,7 +373,7 @@ function strength(row, byCheck) {
 // A transient failure (a 429 at concurrency 6, a dropped connection) is retried inside lib.mjs's
 // postText, which every Jev caller shares. A call that reaches the catch below has used its
 // attempts, so it is not asked again here.
-export async function runSweep(body, sweep, sourceText, key, { concurrency = 6, ask = askJev, onDone } = {}) {
+export async function runSweep(body, sweep, sourceText, key, { concurrency = CONCURRENCY, ask = askJev, onDone } = {}) {
   // FIRST, before chunking and before the regex checks run, because every fault it catches is in the
   // sweep file rather than in the body and none of them is worth finding after the model is paid.
   preflight(sweep, sourceText);

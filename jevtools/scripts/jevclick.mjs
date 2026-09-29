@@ -5,9 +5,9 @@
 // very large. Today Claude reads all of it to decide on one click. Instead: parse the tree in code,
 // hand Jev the interactive elements as a Choice, click the ref it returns.
 //
-// MEASURED 2026-09-22 (scripts/jev-sweep/exp-choice-scale.mjs): 9/9 correct at 5, 12, 25, 50 and
-// 100 options, median 345ms at every count, confidence 0.99-1.00, no option cap reached. So a whole
-// page of candidates can go in one call.
+// MEASURED 2026-09-22 with exp-choice-scale.mjs, a one-off paid experiment deleted on 2026-09-29
+// and kept in git history: 9/9 correct at 5, 12, 25, 50 and 100 options, median 345ms at every
+// count, confidence 0.99-1.00, no option cap reached. So a whole page of candidates can go in one call.
 //
 // ⚠ NO IMAGE SUPPORT TODAY (TypeSafe have it planned). This reads the accessibility tree only, so
 // an element with no accessible name is invisible to it — see UNNAMED below.
@@ -17,16 +17,10 @@
 //   node jevclick.mjs --snapshot snap.yml --goal "..." --ask            # + the standard page checks
 //   node jevclick.mjs --snapshot snap.yml --goal "..." --questions q.json # + your own vocabulary
 //   node jevclick.mjs --snapshot t3-snap.json --goal "..." --json  # T3 Code preview_snapshot JSON: adds selector, x, y
-//   node jevclick.mjs --selftest
+//   node --test jevclick.test.mjs
 
 import fs from 'node:fs';
-import assert from 'node:assert';
-import http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { askJev, readKey } from './lib.mjs';
+import { askJev, isMain, parseArgs, readKey, runSelftest } from './lib.mjs';
 
 // Confidence below this means "do not act". Chosen from the measured confidence-versus-agreement
 // curve: 0.95+ agreed 98.4% of the time, 0.80-0.95 was 88.9%, below 0.80 was a coin flip. A wrong
@@ -36,7 +30,7 @@ const ACT_ABOVE = 0.95;
 // Exit codes with --json: 0 ACT (click the ref), 2 HOLD (confidence under ACT_ABOVE, hand the
 // snapshot to the agent), 3 the Jev call failed after its retries (one line on stderr, no pick). 1 is
 // a usage error. A caller must never read an outage as a HOLD, so the two codes stay apart.
-const EXIT_CALL_FAILED = 3;
+export const EXIT_CALL_FAILED = 3;
 
 // ⚠ CONFIDENCE DOES NOT PROTECT YOU FROM A VAGUE GOAL. Tested on the same 16-element basket page:
 // "complete the purchase and pay now" picked `Place order and pay` at 0.980, and the deliberately
@@ -223,194 +217,63 @@ export function fromT3(text) {
   return { snapshot: [...lines, ...textLines].join('\n'), targets };
 }
 
-export function selftest() {
-  const snap = [
-    '- generic [ref=e1]',
-    '  - button "Accept all cookies" [ref=e2]',
-    '  - button "Manage preferences" [ref=e3]',
-    '  - link "Privacy policy" [ref=e4]',
-    '  - text "We use cookies"',
-    '  - button [ref=e9]',
-    '  - textbox "Search" [ref=e5]',
-  ].join('\n');
-  const els = parseSnapshot(snap);
-  // generic and text are excluded; the five real controls survive.
-  assert.deepStrictEqual(els.map((e) => e.ref), ['e2', 'e3', 'e4', 'e9', 'e5']);
-  assert.strictEqual(els[0].label, 'button: Accept all cookies');
-  // An unnamed button is KEPT and labelled, not dropped: dropping it hides that the right answer
-  // may not be in the list.
-  assert.strictEqual(els[3].label, 'button: (no accessible name)');
-  assert.strictEqual(els.filter((e) => !e.name).length, 1);
-  // A line with no ref cannot be clicked and must not become an option.
-  assert.deepStrictEqual(parseSnapshot('- button "Ghost"'), []);
-  assert.deepStrictEqual(parseSnapshot(''), []);
-  assert.deepStrictEqual(parseSnapshot(null), []);
-  // Duplicate refs get distinct keys, or two options collapse into one and the answer cannot map
-  // back to an element.
-  const dup = toCriteria([{ ref: 'e1', label: 'button: Edit' }, { ref: 'e1', label: 'button: Edit' }]);
-  assert.strictEqual(Object.keys(dup).length, 2);
-  assert.deepStrictEqual(Object.keys(dup), ['e1', 'e1_1']);
-  // Every criteria key maps back to a ref by stripping the suffix.
-  for (const k of Object.keys(dup)) assert.strictEqual(k.replace(/_\d+$/, ''), 'e1');
+async function main(argv) {
+  const { opt, flag } = parseArgs(argv);
+  if (flag('selftest')) return runSelftest(new URL('./jevclick.test.mjs', import.meta.url));
+  const key = readKey();
+  if (!key) { console.error('no OPENROUTER_API_KEY in the environment and none in ~/.jev.env'); process.exit(1); }
+  const snapPath = opt('snapshot');
+  const goal = opt('goal');
+  if (!snapPath || !goal) { console.error('--snapshot <file> and --goal "..." required'); process.exit(1); }
 
-  // --- state building ---
-  // Scaffolding is stripped: a ref, a cursor hint and a /url child are cost with no meaning.
-  const st = snapshotText('- button "Go" [ref=e2] [cursor=pointer]:\n  - /url: /x\n  - text "hi"\n\n');
-  assert.strictEqual(st, '- button "Go":\n  - text "hi"');
-  assert.strictEqual(snapshotText(null), '');
-
-  // ⚠ THE CONTROLS SURVIVE THE BUDGET, THE PAGE TEXT DOES NOT. This is the whole rule. A trimmed
-  // control is an answer the model cannot give, and nothing in the output would say the right
-  // answer had been removed; trimmed page text only ever costs a judgement some accuracy.
-  const many = Array.from({ length: 40 }, (_, i) => ({ ref: `e${i}`, label: `button: Control number ${i}` }));
-  const tiny = buildState('do the thing', many, 'PAGE TEXT'.repeat(500), 1200);
-  for (const e of many) assert.ok(tiny.state.includes(e.label), `control dropped: ${e.label}`);
-  assert.ok(tiny.truncated, 'the text was cut and must say so');
-  // A budget the controls alone already blow leaves no room, and page text is dropped entirely
-  // rather than the controls being cut to make space.
-  const none = buildState('g', many, 'PAGE', 50);
-  assert.ok(none.state.includes('Control number 39'), 'controls survive an impossible budget');
-  assert.strictEqual(none.textChars, 0);
-  assert.strictEqual(none.truncated, true, 'text existed and none of it fits, which is truncation');
-  // Under budget, nothing is cut and nothing claims to have been.
-  const room = buildState('g', [{ ref: 'e1', label: 'button: Go' }], 'short text', 24_000);
-  assert.strictEqual(room.truncated, false);
-  assert.ok(room.state.includes('short text'));
-  // No page text asked for is not truncation either: that is the cheap controls-only path.
-  assert.deepStrictEqual(buildState('g', [{ ref: 'e1', label: 'button: Go' }], null).truncated, false);
-
-  // The standard pack is nouls, which carry no confidence field. Pinned by value because routing
-  // on a confidence that does not exist reads as 0 and would hold on every page.
-  for (const [k, q] of Object.entries(PAGE_CHECKS)) assert.strictEqual(q.type, 'noul', `${k} must be a noul`);
-  assert.ok(Object.keys(PAGE_CHECKS).length >= 4);
-
-  // --- T3 Code snapshots ---
-  const t3 = fromT3(JSON.stringify({
-    visibleText: 'Example Domain\n\nSay "hi"',
-    interactiveElements: [
-      { tag: 'a', role: null, name: 'Learn more', selector: 'body > a', x: 10, y: 20, width: 80, height: 20 },
-      { tag: 'div', role: 'button', name: 'Close "x"', selector: '#close', x: 0, y: 0, width: 10, height: 10 },
-      { tag: 'button', role: null, name: '', selector: '#icon', x: 0, y: 0, width: 0, height: 0 },
-      { tag: 'custom-el', role: null, name: 'Odd', selector: '#odd', x: 0, y: 0, width: 0, height: 0 },
-      { tag: 'a', role: null, name: 'see [ref=zz]', selector: '#trap', x: 0, y: 0, width: 0, height: 0 },
-    ],
-  }));
-  const t3els = parseSnapshot(t3.snapshot);
-  // Every element survives, a null role takes its tag's role, and an unknown tag stays a candidate.
-  assert.deepStrictEqual(t3els.map((e) => e.label),
-    ['link: Learn more', "button: Close 'x'", 'button: (no accessible name)', 'button: Odd', 'link: see (ref=zz)']);
-  // A literal `[ref=` in a name must not hijack the element's own ref.
-  assert.deepStrictEqual(t3els.map((e) => e.ref), ['t0', 't1', 't2', 't3', 't4']);
-  assert.deepStrictEqual(t3.targets.t0, { selector: 'body > a', x: 50, y: 30 });
-  assert.ok(snapshotText(t3.snapshot).includes("Say 'hi'"), 'visible text reaches the page state');
-  // Playwright YAML and non-snapshot JSON are not T3.
-  assert.strictEqual(fromT3('- button "Go" [ref=e1]'), null);
-  assert.strictEqual(fromT3('{"url":"x"}'), null);
-  return 'jevclick selftest OK';
-}
-
-// The failure paths, async because they need a socket. Invented data only, and the Jev endpoint is
-// redirected to a stub on localhost so nothing is sent or spent.
-export async function selftestFailure() {
-  const snap = '- button "Accept all cookies" [ref=e2]\n- button "Manage preferences" [ref=e3]';
-  // A 200 with no answers must not throw a TypeError: it is a pick with no confidence, so a hold.
-  const realFetch = globalThis.fetch;
+  // --ask turns on the standard page checks, --questions adds the caller's own vocabulary. Both send
+  // the page text, so both cost about $0.0019 instead of $0.0002. Neither is on by default: a loop
+  // that wants only the click should not be charged for the page.
+  const custom = opt('questions') ? JSON.parse(fs.readFileSync(opt('questions'), 'utf8')) : {};
+  const wantsChecks = flag('ask') || Object.keys(custom).length > 0;
+  const raw = fs.readFileSync(snapPath, 'utf8');
+  const t3 = fromT3(raw);
+  // A failed call is one line and EXIT_CALL_FAILED, set as exitCode for the socket reason below.
+  let res;
   try {
-    globalThis.fetch = async () => new Response(JSON.stringify({ usage: { cost: 0 } }), { status: 200 });
-    const r = await askPage(snap, 'accept', 'k', { checks: { q: { type: 'noul', instructions: 'i' } } });
-    assert.deepStrictEqual([r.ref, r.act, r.confidence, r.checks], [null, false, 0, { q: null }]);
-  } finally {
-    globalThis.fetch = realFetch;
+    res = await askPage(t3 ? t3.snapshot : raw, goal, key,
+      { checks: wantsChecks ? PAGE_CHECKS : {}, extra: custom });
+  } catch (e) {
+    console.error(`jevclick: the Jev call failed: ${e.message}`);
+    process.exitCode = EXIT_CALL_FAILED;
   }
+  // A T3 pick is clicked by selector (preview_click selector=..., or x/y), since T3 has no refs.
+  if (res && t3 && res.candidate) Object.assign(res, t3.targets[res.candidate]);
+  if (!res) {
+    // The call failed. The line and the exit code above say so, and there is no pick to print.
+  } else if (flag('json')) {
+    console.log(JSON.stringify(res));
+    // ⚠ exitCode, NEVER process.exit(), and this is not style. The HTTP socket from the call above is
+    // still closing, and process.exit() tears the event loop down under it: on Windows libuv aborts
+    // with `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` and the process ends 127. That
+    // happens AFTER the JSON has printed, so the pick was correct and the caller sees a crash anyway
+    // — which is the worst shape a failure can take in an agent loop, because the output looks fine.
+    // Measured on a 990-line Wikipedia snapshot, 2026-09-22: exit 127 with process.exit, 0 without.
+    process.exitCode = res.ref ? 0 : 2;
+  } else {
 
-  // ⚠ A FAILED CALL IS ONE LINE AND EXIT 3, not a Node stack and not exit 2. Exit 2 is HOLD, and a
-  // caller that reads 2 as "look at the page yourself" must never get it for an outage.
-  const server = http.createServer((req, res) => { req.resume(); res.writeHead(503).end('upstream busy'); });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  const stubUrl = `http://127.0.0.1:${server.address().port}/`;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jevclick-'));
-  const snapFile = path.join(dir, 'snap.yml');
-  fs.writeFileSync(snapFile, snap);
-  const mock = `const real = globalThis.fetch;
-globalThis.fetch = (url, init) => {
-  if (!String(url).startsWith('https://openrouter.ai/')) throw new Error('unexpected host ' + url);
-  return real(${JSON.stringify(stubUrl)}, init);
-};`;
-  try {
-    for (const json of [false, true]) {
-      const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(mock)}`,
-        fileURLToPath(import.meta.url), '--snapshot', snapFile, '--goal', 'accept', ...(json ? ['--json'] : [])],
-      { env: { ...process.env, OPENROUTER_API_KEY: 'dummy-not-a-key' } });
-      let out = '';
-      let err = '';
-      child.stdout.on('data', (d) => { out += d; });
-      child.stderr.on('data', (d) => { err += d; });
-      const code = await new Promise((r) => child.on('close', r));
-      assert.strictEqual(code, EXIT_CALL_FAILED, `a 503 exits ${EXIT_CALL_FAILED}${json ? ' with --json' : ''}: ${err}`);
-      assert.match(err, /^jevclick: the Jev call failed: HTTP 503: upstream busy\r?\n$/, 'in one line, with no stack');
-      assert.strictEqual(out, '', 'and prints no pick');
-    }
-  } finally {
-    await new Promise((r) => server.close(r));
-    fs.rmSync(dir, { recursive: true, force: true });
+  console.log(`  candidates     ${res.elements}${res.unnamed ? ` (${res.unnamed} with no accessible name)` : ''}`);
+  console.log(`  pick           ${res.label ?? '(none)'}  [${res.candidate ?? '-'}]`);
+  console.log(`  confidence     ${res.confidence.toFixed(3)}`);
+  if (res.runnerUp) console.log(`  runner-up      ${res.runnerUp.label} (p=${res.runnerUp.p.toFixed(2)})`);
+  for (const [k, v] of Object.entries(res.checks ?? {})) {
+    // A noul has no confidence, so 0.5 is TORN and not "unsure". Flagged rather than silently read
+    // as a no, because torn is the answer most worth a human's eye.
+    const torn = typeof v === 'number' && v > 0.35 && v < 0.65 ? '  <- torn, read the page' : '';
+    console.log(`  ${k.padEnd(14)} ${typeof v === 'number' ? v.toFixed(2) : String(v)}${torn}`);
   }
-  return 'jevclick failure selftest OK';
+  console.log(`  state          ${res.stateChars} chars${res.textTruncated ? ' (page text truncated)' : ''}`);
+  console.log(`  cost           $${(res.cost ?? 0).toFixed(6)}`);
+  console.log(res.act
+    ? `\n  ACT: click ${res.selector ? `selector ${res.selector}` : res.ref}`
+    : `\n  HOLD: confidence ${res.confidence.toFixed(2)} is below ${ACT_ABOVE}. Hand the snapshot to `
+      + 'Claude rather than clicking — this is the ambiguous-page case the fixture could not cover.');
+  }
 }
 
-if (process.argv.includes('--selftest')) { console.log(selftest()); console.log(await selftestFailure()); process.exit(0); }
-
-const opt = (n) => { const i = process.argv.indexOf(`--${n}`); return i < 0 ? null : process.argv[i + 1]; };
-const key = readKey();
-if (!key) { console.error('no OPENROUTER_API_KEY in the environment and none in ~/.jev.env'); process.exit(1); }
-const snapPath = opt('snapshot');
-const goal = opt('goal');
-if (!snapPath || !goal) { console.error('--snapshot <file> and --goal "..." required'); process.exit(1); }
-
-// --ask turns on the standard page checks, --questions adds the caller's own vocabulary. Both send
-// the page text, so both cost about $0.0019 instead of $0.0002. Neither is on by default: a loop
-// that wants only the click should not be charged for the page.
-const custom = opt('questions') ? JSON.parse(fs.readFileSync(opt('questions'), 'utf8')) : {};
-const wantsChecks = process.argv.includes('--ask') || Object.keys(custom).length > 0;
-const raw = fs.readFileSync(snapPath, 'utf8');
-const t3 = fromT3(raw);
-// A failed call is one line and EXIT_CALL_FAILED, set as exitCode for the socket reason below.
-let res;
-try {
-  res = await askPage(t3 ? t3.snapshot : raw, goal, key,
-    { checks: wantsChecks ? PAGE_CHECKS : {}, extra: custom });
-} catch (e) {
-  console.error(`jevclick: the Jev call failed: ${e.message}`);
-  process.exitCode = EXIT_CALL_FAILED;
-}
-// A T3 pick is clicked by selector (preview_click selector=..., or x/y), since T3 has no refs.
-if (res && t3 && res.candidate) Object.assign(res, t3.targets[res.candidate]);
-if (!res) {
-  // The call failed. The line and the exit code above say so, and there is no pick to print.
-} else if (process.argv.includes('--json')) {
-  console.log(JSON.stringify(res));
-  // ⚠ exitCode, NEVER process.exit(), and this is not style. The HTTP socket from the call above is
-  // still closing, and process.exit() tears the event loop down under it: on Windows libuv aborts
-  // with `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` and the process ends 127. That
-  // happens AFTER the JSON has printed, so the pick was correct and the caller sees a crash anyway
-  // — which is the worst shape a failure can take in an agent loop, because the output looks fine.
-  // Measured on a 990-line Wikipedia snapshot, 2026-09-22: exit 127 with process.exit, 0 without.
-  process.exitCode = res.ref ? 0 : 2;
-} else {
-
-console.log(`  candidates     ${res.elements}${res.unnamed ? ` (${res.unnamed} with no accessible name)` : ''}`);
-console.log(`  pick           ${res.label ?? '(none)'}  [${res.candidate ?? '-'}]`);
-console.log(`  confidence     ${res.confidence.toFixed(3)}`);
-if (res.runnerUp) console.log(`  runner-up      ${res.runnerUp.label} (p=${res.runnerUp.p.toFixed(2)})`);
-for (const [k, v] of Object.entries(res.checks ?? {})) {
-  // A noul has no confidence, so 0.5 is TORN and not "unsure". Flagged rather than silently read
-  // as a no, because torn is the answer most worth a human's eye.
-  const torn = typeof v === 'number' && v > 0.35 && v < 0.65 ? '  <- torn, read the page' : '';
-  console.log(`  ${k.padEnd(14)} ${typeof v === 'number' ? v.toFixed(2) : String(v)}${torn}`);
-}
-console.log(`  state          ${res.stateChars} chars${res.textTruncated ? ' (page text truncated)' : ''}`);
-console.log(`  cost           $${(res.cost ?? 0).toFixed(6)}`);
-console.log(res.act
-  ? `\n  ACT: click ${res.selector ? `selector ${res.selector}` : res.ref}`
-  : `\n  HOLD: confidence ${res.confidence.toFixed(2)} is below ${ACT_ABOVE}. Hand the snapshot to `
-    + 'Claude rather than clicking — this is the ambiguous-page case the fixture could not cover.');
-}
+if (isMain(import.meta.url)) await main(process.argv.slice(2));
