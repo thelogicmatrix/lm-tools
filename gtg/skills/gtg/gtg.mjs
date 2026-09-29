@@ -1128,6 +1128,23 @@ async function main(argv) {
   // A failed or refused forge read stops the command with exit 1. Not process.exit: on Windows
   // (Node 24) exiting while fetch sockets are open trips a libuv assertion, and the process dies
   // with 0xC0000409 instead of 1 (seen on a 401). See writeHandoff's forge branch.
+  // Extension lookup, in resolution order: user <root>/.gtg/commands/<cmd>.mjs FIRST (user
+  // overrides bundled), then the plugin's own extensions/commands/<cmd>.mjs (bundled, ships
+  // active). cmd becomes a path segment - constrain it the same way --slug is, so it can't
+  // traverse paths. Resolved before the forge opens, so an unknown verb costs no request (#97).
+  let ext = null;
+  if (cmd && !Object.hasOwn(builtins, cmd)) {
+    const safe = /^[A-Za-z0-9_-]+$/.test(cmd);
+    const userExt = safe ? join(ROOT, '.gtg', 'commands', `${cmd}.mjs`) : null;
+    const bundledExt = safe ? join(CLI_DIR, 'extensions', 'commands', `${cmd}.mjs`) : null;
+    ext = (userExt && existsSync(userExt)) ? userExt
+      : (bundledExt && existsSync(bundledExt)) ? bundledExt
+      : null;
+    if (!ext) {
+      console.error(`gtg: unknown command '${cmd}' - try 'gtg help'`);
+      process.exit(2);
+    }
+  }
   let stopped = false;
   if (!NO_STORE.has(cmd)) {
     let cfg;
@@ -1173,47 +1190,33 @@ async function main(argv) {
     if (REVIEW_CMDS.has(cmd)) printReview(cmd, rest);
   }
   else {
-    // Extension dispatch, in resolution order: user <root>/.gtg/commands/<cmd>.mjs FIRST
-    // (user overrides bundled), then the plugin's own extensions/commands/<cmd>.mjs
-    // (bundled, ships active). cmd becomes a path segment - constrain it the same way
-    // --slug is, so it can't traverse paths. ctx is a STABILITY CONTRACT (additive-only).
-    const safe = /^[A-Za-z0-9_-]+$/.test(cmd);
-    const userExt = safe ? join(ROOT, '.gtg', 'commands', `${cmd}.mjs`) : null;
-    const bundledExt = safe ? join(CLI_DIR, 'extensions', 'commands', `${cmd}.mjs`) : null;
-    const ext = (userExt && existsSync(userExt)) ? userExt
-      : (bundledExt && existsSync(bundledExt)) ? bundledExt
-      : null;
-    if (ext) {
-      try {
-        const mod = await import(pathToFileURL(ext).href);
-        if (typeof mod.default !== 'function') throw new Error('no default export function');
-        const ownParent = EXTENSIONS[cmd] ?? null;
-        // Both stores, always: a shelved package is still live, so an active-only read would
-        // report it as missing.
-        //
-        // Through `entries`, NOT `readStore`: readStore is a whole-file JSON reader, kept at its
-        // packed shape for the published extension context, so reading records through it here
-        // would name a file that no longer exists and serve issues.mjs and learn.mjs a silent
-        // empty list - every live entry reported as missing, at exit 0.
-        const ownEntries = () => {
-          const grab = (which) => (ownParent ? entries(which).filter((e) => e.parent === ownParent) : []);
-          return { active: grab('active'), shelved: grab('backlog') };
-        };
-        // ownParent rides the ctx as well as being closed over by ownEntries: an extension that
-        // WRITES an entry needs the same namespace its reader filters on, and deriving it a
-        // second time on the writer side is exactly the drift class this closes.
-        await mod.default({
-          root: ROOT, args: rest, readStore, writeStore, commit, countHandoffFiles,
-          ownEntries, ownParent, sessionId: PROGRESS_SESSION_ID || undefined,
-        });
-        await flushForge();
-      } catch (e) {
-        console.error(`gtg: extension '${cmd}' failed: ${(e?.message || String(e)).split('\n')[0]}`);
-        process.exit(1);
-      }
-    } else {
-      console.error(`gtg: unknown command '${cmd}' - try 'gtg help'`);
-      process.exit(2);
+    // Extension dispatch, ext resolved above. ctx is a STABILITY CONTRACT (additive-only).
+    try {
+      const mod = await import(pathToFileURL(ext).href);
+      if (typeof mod.default !== 'function') throw new Error('no default export function');
+      const ownParent = EXTENSIONS[cmd] ?? null;
+      // Both stores, always: a shelved package is still live, so an active-only read would
+      // report it as missing.
+      //
+      // Through `entries`, NOT `readStore`: readStore is a whole-file JSON reader, kept at its
+      // packed shape for the published extension context, so reading records through it here
+      // would name a file that no longer exists and serve issues.mjs and learn.mjs a silent
+      // empty list - every live entry reported as missing, at exit 0.
+      const ownEntries = () => {
+        const grab = (which) => (ownParent ? entries(which).filter((e) => e.parent === ownParent) : []);
+        return { active: grab('active'), shelved: grab('backlog') };
+      };
+      // ownParent rides the ctx as well as being closed over by ownEntries: an extension that
+      // WRITES an entry needs the same namespace its reader filters on, and deriving it a
+      // second time on the writer side is exactly the drift class this closes.
+      await mod.default({
+        root: ROOT, args: rest, readStore, writeStore, commit, countHandoffFiles,
+        ownEntries, ownParent, sessionId: PROGRESS_SESSION_ID || undefined,
+      });
+      await flushForge();
+    } catch (e) {
+      console.error(`gtg: extension '${cmd}' failed: ${(e?.message || String(e)).split('\n')[0]}`);
+      process.exit(1);
     }
   }
 }

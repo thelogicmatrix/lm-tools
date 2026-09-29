@@ -21,9 +21,10 @@ const BETA = { slug: 'beta', project: 'Beta', shelf: 'active', next: 'Ship beta'
 async function stubHub(t) {
   const hub = {
     files: new Map([['docs/handoffs/records/alpha.json', file(ALPHA)], ['docs/handoffs/records/beta.json', file(BETA)]]),
-    mode: 'up', hits: [],
+    mode: 'up', hits: [], requests: 0,
   };
   const server = createServer(async (req, res) => {
+    hub.requests++;
     for await (const _ of req) { /* drain */ }
     if (hub.mode === 'hang') return; // the request is left open until the client gives up
     const url = new URL(req.url, 'http://stub');
@@ -150,4 +151,16 @@ test('with no cache the hub being down is the usual error, and a 4xx is never se
   assert.equal(denied.status, 1);
   assert.match(denied.stderr, /cannot read the forge store - forge GET .* 401/);
   assert.equal(existsSync(join(hub.root, 'docs')), false);
+});
+
+test('an unknown command exits 2 before any forge request (#97)', async (t) => {
+  const hub = await stubHub(t);
+  hub.mode = 'auth'; // any request that does reach the stub fails
+  const r = await hub.run(['nosuchverb']);
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /unknown command 'nosuchverb'/);
+  assert.equal(hub.requests, 0, 'no request reached the forge');
+  const known = await hub.run(['list']);
+  assert.equal(known.status, 1, 'a known store command still reads the forge');
+  assert.ok(hub.requests > 0);
 });
