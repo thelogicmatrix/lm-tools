@@ -47,10 +47,10 @@ A new jevchecker sweep is one JSON file in `skills/jevchecker/sweeps/`. The form
 
 ## Details
 
-- Every call goes to OpenRouter's System One endpoint with a 60 second timeout. `scripts/lib.mjs` holds the shared key lookup and call.
+- Every call goes to OpenRouter's System One endpoint with a 60 second timeout and up to three attempts (network errors, 408, 429 and 5xx, with backoff). `scripts/lib.mjs` holds the shared key lookup, call and retry.
 - jevdrift and `exp-choice-scale.mjs` (the experiment that sized jevclick) read the key from `OPENROUTER_API_KEY` only, not from `~/.jev.env`.
 - jevclick says to click only at 0.95 confidence or higher. Below that it says to hand the snapshot to the agent instead. With `--json` it exits 0 on ACT, 2 on HOLD and 3 when the Jev call failed.
 - jevmail's search stops before any call when the narrowing still matches more than 60 messages.
 - jevchecker exits 0 whenever the sweep ran, whatever it found, so it cannot serve as a gate.
-- jevclassify looks for the Forgejo CLI's `keys.json` under `%APPDATA%`, so it runs on Windows.
+- jevclassify looks for the Forgejo CLI's `keys.json` under `%APPDATA%` on Windows and `$XDG_DATA_HOME` (or `~/.local/share`) elsewhere. macOS is not handled. It reads six repos at a time, and a repo it cannot read is listed as unknown.
 - Before 2026-09-24 these scripts lived in a private monorepo as `scripts/jev-sweep/` and `.claude/skills/jevchecker/`.

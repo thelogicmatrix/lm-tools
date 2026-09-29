@@ -89,30 +89,32 @@ export function retryAfterMs(v, now = Date.now()) {
 }
 
 // One POST with the timeout, the retry and the status-first error, shared with every Jev caller.
-export async function postText(url, key, payload, timeoutMs = TIMEOUT_MS,
+// Serialised once, outside the retry, so a payload that cannot serialise throws once, unretried.
+export async function postText(url, key, payload, timeoutMs = TIMEOUT_MS, retry = {}) {
+  return fetchText(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }, timeoutMs, retry);
+}
+
+// The retry loop under postText, for any request. An HTTP error carries `status`, so a caller can
+// treat one code (a 404 on an optional read) as an answer rather than a failure.
+export async function fetchText(url, init, timeoutMs = TIMEOUT_MS,
   { attempts = ATTEMPTS, baseDelayMs = BASE_DELAY_MS } = {}) {
-  // Serialised once, outside the loop, so a payload that cannot serialise throws once, unretried.
-  const body = JSON.stringify(payload);
   for (let n = 1; ; n++) {
     let err;
     let wait = null;
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
       const text = await res.text();
       if (res.ok) return text;
-      err = new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`);
-      if (!retryable(res.status)) throw Object.assign(err, { final: true });
+      err = Object.assign(new Error(`HTTP ${res.status}: ${text.slice(0, 180)}`), { status: res.status });
       wait = retryAfterMs(res.headers.get('retry-after'));
     } catch (e) {
-      if (e.final) throw e;
       err = e.name === 'TimeoutError' ? new Error(`no response after ${timeoutMs / 1000} s`) : e;
     }
-    if (n >= attempts) throw err;
+    if ((err.status && !retryable(err.status)) || n >= attempts) throw err;
     await new Promise((r) => setTimeout(r, wait ?? baseDelayMs * 2 ** (n - 1) * (0.5 + Math.random())));
   }
 }

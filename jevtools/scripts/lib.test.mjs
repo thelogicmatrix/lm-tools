@@ -128,7 +128,8 @@ const OK = [200, {}, 'fine'];
   for (const status of [400, 401, 403, 404]) {
     const s = await stub([[status, {}, 'no'], OK]);
     try {
-      await assert.rejects(() => postText(s.url, 'k', {}, 5000, { baseDelayMs: 0 }), new RegExp(`^Error: HTTP ${status}: no`));
+      await assert.rejects(() => postText(s.url, 'k', {}, 5000, { baseDelayMs: 0 }), { message: `HTTP ${status}: no`, status },
+        'the error names the status and carries it, so a caller can read a 404 as an answer');
       assert.strictEqual(s.hits.length, 1, `a ${status} is not retried`);
     } finally { await s.close(); }
   }
