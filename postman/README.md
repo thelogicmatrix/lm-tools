@@ -59,7 +59,7 @@ python postman.py --bounces NAME DAYS   bounce sweep for one identity
 python postman.py --drafts NAME [MATCH] list drafts, read-only. --purge trashes them
 python postman.py inbox NAME [--days N] [--all] [--from ADDR] [--json]
 python postman.py search NAME "QUERY"   Gmail search server-side, prints hits and URLs only
-python postman.py --selftest            the built-in checks
+python postman.py --selftest            the offline checks in test/, run with unittest
 python preflight.py BATCH               gates, voice, threading and reply status, read-only
 ```
 
