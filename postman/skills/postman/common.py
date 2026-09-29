@@ -12,7 +12,8 @@ def atomic_write(path, text):
     """Temp file, then rename, so a reader finds the old file or the new one and never
     half of either. UTF-8, with the newlines in text written as they are."""
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8", newline="")
+    with tmp.open("w", encoding="utf-8", newline="") as f:
+        f.write(text)
     tmp.replace(path)
 
 

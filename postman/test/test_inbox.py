@@ -26,7 +26,10 @@ import support                                  # noqa: E402
 
 
 def setUpModule():
-    unittest.enterModuleContext(support.fixture_home())
+    # enterModuleContext is 3.11+, addModuleCleanup is 3.8+, README says 3.9.
+    ctx = support.fixture_home()
+    ctx.__enter__()
+    unittest.addModuleCleanup(ctx.__exit__, None, None, None)
 
 
 REPLY_RAW = (b"From: Dana R. <Dana.r@venuegroup.example>\r\n"

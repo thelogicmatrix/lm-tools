@@ -35,7 +35,10 @@ import support                                  # noqa: E402
 
 
 def setUpModule():
-    unittest.enterModuleContext(support.fixture_home())
+    # enterModuleContext is 3.11+, addModuleCleanup is 3.8+, README says 3.9.
+    ctx = support.fixture_home()
+    ctx.__enter__()
+    unittest.addModuleCleanup(ctx.__exit__, None, None, None)
 
 
 sample = """## @grandhall | Enquiries <enquiry@grandhall.example>
@@ -1441,7 +1444,9 @@ Body.
                 f"## @two | C D <c@d.example>\nSource: d.example/c, read {_today}\n"
                 f"Subject: s2\n\nHi.\n")
         try:
-            self.enterContext(mock.patch.object(postman, "has_mx", lambda domain: True))
+            patcher = mock.patch.object(postman, "has_mx", lambda domain: True)  # enterContext is 3.11+
+            patcher.start()
+            self.addCleanup(patcher.stop)
             os.environ[postman.pw_env(work)], os.environ["POSTMAN_NO_VAULT"] = "x", "1"
             with tempfile.TemporaryDirectory() as td:
                 bp = Path(td) / "batch.md"
