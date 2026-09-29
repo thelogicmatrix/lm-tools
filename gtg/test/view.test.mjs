@@ -27,7 +27,7 @@ test('renderList groups families first, numbers down the screen and points at th
     entry({ project: 'Solo', slug: 'solo', harness: 'codex', sessions: 3 }),
     entry({ project: 'Wiki', slug: 'wiki', parent: 'citsim', updated: at(2) }),
     entry({ project: 'Engine', slug: 'engine', parent: 'citsim', sessions: undefined }),
-    entry({ project: 'Pack', slug: 'pack', parent: 'issues' }),
+    entry({ project: 'Pack', slug: 'pack', parent: 'learning' }),
   ];
   const out = capture(() => renderList([], ctxFor(active, [entry({ project: 'Idea', slug: 'idea' })])));
   assert.equal(out, [
@@ -38,7 +38,7 @@ test('renderList groups families first, numbers down the screen and points at th
     '', '▸ standalone',
     '  3. Solo s3 [1h] (0h ago) ·codex master', '     → next for solo',
     '', '+ 1 backlogged - gtg backlog',
-  ].join('\n'), 'the extension entry (issues) is hidden, and a missing sessions count asks countHandoffFiles');
+  ].join('\n'), 'the extension entry (learning) is hidden, and a missing sessions count asks countHandoffFiles');
 });
 
 test('renderList marks dirty and unreachable worktrees and warns on a shared branch', () => {
@@ -66,10 +66,10 @@ test('renderList marks dirty and unreachable worktrees and warns on a shared bra
 });
 
 test('a filtered renderList searches every entry and names a shelved extension entry', () => {
-  const active = [entry({ project: 'Router', slug: 'router' }), entry({ project: 'Pack', slug: 'pack', parent: 'issues' })];
-  const backlog = [entry({ project: 'Shelved pack', slug: 'shelf', parent: 'issues', updated: at(3) })];
+  const active = [entry({ project: 'Router', slug: 'router' }), entry({ project: 'Pack', slug: 'pack', parent: 'learning' })];
+  const backlog = [entry({ project: 'Shelved pack', slug: 'shelf', parent: 'learning', updated: at(3) })];
   const out = capture(() => renderList(['pack'], ctxFor(active, backlog)));
-  assert.match(out, /^1 active gtg project in 1 group\(s\) matching 'pack':\n\n▸ issues\n/, 'under its family heading');
+  assert.match(out, /^1 active gtg project in 1 group\(s\) matching 'pack':\n\n▸ learning\n/, 'under its family heading');
   assert.match(out, /  pack: Pack s1/, 'an extension entry is labelled by slug, never a number');
   assert.match(out, /shelved: Shelved pack \(parked 3d ago\) - gtg active shelf/);
   const none = capture(() => renderList(['zzz'], ctxFor(active, backlog)));

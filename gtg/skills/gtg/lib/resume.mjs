@@ -151,7 +151,7 @@ export async function resumeConsume(argv, ctx) {
       return 2;
     }
     // Session-start collision: a project AND a command share the token (a project called
-    // `issues`, say). Both are real; picking silently made one of them unreachable.
+    // `learn`, say). Both are real; picking silently made one of them unreachable.
     if (!/^\d+$/.test(t) && ctx.commandFileFor(t)) {
       console.log(`'${t}' is both a project and a command:`);
       console.log(`  1. ${match.project} (${match.slug}) - ${match.next}`);

@@ -3,7 +3,7 @@
 Everything `gtg <verb>` does other than depart or resume. Loaded only when SKILL.md's last routing row
 fires (a verb the zero-model row does not cover). `gtg.mjs` = `node "${CLAUDE_PLUGIN_ROOT}/skills/gtg/gtg.mjs"`.
 
-Contents: Trigger semantics · Router table · Extension entries · Working a package · Backlog Park.
+Contents: Trigger semantics · Router table · Extension entries · Backlog Park.
 
 ## Trigger semantics
 
@@ -25,7 +25,7 @@ Disambiguation, in this order:
    `gtg report` reports even with a "Report & Stats" project.
 3. At session start, any other bare token is a project before it is an extension verb
    (`gtg.mjs resume <token>` performs that check and prints the candidates when both exist).
-4. Any other token (mid-session, or carrying further args like `gtg issues p1`) goes straight
+4. Any other token (mid-session, or carrying further args like `gtg learn python`) goes straight
    to the CLI as an extension verb.
 
 Bookkeeping verbs (`list`, bare `backlog`, `back`, `active`, `complete`, `keep`, `remove`, `prune`, `undo`, `log`, `stats`)
@@ -44,26 +44,17 @@ never reach this file: SKILL.md routes them straight to the CLI, slug not list n
 | rename refuses because a progress record exists | Keep the stable work-line slug. Automatic migration of progress identity is unsupported; do not work around the refusal by moving JSON files or silently reassigning tasks. |
 | an entry's `parent` names a family that does not exist, or names itself | Run `gtg.mjs unparent <n\|slug>`. `rename` re-**points** a parent (every child carrying it, at once), `unparent` **removes** one (a single entry). Re-pointing a dangling parent at the entry's own slug only makes a self-parent, so reach for `unparent` whenever the right answer is "no family". Stop. |
 | "gtg report" | Run `gtg.mjs report` (writes `docs/handoffs/_report.json`, zero model tokens). Then invoke the **reporter** skill on that JSON to build a self-contained HTML report: a GitHub-style habit grid (from `habit.grid`), throughput and family rollups, per-project arcs, and the fun callouts. Playful tone. Write the HTML to the session scratchpad, not the repo. If `historyAvailable` is false or `effort.sessionsTimed` is 0, say so plainly rather than inventing figures. `duration_min` only accrues from sessions after gtg 1.4.0, so label effort "accruing", never present a near-zero total as if the work took no time. |
-| "gtg &lt;verb&gt;" not listed above (e.g. "gtg stats", "gtg issues", "gtg learn") | Run `gtg.mjs <verb>` and relay its output. Four bundled extras ship with the plugin, in two kinds. **Extensions** own entries in the handoff store and render their own separated list: `issues` (the issues-layer listing) and `learn` (learning sprints). **Mods** own no entries and only add a view over the whole store: `stats` (a handoff-store snapshot) and `report`. A `<storage-root>/.gtg/commands/<verb>.mjs` you've added resolves here too, and yours overrides a bundled one of the same name. Unknown → the CLI errors. Stop. **Exception:** if the first output line starts with `GTG-DIRECTIVE:`, don't relay it; follow the instruction on that line instead. Both bundled extensions use this to hand control back to the Resume Procedure. |
+| "gtg &lt;verb&gt;" not listed above (e.g. "gtg stats", "gtg learn") | Run `gtg.mjs <verb>` and relay its output. Three bundled extras ship with the plugin, in two kinds. An **extension** owns entries in the handoff store and renders its own separated list: `learn` (learning sprints). **Mods** own no entries and only add a view over the whole store: `stats` (a handoff-store snapshot) and `report`. A `<storage-root>/.gtg/commands/<verb>.mjs` you've added resolves here too, and yours overrides a bundled one of the same name. Unknown → the CLI errors. Stop. **Exception:** if the first output line starts with `GTG-DIRECTIVE:`, don't relay it; follow the instruction on that line instead. `learn` uses this to hand control back to the Resume Procedure. |
 
 ## Extension entries
 
 An extension's own entries are excluded from the bare `gtg.mjs list` and `gtg.mjs backlog`,
 and from their counts, so the same work is not listed twice. That is decluttering, not hiding:
 `gtg.mjs list <name-or-slug>` is you naming what you want, so it searches every entry and will
-surface an issue package or a learning sprint, including a shelved one. A queried extension
+surface a learning sprint, including a shelved one. A queried extension
 entry prints with its slug in place of a row number, because row numbers index the bare
 listing and that is the order `back <n>` and `remove <n>` resolve against. Pass the slug for
 these, never a number.
-
-## Working a package
-
-`gtg issues <pN>` hands back a `GTG-DIRECTIVE` that resumes with `--keep`: the package entry is
-retained, as with every resume. `--keep` preserves non-pickup intent for portfolio hooks.
-It is the live mapping from its `pN` to a name, and every `docs/issues/` file in the batch
-carries `**Package:** pN` pointing at it. A package retires by being **finished**: fix its
-members and delete their files as you go; when the last one goes, its row renders
-`no members - unstamped, or done` and names the `gtg remove` that closes it.
 
 ## Backlog Park (`gtg backlog <idea>`)
 

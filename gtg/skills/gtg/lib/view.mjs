@@ -15,14 +15,13 @@ import { firstMeaningfulLine } from './git.mjs';
 // Command name -> the `parent` namespace it owns. Filtering is on the existing `parent` field
 // and adds no new one on purpose: writeHandoff rebuilds every entry as a fresh literal and
 // silently drops fields it does not know, so a marker field would survive exactly until the
-// next wrap. Same constraint that put issue-package membership in the issue file.
+// next wrap.
 //
-// DUPLICATED OUTSIDE THIS REPO, and it has to be. The author's SessionStart banner hook at
-// .claude/hooks/gtg-active-summary.mjs announces the active count and must exclude the same
-// namespaces, or the banner disagrees with `gtg list` on the next line. A hook cannot import
-// from a plugin, so it carries its own copy of these values. Adding a namespace here means
-// adding it there too.
-export const EXTENSIONS = { issues: 'issues', learn: 'learning' };
+// Read outside this repo too. The author's SessionStart banner hook at
+// .claude/hooks/gtg-active-summary.mjs imports isExtensionEntry from the plugin cache, so its
+// active count hides the same namespaces `gtg list` hides. Renaming or dropping that export
+// skips the banner.
+export const EXTENSIONS = { learn: 'learning' };
 const EXTENSION_PARENTS = new Set(Object.values(EXTENSIONS));
 export const isExtensionEntry = (e) => EXTENSION_PARENTS.has(e?.parent);
 export const userVisible = (arr) => arr.filter((e) => !isExtensionEntry(e));

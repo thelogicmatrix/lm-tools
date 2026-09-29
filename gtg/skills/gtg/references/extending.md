@@ -9,7 +9,7 @@ Contents: Tiers · Commands · Extensions and mods · Hooks · Resolution and st
 | Tier | Lives in | Active |
 |---|---|---|
 | **Core** | the plugin's `gtg.mjs` and `SKILL.md` | always |
-| **Bundled** | the plugin's `extensions/` | on by default (`gtg issues`, `gtg learn`, `gtg stats`, `gtg report`) |
+| **Bundled** | the plugin's `extensions/` | on by default (`gtg learn`, `gtg stats`, `gtg report`) |
 | **Yours** | `<storage-root>/.gtg/` | when you add a file |
 
 ## Commands
@@ -36,21 +36,21 @@ export default async ({ root, args, ownEntries, readStore, writeStore, commit })
 
 **Do not read the records through `readStore`.** It is a whole-file JSON reader, and the records live one per file (see The store). `readStore('docs/handoffs/_active.json')` returns `null` because that packed file is deleted. `?.handoffs ?? []` then turns `null` into an empty list, so a command reading it reports every live entry as missing with no error anywhere. `ownEntries()` reads the real store. `readStore` is for genuine single-object files like `_session.json`.
 
-**Handing control back to the skill.** A command whose output's first line starts with `GTG-DIRECTIVE:` is not relayed to the user. The skill follows the instruction on that line instead. For example, `console.log('GTG-DIRECTIVE: run gtg.mjs resume my-project and follow SKILL.md\'s Resume Procedure.')` makes `gtg <yourverb> <arg>` resolve an argument to a slug and then run the real Resume Procedure, hooks included, instead of reimplementing it. Both bundled extensions use it: `gtg issues <name>` and `gtg learn <topic>` resolve their argument and then hand off to the Resume Procedure.
+**Handing control back to the skill.** A command whose output's first line starts with `GTG-DIRECTIVE:` is not relayed to the user. The skill follows the instruction on that line instead. For example, `console.log('GTG-DIRECTIVE: run gtg.mjs resume my-project and follow SKILL.md\'s Resume Procedure.')` makes `gtg <yourverb> <arg>` resolve an argument to a slug and then run the real Resume Procedure, hooks included, instead of reimplementing it. The bundled `gtg learn <topic>` uses it: it resolves its argument and then hands off to the Resume Procedure.
 
 A command that throws is reported as `gtg: extension '<name>' failed: <message>` and exits 1.
 
 ## Extensions and mods
 
-An **extension** owns entries in the handoff store and renders its own separated list. Its entries are excluded from the bare `gtg list` and `gtg backlog`, and from their counts, so the same work is not listed twice. `issues` and `learn` are extensions, owning the `issues` and `learning` parent namespaces. A **mod** owns no entries and only adds a view, so it sees the whole store. `stats` and `report` are mods, and their counts stay whole-store totals.
+An **extension** owns entries in the handoff store and renders its own separated list. Its entries are excluded from the bare `gtg list` and `gtg backlog`, and from their counts, so the same work is not listed twice. `learn` is the bundled extension, owning the `learning` parent namespace. A **mod** owns no entries and only adds a view, so it sees the whole store. `stats` and `report` are mods, and their counts stay whole-store totals.
 
-Adding a third extension is one line in the `EXTENSIONS` map in `gtg.mjs`, and that is the whole of it. An extension is a registered `parent` namespace and nothing more. **It must not add a field to the entry.** Membership is read off the existing `parent` field because `gtg handoff` rebuilds each entry as a fresh literal and drops fields it does not know. A marker field of your own would survive exactly until the next checkpoint and then go missing with no error.
+Adding another extension is one line in the `EXTENSIONS` map in `lib/view.mjs`, and that is the whole of it. An extension is a registered `parent` namespace and nothing more. **It must not add a field to the entry.** Membership is read off the existing `parent` field because `gtg handoff` rebuilds each entry as a fresh literal and drops fields it does not know. A marker field of your own would survive exactly until the next checkpoint and then go missing with no error.
 
-**Seed documents live in `skills/gtg/templates/`.** An extension whose data lives in a folder of the user's own needs that folder to explain itself on a fresh install, so the plugin ships the starting document. `gtg:issues` copies `templates/issues-README.md` to `docs/issues/README.md` the first time it files into a folder without one. It never overwrites an existing one, because that file is the folder's own conventions and whoever wrote it outranks the template.
+**Seed documents live in `skills/gtg/templates/`.** A skill whose data lives in a folder of the user's own needs that folder to explain itself on a fresh install, so the plugin ships the starting document. `gtg:issues` copies `templates/issues-README.md` to `docs/issues/README.md` the first time it files into a folder without one. It never overwrites an existing one, because that file is the folder's own conventions and whoever wrote it outranks the template.
 
-**Decluttering is not lookup.** Only the bare listing hides extension entries. `gtg list <name-or-slug>` searches every entry and will surface an issue package or a learning sprint. A queried extension entry is labelled with its slug instead of a row number, because row numbers index the bare listing and that is the order `gtg back <n>` resolves against. Use the slug, which every verb accepts.
+**Decluttering is not lookup.** Only the bare listing hides extension entries. `gtg list <name-or-slug>` searches every entry and will surface a learning sprint. A queried extension entry is labelled with its slug instead of a row number, because row numbers index the bare listing and that is the order `gtg back <n>` resolves against. Use the slug, which every verb accepts.
 
-A targeted query also reaches a shelved extension entry, printed on its own `shelved:` line rather than as a numbered row, whether or not the same query also matched active work. An issue package may be shelved between fix sessions, and without this the exit procedure's slug-reuse probe would miss it. A shelved normal project stays invisible to a query, deliberately.
+A targeted query also reaches a shelved extension entry, printed on its own `shelved:` line rather than as a numbered row, whether or not the same query also matched active work. A learning sprint may be shelved between study sessions, and without this the exit procedure's slug-reuse probe would miss it. A shelved normal project stays invisible to a query, deliberately.
 
 ## Hooks
 

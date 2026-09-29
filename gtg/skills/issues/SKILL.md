@@ -5,8 +5,7 @@ description: 'Issue filing into docs/issues/. Use when a problem surfaces mid-ta
 
 # issues: file it, or lose it
 
-`gtg issues` reads and packages `docs/issues/`. This skill is the two things no command does:
-filing and closing.
+This skill files and closes issues in `docs/issues/`. No command reads the folder.
 
 ## Filing does not ask
 
@@ -38,7 +37,7 @@ sitting, and it would otherwise be lost.
 
 - what belongs in memory (a durable fact or lesson)
 - what the code or git history already records
-- what is already an open issue (check `gtg issues` first)
+- what is already an open issue (list `docs/issues/` first)
 - a vague dissatisfaction with no named symptom. "We should refactor this someday" is not an
   issue.
 
@@ -61,7 +60,7 @@ Never decide from your memory of what was wrong. Run the `Check`, then take the 
 | Passes, and the `Check` tests the **class** | Close. Delete the file. Say so in session. |
 | Passes, but the `Check` only pinned the original reproduction | **Not a pass.** Widen the `Check` to the class, re-run it, and take whichever row that lands on. |
 | Fails, and the root cause is fixed | Close. Delete the file. |
-| Fails, and only the symptom is handled | `Status: worked-around (<what the workaround is>)`, rewrite `Check` to test the **class** rather than the old symptom, and **keep the file**. The name goes in the parenthetical, because that is what `gtg issues` renders as `WORKED-AROUND: <what>`. |
+| Fails, and only the symptom is handled | `Status: worked-around (<what the workaround is>)`, rewrite `Check` to test the **class** rather than the old symptom, and **keep the file**. The name goes in the parenthetical, so a reader sees what the workaround is without opening the history. |
 | No `Check` on the file | Unverifiable. Write one before working it, or delete the issue as a guess about the past. |
 
 **Never delete a file whose failure class is still live.** The table serves that rule without
@@ -84,14 +83,3 @@ sweeps whatever the other sessions have staged.
 git rm docs/issues/2026-08-04-my-slug.md && git commit docs/issues/2026-08-04-my-slug.md -m "issues: close my-slug"
 git add docs/issues/2026-08-04-my-slug.md && git commit docs/issues/2026-08-04-my-slug.md -m "issues: my-slug worked around"
 ```
-
-## Reading and working the folder
-
-- `gtg issues`: everything, grouped by package
-- `gtg issues packages`: the package shelf
-- `gtg issues <pN | package slug | text>`: start working that package. Packages only, so a
-  loose issue's own slug matches nothing
-- `gtg issues pack`: prints the loose issues and asks you to propose batches.
-  `gtg issues pack <pN> --name "<Name>" --next "<first step>" [--eta "<eta>"] [--dry-run] <slug>...`
-  stamps one batch. `--dry-run` shows both writes without making either, and previews from
-  anywhere because it never spawns.

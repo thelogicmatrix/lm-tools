@@ -19,7 +19,7 @@ In Codex, resolve the CLI beside this loaded skill if `CLAUDE_PLUGIN_ROOT` is ab
 | Session-start `gtg` or `gtg <project>` | Resume Procedure below |
 | `gtg progress …` or tracking task/subagent execution | Read `references/progress.md`; use its CLI for persistent state and counts. This does not depart or consume a handoff. |
 | `gtg list` / bare `gtg backlog` / `gtg back`, `active`, `complete`, `keep`, `remove`, `prune`, `undo`, `log`, `stats` with their args | Zero-model: run `gtg.mjs <verb> [args]` verbatim, relay its output, stop. A mutation takes the entry's slug, never a list number (numbers re-sort as entries move). |
-| Any other `gtg <verb>` (peek, report, supersede, rename, unparent, `backlog <idea>`, issues, learn, …) | Read `references/commands.md`, follow it |
+| Any other `gtg <verb>` (peek, report, supersede, rename, unparent, `backlog <idea>`, learn, …) | Read `references/commands.md`, follow it |
 
 ## Up next queue
 

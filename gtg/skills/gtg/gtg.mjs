@@ -1200,7 +1200,7 @@ async function main(argv) {
       //
       // Through `entries`, NOT `readStore`: readStore is a whole-file JSON reader, kept at its
       // packed shape for the published extension context, so reading records through it here
-      // would name a file that no longer exists and serve issues.mjs and learn.mjs a silent
+      // would name a file that no longer exists and serve learn.mjs a silent
       // empty list - every live entry reported as missing, at exit 0.
       const ownEntries = () => {
         const grab = (which) => (ownParent ? entries(which).filter((e) => e.parent === ownParent) : []);

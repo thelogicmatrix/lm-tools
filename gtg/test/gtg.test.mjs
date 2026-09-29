@@ -422,6 +422,10 @@ const patchActive = (root, fn) => {
   const rx = gtg(repo, ['nonesuch']);
   assert.equal(rx.status, 2);
   assert.match(rx.stderr, /unknown command/);
+  // #111: the bundled issues extension is gone, so `gtg issues` is an unknown command too.
+  const ri = gtg(repo, ['issues']);
+  assert.equal(ri.status, 2, ri.stderr);
+  assert.match(ri.stderr, /^gtg: unknown command 'issues' - try 'gtg help'/);
   console.log('ok 6 - extension dispatch + ctx contract');
 }
 
@@ -1863,22 +1867,19 @@ const patchActive = (root, fn) => {
 }
 
 // --- 45. an entry in a registered extension namespace does not render in `list` ---
-// Extensions (issues, learn) own handoff entries and render their own separated
+// Extensions (learn) own handoff entries and render their own separated
 // list, so leaving them in `gtg list` shows the same work twice and buries the
 // projects the list exists for. Asserted on the project NAME, which is what the
 // renderer prints, not the slug.
 {
   const repo = tempRepo();
-  gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
   gtg(repo, [...HANDOFF_ARGS('learning-go', 'Learning: Go'), '--parent', 'learning'], { input: BODY });
   gtg(repo, [...HANDOFF_ARGS('real-project', 'Real Project'), '--parent', 'gtg'], { input: BODY });
   const r = gtg(repo, ['list']);
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(!r.stdout.includes('Issues P9: x'), 'issue package leaked into gtg list');
   assert.ok(!r.stdout.includes('Learning: Go'), 'learning sprint leaked into gtg list');
   assert.ok(r.stdout.includes('Real Project'), 'a real project was wrongly excluded');
   // The families the header counts must not include the excluded namespaces either.
-  assert.doesNotMatch(r.stdout, /▸ issues/, 'an extension namespace rendered as a family group');
   assert.doesNotMatch(r.stdout, /▸ learning/, 'an extension namespace rendered as a family group');
   console.log('ok 45 - an extension namespace does not render in list');
 }
@@ -1886,13 +1887,13 @@ const patchActive = (root, fn) => {
 // --- 46. the same exclusion applies to `backlog` ---
 {
   const repo = tempRepo();
-  gtg(repo, ['backlog', '--project', 'Issues P8: y', '--slug', 'issues-p8-y',
-    '--next', 'TBD', '--parent', 'issues'], { input: '## The Idea\nsomething\n' });
+  gtg(repo, ['backlog', '--project', 'Learning P8: y', '--slug', 'learning-p8-y',
+    '--next', 'TBD', '--parent', 'learning'], { input: '## The Idea\nsomething\n' });
   gtg(repo, ['backlog', '--project', 'Parked Idea', '--slug', 'parked-idea',
     '--next', 'TBD'], { input: '## The Idea\nsomething\n' });
   const r = gtg(repo, ['backlog']);
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(!r.stdout.includes('Issues P8: y'), 'issue package leaked into gtg backlog');
+  assert.ok(!r.stdout.includes('Learning P8: y'), 'learning sprint leaked into gtg backlog');
   assert.ok(r.stdout.includes('Parked Idea'), 'a real backlog item was wrongly excluded');
   assert.match(r.stdout, /^1 backlogged project\b/m, 'the shelf count still includes extension entries');
   // b<n> is what `gtg active <n>` resolves, so it has to number the rows shown.
@@ -1905,7 +1906,7 @@ const patchActive = (root, fn) => {
 // exclusion exists to prevent.
 {
   const repo = tempRepo();
-  gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('learning-p9-x', 'Learning P9: x'), '--parent', 'learning'], { input: BODY });
   gtg(repo, [...HANDOFF_ARGS('real-project', 'Real Project'), '--parent', 'gtg'], { input: BODY });
   const r = gtg(repo, ['list']);
   assert.equal(r.status, 0, r.stderr);
@@ -1916,26 +1917,25 @@ const patchActive = (root, fn) => {
 // --- 48. extension entries stay addressable by slug for explicit shelving ---
 {
   const repo = tempRepo();
-  gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
-  const r = gtg(repo, ['back', 'issues-p9-x', '--no-list']);
+  gtg(repo, [...HANDOFF_ARGS('learning-p9-x', 'Learning P9: x'), '--parent', 'learning'], { input: BODY });
+  const r = gtg(repo, ['back', 'learning-p9-x', '--no-list']);
   assert.equal(r.status, 0, r.stderr);
   const bl = backlog(repo);
-  assert.ok(bl.some((e) => e.slug === 'issues-p9-x'),
+  assert.ok(bl.some((e) => e.slug === 'learning-p9-x'),
     'the extension entry was not explicitly shelved by slug');
   assert.equal(active(repo).length, 0, 'the shelved entry is gone from active');
   console.log('ok 48 - explicit shelving reaches extension entries');
 }
 
 // --- 49. ctx.ownEntries hands an extension both its shelves, and only its own ---
-// The interface the issues and learn extensions read their own entries through. A
-// user extension stands in for them here so this tests the ctx rather than either
-// extension's output.
+// The interface the learn extension reads its own entries through. A user extension
+// overrides it here so this tests the ctx rather than the extension's output.
 {
   const repo = tempRepo();
-  gtg(repo, [...HANDOFF_ARGS('issues-p9-x', 'Issues P9: x'), '--parent', 'issues'], { input: BODY });
+  gtg(repo, [...HANDOFF_ARGS('learning-p9-x', 'Learning P9: x'), '--parent', 'learning'], { input: BODY });
   gtg(repo, [...HANDOFF_ARGS('real-project', 'Real Project'), '--parent', 'gtg'], { input: BODY });
-  gtg(repo, ['backlog', '--project', 'Issues P8: y', '--slug', 'issues-p8-y',
-    '--next', 'TBD', '--parent', 'issues'], { input: '## The Idea\nsomething\n' });
+  gtg(repo, ['backlog', '--project', 'Learning P8: y', '--slug', 'learning-p8-y',
+    '--next', 'TBD', '--parent', 'learning'], { input: '## The Idea\nsomething\n' });
   gtg(repo, ['backlog', '--project', 'Parked Idea', '--slug', 'parked-idea',
     '--next', 'TBD'], { input: '## The Idea\nsomething\n' });
   const probe = 'export default async ({ ownEntries }) => {\n'
@@ -1943,10 +1943,10 @@ const patchActive = (root, fn) => {
     + '  console.log(JSON.stringify({ active: active.map((e) => e.slug), shelved: shelved.map((e) => e.slug) }));\n'
     + '};\n';
   mkdirSync(join(repo, '.gtg/commands'), { recursive: true });
-  writeFileSync(join(repo, '.gtg/commands/issues.mjs'), probe);
-  const r = gtg(repo, ['issues']);
+  writeFileSync(join(repo, '.gtg/commands/learn.mjs'), probe);
+  const r = gtg(repo, ['learn']);
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(JSON.parse(r.stdout.trim()), { active: ['issues-p9-x'], shelved: ['issues-p8-y'] },
+  assert.deepEqual(JSON.parse(r.stdout.trim()), { active: ['learning-p9-x'], shelved: ['learning-p8-y'] },
     'ownEntries must return only the calling command\'s namespace, from BOTH stores');
   // A command that owns no namespace gets two empty arrays, never undefined.
   writeFileSync(join(repo, '.gtg/commands/nomad.mjs'), probe);
@@ -1968,21 +1968,21 @@ const patchActive = (root, fn) => {
   const repo = tempRepo();
   gtg(repo, [...HANDOFF_ARGS('alpha-widget', 'Alpha Widget'), '--parent', 'gtg'], { input: BODY });
   gtg(repo, [...HANDOFF_ARGS('beta-widget', 'Beta Widget'), '--parent', 'gtg'], { input: BODY });
-  gtg(repo, [...HANDOFF_ARGS('issues-p9-widget', 'Issues P9: widget'), '--parent', 'issues'],
+  gtg(repo, [...HANDOFF_ARGS('learning-p9-widget', 'Learning P9: widget'), '--parent', 'learning'],
     { input: BODY });
 
   // Exact slug, the form the reuse probe and every other verb use.
-  const rs = gtg(repo, ['list', 'issues-p9-widget']);
+  const rs = gtg(repo, ['list', 'learning-p9-widget']);
   assert.equal(rs.status, 0, rs.stderr);
-  assert.ok(rs.stdout.includes('Issues P9: widget'),
+  assert.ok(rs.stdout.includes('Learning P9: widget'),
     'an exact-slug query must find an extension entry');
-  assert.match(rs.stdout, /1 active gtg project\b.*matching 'issues-p9-widget'/,
+  assert.match(rs.stdout, /1 active gtg project\b.*matching 'learning-p9-widget'/,
     'a queried extension entry must be counted in the header it appears under');
 
   // Fuzzy project name, the form the exit procedure actually probes with.
-  const rn = gtg(repo, ['list', 'Issues P9']);
+  const rn = gtg(repo, ['list', 'Learning P9']);
   assert.equal(rn.status, 0, rn.stderr);
-  assert.ok(rn.stdout.includes('Issues P9: widget'),
+  assert.ok(rn.stdout.includes('Learning P9: widget'),
     'a project-name query must find an extension entry');
 
   // A query matching both kinds: real entries keep their canonical numbers, the extension
@@ -1991,15 +1991,15 @@ const patchActive = (root, fn) => {
   assert.equal(rq.status, 0, rq.stderr);
   assert.match(rq.stdout, /1\. Alpha Widget/, 'a queried real entry keeps its canonical number');
   assert.match(rq.stdout, /2\. Beta Widget/, 'a queried real entry keeps its canonical number');
-  assert.match(rq.stdout, /issues-p9-widget: Issues P9: widget/,
+  assert.match(rq.stdout, /learning-p9-widget: Learning P9: widget/,
     'a queried extension entry must be labelled by slug');
-  assert.doesNotMatch(rq.stdout, /\d+\. Issues P9: widget/,
+  assert.doesNotMatch(rq.stdout, /\d+\. Learning P9: widget/,
     'a queried extension entry must NOT carry a row number, it would address a different row');
 
   // The bare listing is unchanged: still hidden, still numbered the same way.
   const rb = gtg(repo, ['list']);
   assert.equal(rb.status, 0, rb.stderr);
-  assert.ok(!rb.stdout.includes('Issues P9: widget'), 'the bare listing must still hide it');
+  assert.ok(!rb.stdout.includes('Learning P9: widget'), 'the bare listing must still hide it');
   assert.match(rb.stdout, /1\. Alpha Widget/, 'bare and queried numbering must agree');
   assert.match(rb.stdout, /2\. Beta Widget/, 'bare and queried numbering must agree');
 
@@ -2010,13 +2010,13 @@ const patchActive = (root, fn) => {
     'back <n> must target the row both listings numbered <n>');
 
   // And an extension entry stays reachable by slug, which is what its label tells you to use.
-  const rbe = gtg(repo, ['back', 'issues-p9-widget', '--no-list']);
+  const rbe = gtg(repo, ['back', 'learning-p9-widget', '--no-list']);
   assert.equal(rbe.status, 0, rbe.stderr);
-  assert.match(rbe.stdout, /Parked: Issues P9: widget/,
+  assert.match(rbe.stdout, /Parked: Learning P9: widget/,
     'an extension entry must stay reachable by slug');
   // The hint on that same line must name something that resolves. sortByProject is filtered, so
   // indexOf is -1 and the number would be a 0 that `gtg active` cannot resolve.
-  assert.match(rbe.stdout, /Bring back: gtg active issues-p9-widget/,
+  assert.match(rbe.stdout, /Bring back: gtg active learning-p9-widget/,
     'the bring-back hint must name the slug, not the 0 the filtered order yields');
   assert.doesNotMatch(rbe.stdout, /gtg active 0\b/, 'a 0 hint is not a resolvable target');
   console.log('ok 50 - an explicit query finds an extension entry, the bare listing hides it');
@@ -2029,10 +2029,10 @@ const patchActive = (root, fn) => {
 // departure mints the duplicate case 50 exists to prevent.
 {
   const repo = tempRepo();
-  gtg(repo, [...HANDOFF_ARGS('issues-p9-shelved', 'Issues P9: shelved'), '--parent', 'issues'],
+  gtg(repo, [...HANDOFF_ARGS('learning-p9-shelved', 'Learning P9: shelved'), '--parent', 'learning'],
     { input: BODY });
   gtg(repo, [...HANDOFF_ARGS('real-shelved', 'Real Shelved'), '--parent', 'gtg'], { input: BODY });
-  assert.equal(gtg(repo, ['back', 'issues-p9-shelved', '--no-list']).status, 0);
+  assert.equal(gtg(repo, ['back', 'learning-p9-shelved', '--no-list']).status, 0);
   assert.equal(gtg(repo, ['back', 'real-shelved', '--no-list']).status, 0);
   const bl = backlog(repo);
   assert.equal(bl.length, 2, 'setup: both entries must be on the shelf');            // GUARD
@@ -2043,22 +2043,22 @@ const patchActive = (root, fn) => {
   // project name, querying by name asserts on the slug. Asserting on the echoed one would pass
   // with no fix at all.
   // FAIL-PRE-FIX: exact slug, the form the reuse probe uses.
-  const rs = gtg(repo, ['list', 'issues-p9-shelved']);
+  const rs = gtg(repo, ['list', 'learning-p9-shelved']);
   assert.equal(rs.status, 0, rs.stderr);
-  assert.ok(rs.stdout.includes('Issues P9: shelved'),
+  assert.ok(rs.stdout.includes('Learning P9: shelved'),
     'a targeted query must reach a shelved extension entry');
-  assert.match(rs.stdout, /gtg active issues-p9-shelved/,
+  assert.match(rs.stdout, /gtg active learning-p9-shelved/,
     'the shelved line must name the command that brings it back');
   // FAIL-PRE-FIX: fuzzy project name, the form the exit procedure probes with.
-  const rn = gtg(repo, ['list', 'Issues P9']);
+  const rn = gtg(repo, ['list', 'Learning P9']);
   assert.equal(rn.status, 0, rn.stderr);
-  assert.ok(rn.stdout.includes('issues-p9-shelved'),
+  assert.ok(rn.stdout.includes('learning-p9-shelved'),
     'a project-name query must reach a shelved extension entry');
 
   // GUARD: the bare listing is still the decluttered view and says nothing is active.
   const rb = gtg(repo, ['list']);
   assert.match(rb.stdout, /No active gtg projects/, 'the bare listing must not gain shelved rows');
-  assert.ok(!rb.stdout.includes('issues-p9-shelved'), 'the bare listing must not name it');
+  assert.ok(!rb.stdout.includes('learning-p9-shelved'), 'the bare listing must not name it');
 
   // GUARD, and the scope boundary: a shelved NORMAL project is still invisible to a query. That
   // hole predates the extension model and widening it is a documented-behaviour change.
@@ -2072,24 +2072,24 @@ const patchActive = (root, fn) => {
   // SKILL.md's "reuse the slug if EXACTLY ONE matches" rule does damage: two matches look like
   // one, and it is the wrong one. Live example: `gtg list Issues` matched an active package plus
   // two shelved ones and printed only the active rows.
-  gtg(repo, [...HANDOFF_ARGS('issues-tracker-rewrite', 'Issues Tracker Rewrite'), '--parent', 'gtg'],
+  gtg(repo, [...HANDOFF_ARGS('learning-tracker-rewrite', 'Learning Tracker Rewrite'), '--parent', 'gtg'],
     { input: BODY });
-  const rc = gtg(repo, ['list', 'Issues']);
+  const rc = gtg(repo, ['list', 'Learning']);
   assert.equal(rc.status, 0, rc.stderr);
   // GUARD: the active match still renders as a numbered row on the normal path.
-  assert.match(rc.stdout, /1\. Issues Tracker Rewrite/,
+  assert.match(rc.stdout, /1\. Learning Tracker Rewrite/,
     'the active match must still render as a numbered row');
   // FAIL-PRE-FIX: the shelved hit must survive a query that also matched active work.
-  assert.ok(rc.stdout.includes('Issues P9: shelved'),
+  assert.ok(rc.stdout.includes('Learning P9: shelved'),
     'a shelved extension entry was dropped because the query also matched active work');
-  assert.match(rc.stdout, /gtg active issues-p9-shelved/,
+  assert.match(rc.stdout, /gtg active learning-p9-shelved/,
     'the shelved line must still name its bring-back command on the non-empty path');
 
   // GUARD: `activate` resolves by slug and always did, so this only pins that the command the
   // shelved line advertises is a real one.
-  const ra = gtg(repo, ['active', 'issues-p9-shelved', '--no-list']);
+  const ra = gtg(repo, ['active', 'learning-p9-shelved', '--no-list']);
   assert.equal(ra.status, 0, ra.stderr);
-  assert.match(ra.stdout, /Activated: Issues P9: shelved/);
+  assert.match(ra.stdout, /Activated: Learning P9: shelved/);
   console.log('ok 51 - a targeted query reaches a shelved extension entry');
 }
 
@@ -2100,24 +2100,24 @@ const patchActive = (root, fn) => {
 // asserting a shape, so it cannot pass while the advice is unrunnable.
 {
   const repo = tempRepo();
-  gtg(repo, [...HANDOFF_ARGS('issues-p9-round', 'Issues P9: round'), '--parent', 'issues'],
+  gtg(repo, [...HANDOFF_ARGS('learning-p9-round', 'Learning P9: round'), '--parent', 'learning'],
     { input: BODY });
 
-  const rb = gtg(repo, ['back', 'issues-p9-round', '--no-list']);
+  const rb = gtg(repo, ['back', 'learning-p9-round', '--no-list']);
   assert.equal(rb.status, 0, rb.stderr);
   const backHint = /Bring back: gtg (\S+ \S+)/.exec(rb.stdout);
   assert.ok(backHint, 'back must print a bring-back hint');                          // GUARD
   // FAIL-PRE-FIX: pre-fix this runs `gtg active 0` and exits 2.
   const ra = gtg(repo, [...backHint[1].split(' '), '--no-list']);
   assert.equal(ra.status, 0, `the printed hint 'gtg ${backHint[1]}' failed: ${ra.stderr}`);
-  assert.match(ra.stdout, /Activated: Issues P9: round/);
+  assert.match(ra.stdout, /Activated: Learning P9: round/);
 
   const activeHint = /Shelve again: gtg (\S+ \S+)/.exec(ra.stdout);
   assert.ok(activeHint, 'active must print a shelve-again hint');                    // GUARD
   // FAIL-PRE-FIX: the mirror-image bug in activate(), 'gtg back 0'.
   const rb2 = gtg(repo, [...activeHint[1].split(' '), '--no-list']);
   assert.equal(rb2.status, 0, `the printed hint 'gtg ${activeHint[1]}' failed: ${rb2.stderr}`);
-  assert.match(rb2.stdout, /Parked: Issues P9: round/);
+  assert.match(rb2.stdout, /Parked: Learning P9: round/);
   console.log('ok 52 - the hints back and active print are runnable for an extension entry');
 }
 
@@ -2449,10 +2449,10 @@ export default async (ctx) => {
   assert.equal(active(dir).length, 2, 'ambiguity must not consume');
   r = gtg(dir, ['resume', 'alpha-two']);
   assert.equal(r.status, 0, 'an exact slug is never ambiguous');
-  gtg(dir, HANDOFF_ARGS('issues', 'Issues Triage'), { input: BODY });
-  r = gtg(dir, ['resume', 'issues']);
+  gtg(dir, HANDOFF_ARGS('learn', 'Learn Triage'), { input: BODY });
+  r = gtg(dir, ['resume', 'learn']);
   assert.equal(r.status, 1, 'project + bundled command of the same name must ask');
-  assert.match(r.stdout, /'issues' is both a project and a command:\n  1\. Issues Triage \(issues\)[\s\S]*2\. run the `issues` command/);
+  assert.match(r.stdout, /'learn' is both a project and a command:\n  1\. Learn Triage \(learn\)[\s\S]*2\. run the `learn` command/);
   r = gtg(dir, ['resume', 'stats']);
   assert.equal(r.status, 2);
   assert.match(r.stderr, /'stats' is a command - run gtg stats/);

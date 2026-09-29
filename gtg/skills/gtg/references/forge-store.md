@@ -69,7 +69,7 @@ If the forge write fails during `handoff`, the body (read from stdin, so otherwi
 
 | Behaviour | Commands |
 |---|---|
-| Read and write the forge instead of files | `list`, bare `gtg`, `backlog` (list and park), `handoff`, `resume`, `back`, `active`, `keep`, `complete`, `remove`/`rm`/`prune`, `supersede`, `rename`, `unparent`, the `REVIEW:` line, and the `issues`/`learn` extension listings (they read through `ownEntries`) |
+| Read and write the forge instead of files | `list`, bare `gtg`, `backlog` (list and park), `handoff`, `resume`, `back`, `active`, `keep`, `complete`, `remove`/`rm`/`prune`, `supersede`, `rename`, `unparent`, the `REVIEW:` line, and the `learn` extension listing (they read through `ownEntries`) |
 | Refused with a pointer to the store repo's history | `log`, `undo`, `stats`, `report`. They read git history of the file store, which the forge store does not write |
 | Unchanged | `help`, `progress` (still files under `docs/handoffs/progress/`), `--wip`, the after-handoff and after-resume hooks (same ctx, `file` is null) |
 
