@@ -1,6 +1,6 @@
 {
   "name": "logical-research",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Research once, keep it usable. Reads a question's sources, or a whole channel, book or doc set, in full, and writes context you can paste into a model later, with every claim graded and traced. Extend it with reading angles you reuse in .lr/angles/.",
   "author": { "name": "Nathan Wong" },
   "skills": "./skills/",
