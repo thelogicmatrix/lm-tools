@@ -98,6 +98,21 @@ def save_seen(ident, seen):
     _atomic_write(store_dir(ident) / "seen.json", json.dumps(sorted(seen)))
 
 
+# The header cache (#50). A message's headers never change while its mailbox keeps the
+# same UIDVALIDITY, so a pull reuses every header it already has and fetches only the
+# rest. In memory the headers are bytes, on disk latin-1 text, which maps every byte.
+def load_header_cache(ident):
+    c = _load_json(store_dir(ident) / "headers.json", {})
+    return dict(c, headers={u: h.encode("latin-1")
+                            for u, h in c.get("headers", {}).items()})
+
+
+def save_header_cache(ident, cache):
+    _atomic_write(store_dir(ident) / "headers.json", json.dumps(dict(
+        cache, headers={u: h.decode("latin-1")
+                        for u, h in cache.get("headers", {}).items()})))
+
+
 HEADER_FIELDS = ("(BODY.PEEK[HEADER.FIELDS "
                  "(FROM TO SUBJECT DATE MESSAGE-ID REFERENCES IN-REPLY-TO)])")
 
@@ -155,6 +170,13 @@ SNIPPET_CHARS = 2000
 # BODYSTRUCTURE and fetch the one part if that shows up.
 BODY_FETCH = "(BODY.PEEK[]<0.262144>)"
 
+# UIDs per FETCH. 500 seven-digit UIDs is a 4 KB command line, inside the 8 KB RFC 7162
+# asks a client to stay under. A snippet is at most 256 KB, so a body chunk is at most
+# about 50 MB in memory. ponytail: fixed sizes. Adapt them if a server refuses a line.
+HEADER_CHUNK = 500
+BODY_CHUNK = 200
+UID_RE = re.compile(rb"\bUID (\d+)")
+
 
 def html_to_text(html):
     # ponytail: regex reduction, no HTML parser. Upgrade if real mail arrives unreadable
@@ -194,7 +216,39 @@ def decode_snippet(raw_bytes):
     return " ".join(text.split())[:SNIPPET_CHARS]
 
 
-def fetch_window(M, mailbox, days, with_snippets=False, from_addr=None):
+def _by_uid(data):
+    """{uid: literal bytes} from one UID FETCH answer. A server may put the UID before
+    the literal or after it, so both halves of each item are read, and items are keyed
+    on their UID, never on their position or sequence number."""
+    out, pending = {}, None
+    for part in data or []:
+        if isinstance(part, tuple):
+            m = UID_RE.search(part[0])
+            if m:
+                out[m.group(1).decode()] = part[1]
+            pending = None if m else part[1]
+        elif pending is not None and isinstance(part, bytes):
+            m = UID_RE.search(part)
+            if m:
+                out[m.group(1).decode()] = pending
+            pending = None
+    return out
+
+
+def _fetch_chunks(M, uids, spec, size, into, label):
+    """UID FETCH spec over uids, `size` at a time, into the dict `into` as each chunk
+    lands. Filled in place, so a connection that dies mid-pull keeps every chunk that
+    arrived. label, when set, prints one progress line per chunk to stderr."""
+    for i in range(0, len(uids), size):
+        typ, d = M.uid("FETCH", ",".join(uids[i:i + size]), spec)
+        if typ == "OK":
+            into.update(_by_uid(d))
+        if label:
+            print(f"postman inbox: {label}: {min(i + size, len(uids))}/{len(uids)}",
+                  file=sys.stderr, flush=True)
+
+
+def fetch_window(M, mailbox, days, with_snippets=False, from_addr=None, cache=None):
     """Every message in mailbox since <days> ago, readonly.
 
     Raises InboxError when the mailbox is broken (messages found, none fetchable) -
@@ -202,14 +256,30 @@ def fetch_window(M, mailbox, days, with_snippets=False, from_addr=None):
     lie this mode exists to never tell. A genuinely empty window returns [].
 
     from_addr narrows the SEARCH server-side instead of fetching the window and
-    filtering it here. That is not a nicety. The loop below is one round trip per
-    UID, so a 12,501 message window was headed for over two hours on 2026-08-15
-    when the actual question was "what has this one counterparty sent me" and the
+    filtering it here. That is not a nicety. The loop here was one round trip per
+    UID until #50, so a 12,501 message window was headed for over two hours on
+    2026-08-15 when the actual question was "what has this one counterparty sent me" and the
     answer was a handful of messages. SEARCH FROM cuts the UID list before FETCH.
+
+    Headers come HEADER_CHUNK and snippets BODY_CHUNK to a FETCH, not one FETCH per
+    message (#50). cache is the identity's header cache (load_header_cache), updated in
+    place, so a pull that dies keeps what it fetched and the rerun asks only for the
+    rest. A full window trims the cache to itself, a --from slice only adds to it.
     """
     typ, _ = M.select(mailbox, readonly=True)
     if typ != "OK":
         raise InboxError(f"SELECT {mailbox} failed: {typ}")
+    headers = {}
+    if cache is not None:
+        validity = (M.response("UIDVALIDITY")[1] or [None])[-1]
+        validity = validity.decode() if isinstance(validity, bytes) else None
+        if validity is None:
+            cache.clear()               # nothing proves a cached UID is the same message
+        else:
+            if (cache.get("mailbox"), cache.get("uidvalidity")) != (mailbox, validity):
+                cache.clear()
+                cache.update(mailbox=mailbox, uidvalidity=validity, headers={})
+            headers = cache["headers"]
     stamp = (date.today() - timedelta(days=days)).strftime("%d-%b-%Y")
     # UID commands throughout, never sequence numbers. A sequence number is valid only
     # until the next EXPUNGE: an untagged expunge mid-loop renumbers every higher
@@ -222,32 +292,37 @@ def fetch_window(M, mailbox, days, with_snippets=False, from_addr=None):
     typ, data = M.uid("SEARCH", *crit)
     if typ != "OK":
         raise InboxError(f"SEARCH {mailbox} failed: {typ}")
-    uids = (data[0] or b"").split()
-    out, skipped = [], 0
+    uids = [u.decode() for u in (data[0] or b"").split()]
+    todo = [u for u in uids if u not in headers]
     # A silent run looks identical to a hung one. This measured 3m14s on a 721 message
     # mailbox printing nothing at all, and was killed at 100s and 120s on the assumption
     # it had hung - one of those kills produced a wrong "dead credential" diagnosis that
     # ran for most of a session. stderr, so it never contaminates the --json stream on
     # stdout, and only on a window big enough to be slow, so the tests stay quiet.
-    loud = len(uids) >= PROGRESS_EVERY
+    loud = len(todo) >= PROGRESS_EVERY
     if loud:
-        print(f"postman inbox: {mailbox}: {len(uids)} message(s) to fetch",
-              file=sys.stderr, flush=True)
-    for n, uid in enumerate(uids, 1):
-        if loud and (n % PROGRESS_EVERY == 0 or n == len(uids)):
-            print(f"postman inbox: {mailbox}: {n}/{len(uids)}",
-                  file=sys.stderr, flush=True)
-        typ, d = M.uid("FETCH", uid, HEADER_FIELDS)
-        if typ != "OK" or not d or not isinstance(d[0], tuple):
-            skipped += 1
+        print(f"postman inbox: {mailbox}: {len(todo)} message(s) to fetch, "
+              f"{len(uids) - len(todo)} cached", file=sys.stderr, flush=True)
+    _fetch_chunks(M, todo, HEADER_FIELDS, HEADER_CHUNK, headers,
+                  loud and f"{mailbox}: headers")
+    bodies = {}
+    if with_snippets:
+        _fetch_chunks(M, uids, BODY_FETCH, BODY_CHUNK, bodies,
+                      len(uids) >= PROGRESS_EVERY and f"{mailbox}: snippets")
+    out = []
+    for uid in uids:
+        if uid not in headers:
             continue
-        msg = parse_message(d[0][1])
-        msg["uid"] = uid.decode()
+        msg = parse_message(headers[uid])
+        msg["uid"] = uid
         if with_snippets:
-            btyp, braw = M.uid("FETCH", uid, BODY_FETCH)
-            msg["snippet"] = decode_snippet(braw[0][1]) if (
-                btyp == "OK" and braw and isinstance(braw[0], tuple)) else ""
+            msg["snippet"] = decode_snippet(bodies.get(uid))
         out.append(msg)
+    skipped = len(uids) - len(out)
+    if cache is not None and not from_addr:
+        window = set(uids)
+        for uid in [u for u in headers if u not in window]:
+            del headers[uid]
     if uids and not out:
         raise InboxError(
             f"{mailbox}: {len(uids)} message(s) found, none fetchable - "
@@ -623,7 +698,7 @@ def inbox_main(argv):
     ap.add_argument("--from", dest="from_addr", metavar="ADDR",
                     help="narrow the IMAP SEARCH to one sender address or domain, "
                          "server-side. Use it for 'what has X sent me' on a big "
-                         "mailbox: the full window costs one round trip per message.")
+                         "mailbox: it fetches only that sender's messages.")
     args = ap.parse_args(argv)
     ident = postman.resolve_identity(args.identity, None)
     if not args.as_json:
@@ -638,63 +713,97 @@ def inbox_main(argv):
         return 2                # 2 = credentials, 1 = IMAP: a caller keys off this
     registry = load_registry(ident)
     sender = ident["sender"].lower()
-    try:
-        with postman.imap_session(pw, ident["sender"], ident.get("imap_host")) as M:
-            all_mail = postman.special_folder(M, "\\All")
-            if args.as_json:
-                # All Mail, not INBOX, for the same reason the render path uses it: an
-                # archived thread has left INBOX entirely and archiving is normal
-                # behaviour, so an INBOX read cannot tell "they never wrote back" from
-                # "I archived it". Measured 2026-08-13: All Mail is a strict superset
-                # of INBOX and of Sent (0 ids in either that it does not carry), so the
-                # separate SENT fetch it used to need is now redundant.
-                # Only inbound is emitted - All Mail carries every sent message too, and
-                # the consumer's triage keys on the sender, so our own outbound would arrive as
-                # threads that can never match. No store is written: a sweep from the consumer
-                # must not eat inbox.md's 'new' markers.
-                msgs = fetch_window(M, all_mail, args.days, with_snippets=True,
-                                    from_addr=args.from_addr)
-                inbound = [m for m in msgs if m["from_addr"] != sender]
-                own = [m for m in msgs if m["from_addr"] == sender]
-                attribute(inbound, own, registry)
-                json.dump(to_json_stream(inbound), sys.stdout)
-                return 0
-            msgs = fetch_window(M, all_mail, args.days,
-                                from_addr=args.from_addr)
-            own = [m for m in msgs if m["from_addr"] == sender]
+    cache = load_header_cache(ident)
+    all_mail = postman.ALL_MAIL                 # pull() replaces it with what LIST names
+
+    def pull(M):
+        """Everything that needs the mailbox. None once --json has printed."""
+        nonlocal all_mail
+        all_mail = postman.special_folder(M, "\\All")
+        if args.as_json:
+            # All Mail, not INBOX, for the same reason the render path uses it: an
+            # archived thread has left INBOX entirely and archiving is normal
+            # behaviour, so an INBOX read cannot tell "they never wrote back" from
+            # "I archived it". Measured 2026-08-13: All Mail is a strict superset
+            # of INBOX and of Sent (0 ids in either that it does not carry), so the
+            # separate SENT fetch it used to need is now redundant.
+            # Only inbound is emitted - All Mail carries every sent message too, and
+            # the consumer's triage keys on the sender, so our own outbound would arrive as
+            # threads that can never match. Neither inbox.md nor seen.json is written: a
+            # sweep from the consumer must not eat inbox.md's 'new' markers. The header
+            # cache is, because it carries no 'new' state.
+            msgs = fetch_window(M, all_mail, args.days, with_snippets=True,
+                                from_addr=args.from_addr, cache=cache)
             inbound = [m for m in msgs if m["from_addr"] != sender]
-            counts = attribute(inbound, own, registry)
-            seen = load_seen(ident)
-            new_ids = {m["message_id"] for m in inbound
-                       if m["message_id"] and m["message_id"] not in seen}
-            threads = group_threads(own, inbound)
-            # full body only for each rendered thread's latest inbound message
-            for t in threads:
-                li = t["latest_inbound"]
-                fresh = any(m["message_id"] in new_ids
-                            for m in t["msgs"] if m.get("bucket"))
-                # a --from slice is one sender's mail and is small by construction,
-                # and it is asked for precisely to READ it. The 800-char cap that
-                # keeps a full-window pull skimmable truncates the one message the
-                # slice was run for, so the caps lift here and only here. Every
-                # message in the thread, not just the latest: the answer to "what
-                # did they say about X" is regularly three replies up.
-                if args.from_addr:
-                    for m in t["msgs"]:
-                        if m.get("bucket"):
-                            m["atts"] = []
-                            m["fence"] = fetch_fence_text(
-                                M, m["uid"], cap_lines=400, cap_chars=20000,
-                                att_dir=args.att_dir, att_prefix=_att_prefix(m),
-                                atts_out=m["atts"])
-                elif li is not None and (fresh or args.show_all):
-                    li["atts"] = []
-                    li["fence"] = fetch_fence_text(
-                        M, li["uid"], att_dir=args.att_dir,
-                        att_prefix=_att_prefix(li), atts_out=li["atts"])
+            own = [m for m in msgs if m["from_addr"] == sender]
+            attribute(inbound, own, registry)
+            json.dump(to_json_stream(inbound), sys.stdout)
+            return None
+        msgs = fetch_window(M, all_mail, args.days,
+                            from_addr=args.from_addr, cache=cache)
+        own = [m for m in msgs if m["from_addr"] == sender]
+        inbound = [m for m in msgs if m["from_addr"] != sender]
+        counts = attribute(inbound, own, registry)
+        seen = load_seen(ident)
+        new_ids = {m["message_id"] for m in inbound
+                   if m["message_id"] and m["message_id"] not in seen}
+        threads = group_threads(own, inbound)
+        # full body only for each rendered thread's latest inbound message, and only
+        # while render_inbox still has a fence to give: past FENCE_LIMIT a thread
+        # renders without one, so fetching its body was a round trip thrown away
+        rendered = 0
+        for t in threads:
+            li = t["latest_inbound"]
+            fresh = any(m["message_id"] in new_ids
+                        for m in t["msgs"] if m.get("bucket"))
+            # a --from slice is one sender's mail and is small by construction,
+            # and it is asked for precisely to READ it. The 800-char cap that
+            # keeps a full-window pull skimmable truncates the one message the
+            # slice was run for, so the caps lift here and only here. Every
+            # message in the thread, not just the latest: the answer to "what
+            # did they say about X" is regularly three replies up.
+            if args.from_addr:
+                for m in t["msgs"]:
+                    if m.get("bucket"):
+                        m["atts"] = []
+                        m["fence"] = fetch_fence_text(
+                            M, m["uid"], cap_lines=400, cap_chars=20000,
+                            att_dir=args.att_dir, att_prefix=_att_prefix(m),
+                            atts_out=m["atts"])
+            elif fresh or args.show_all:
+                rendered += 1
+                if li is None or rendered > FENCE_LIMIT:
+                    continue
+                li["atts"] = []
+                li["fence"] = fetch_fence_text(
+                    M, li["uid"], att_dir=args.att_dir,
+                    att_prefix=_att_prefix(li), atts_out=li["atts"])
+        return msgs, own, inbound, counts, seen, new_ids, threads
+
+    try:
+        # One reconnect on a dropped or stalled connection (#50). Reads are safe to
+        # repeat, and the header cache already holds every chunk that arrived, so the
+        # second session asks only for the UIDs the first did not get.
+        for attempt in (1, 2):
+            try:
+                with postman.imap_session(pw, ident["sender"],
+                                          ident.get("imap_host")) as M:
+                    pulled = pull(M)
+                break
+            except (imaplib.IMAP4.abort, OSError) as e:
+                if attempt == 2:
+                    raise
+                print(f"postman inbox: {type(e).__name__}: {e}. Reconnecting once, "
+                      f"{len(cache.get('headers', {}))} header(s) kept.",
+                      file=sys.stderr, flush=True)
+            finally:
+                save_header_cache(ident, cache)
     except (imaplib.IMAP4.error, InboxError, OSError) as e:
         print(f"postman inbox: {e}", file=sys.stderr)
         return 1
+    if pulled is None:
+        return 0
+    msgs, own, inbound, counts, seen, new_ids, threads = pulled
     new_entries = suggest_registrations(inbound, registry)
     if new_entries:
         save_registry(ident, registry | new_entries)
@@ -756,9 +865,9 @@ def search_mail(M, query, limit=SEARCH_LIMIT, out=sys.stdout):
     fetch the hits and nothing else. Prints one Date | From | Subject line per hit,
     each URL in its plain and html parts under it, and returns the total hit count.
 
-    This is what "find the link in my mailbox" needs. A window pull is one round trip
-    per message in the window, and a 400-day pull for one booking link was still
-    running when it was killed on 2026-09-24. The same answer came back in seconds
+    This is what "find the link in my mailbox" needs. A window pull fetches every
+    message in the window, and a 400-day pull for one booking link (one round trip per
+    message at the time) was still running when it was killed on 2026-09-24. The same answer came back in seconds
     from X-GM-RAW (issue #23). Readonly SELECT, BODY.PEEK: nothing is marked read."""
     all_mail = postman.special_folder(M, "\\All")
     typ, _ = M.select(all_mail, readonly=True)
@@ -905,8 +1014,8 @@ def selftest():
                 return ("NO", None)
             spec = args[-1]
             if "HEADER" in spec:
-                return ("OK", [(b"41", raw)])
-            return ("OK", [(b"41", self.body)])
+                return ("OK", [(b"1 (UID 41 BODY[HEADER] {99}", raw), b")"])
+            return ("OK", [(b"1 (UID 41 BODY[] {99}", self.body), b")"])
 
     M = FakeIMAP()
     got = fetch_window(M, "INBOX", INBOX_DAYS, with_snippets=True)
@@ -935,7 +1044,7 @@ def selftest():
             rng = re.search(r"<(\d+)\.(\d+)>", spec)
             if rng:
                 data = data[int(rng[1]):int(rng[1]) + int(rng[2])]
-            return ("OK", [(b"7", data)])
+            return ("OK", [(b"1 (UID 7 BODY[] {99}", data), b")"])
 
     # an html-only mail whose head and inline CSS run past the old 2000-byte window,
     # the shape that reduced a real rejection to 12 characters of markup
@@ -1351,4 +1460,145 @@ small
         assert ident["name"] in str(e), str(e)
     else:
         raise AssertionError("unknown identity did not raise")
+
+    # #50: the window pull. Batched UID FETCH, a header cache keyed by (UIDVALIDITY,
+    # UID), one reconnect on a dropped connection, and no fence past FENCE_LIMIT.
+    import contextlib
+    import io
+
+    def _hdr(i):
+        return (f"From: Venue {i} <v{i}@venue{i}.example>\r\nTo: ada@example.com\r\n"
+                f"Subject: Dinner {i}\r\nDate: Tue, 01 Sep 2026 09:00:00 +0800\r\n"
+                f"Message-ID: <m{i}@venue{i}.example>\r\n\r\n").encode()
+
+    def _body(i):
+        return _hdr(i) + f"Body {i}".encode()
+
+    class WindowIMAP:
+        """UIDs 1 to n. Answers like a real server: the sequence number is not the UID,
+        the UID sits before the literal on odd UIDs and after it on even ones, and the
+        items come back in the server's order, reversed here. Every FETCH is recorded
+        as (kind, UIDs asked for). The header FETCH numbered drop_at raises abort."""
+
+        def __init__(self, n, validity=b"7", drop_at=None, absent=()):
+            self.n, self.validity, self.drop_at = n, validity, drop_at
+            self.absent, self.fetches = set(absent), []
+
+        def list(self):
+            return ("OK", [])                   # names nothing: the Gmail fallback
+
+        def select(self, mailbox, readonly=False):
+            return ("OK", [str(self.n).encode()])
+
+        def response(self, code):
+            return (code, [self.validity])
+
+        def uid(self, cmd, *args):
+            if cmd == "SEARCH":
+                return ("OK", [" ".join(str(u) for u in range(1, self.n + 1)).encode()])
+            asked = args[0].decode() if isinstance(args[0], bytes) else args[0]
+            spec = args[-1]
+            kind = ("header" if "HEADER" in spec else "snippet" if "<0." in spec
+                    else "fence")
+            self.fetches.append((kind, asked.split(",")))
+            if kind == "header" and self.drop_at == sum(
+                    k == "header" for k, _ in self.fetches):
+                raise imaplib.IMAP4.abort("socket error: EOF")
+            out = []
+            for u in reversed(asked.split(",")):
+                if int(u) in self.absent:
+                    continue
+                data = _hdr(int(u)) if kind == "header" else _body(int(u))
+                seq = int(u) + 1000
+                if int(u) % 2:
+                    out += [(f"{seq} (UID {u} BODY[] {{{len(data)}}}".encode(), data),
+                            b")"]
+                else:
+                    out += [(f"{seq} (BODY[] {{{len(data)}}}".encode(), data),
+                            f" UID {u})".encode()]
+            return ("OK", out)
+
+    def _fw(*a, **k):
+        """fetch_window with its progress lines kept off the selftest's stderr"""
+        with contextlib.redirect_stderr(io.StringIO()):
+            return fetch_window(*a, **k)
+
+    # identical to the serial read, which parsed each message on its own in UID order
+    _M = WindowIMAP(1000)
+    _got = _fw(_M, "INBOX", INBOX_DAYS, with_snippets=True)
+    assert _got == [dict(parse_message(_hdr(i)), uid=str(i),
+                         snippet=decode_snippet(_body(i))) for i in range(1, 1001)]
+    # round trips: the serial pull was 1000 header FETCHes and 1000 snippet FETCHes
+    assert (HEADER_CHUNK, BODY_CHUNK) == (500, 200), (HEADER_CHUNK, BODY_CHUNK)
+    assert [k for k, _ in _M.fetches] == ["header"] * 2 + ["snippet"] * 5, _M.fetches
+    assert [len(u) for _, u in _M.fetches] == [500, 500] + [200] * 5
+    # a message the server leaves out is skipped, never invented
+    with contextlib.redirect_stderr(io.StringIO()) as _err:
+        _got = fetch_window(WindowIMAP(5, absent={3}), "INBOX", INBOX_DAYS)
+    assert [m["uid"] for m in _got] == ["1", "2", "4", "5"], _got
+    assert "skipped 1" in _err.getvalue(), _err.getvalue()
+
+    # the header cache: the second pull asks only for what is new, and returns the same
+    _cache = {}
+    _first = _fw(WindowIMAP(600), "INBOX", INBOX_DAYS, cache=_cache)
+    assert (_cache["uidvalidity"], len(_cache["headers"])) == ("7", 600), _cache.keys()
+    _M = WindowIMAP(610)
+    _again = _fw(_M, "INBOX", INBOX_DAYS, cache=_cache)
+    assert _M.fetches == [("header", [str(u) for u in range(601, 611)])], _M.fetches
+    assert _again[:600] == _first and len(_again) == 610
+    # a new UIDVALIDITY means the UIDs were reassigned: the cache is dropped, not trusted
+    _M = WindowIMAP(610, validity=b"8")
+    _fw(_M, "INBOX", INBOX_DAYS, cache=_cache)
+    assert sum(len(u) for _, u in _M.fetches) == 610 and _cache["uidvalidity"] == "8"
+    # another mailbox is another UID space
+    _M = WindowIMAP(3, validity=b"8")
+    _fw(_M, "Other", INBOX_DAYS, cache=_cache)
+    assert sum(len(u) for _, u in _M.fetches) == 3, _M.fetches
+    # a full window trims the cache to itself, a --from slice only adds
+    _fw(WindowIMAP(610, validity=b"8"), "INBOX", INBOX_DAYS, cache=_cache)
+    _fw(WindowIMAP(5, validity=b"8"), "INBOX", INBOX_DAYS, cache=_cache)
+    assert len(_cache["headers"]) == 5, len(_cache["headers"])
+    _M = WindowIMAP(8, validity=b"8")
+    _fw(_M, "INBOX", INBOX_DAYS, from_addr="v1@venue1.example", cache=_cache)
+    assert len(_cache["headers"]) == 8, len(_cache["headers"])
+    # no UIDVALIDITY from the server: nothing is cached, because nothing proves reuse safe
+    _cache = {}
+    _fw(WindowIMAP(4, validity=None), "INBOX", INBOX_DAYS, cache=_cache)
+    assert not _cache.get("headers"), _cache
+
+    # through inbox_main: the connection drops on the second header chunk, one
+    # reconnect resumes from the cache without asking for a fetched UID again, and
+    # fences stop at FENCE_LIMIT because the rest would render without one
+    _sessions = [WindowIMAP(1200, drop_at=2), WindowIMAP(1200), WindowIMAP(1201)]
+    _used = []
+
+    @contextlib.contextmanager
+    def _fake_session(*a, **k):
+        _used.append(_sessions.pop(0))
+        yield _used[-1]
+    _real_session, postman.imap_session = postman.imap_session, _fake_session
+    _pw_key = postman.pw_env(ident)
+    os.environ[_pw_key] = "x"
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as _err:
+            assert inbox_main([ident["name"]]) == 0, _err.getvalue()
+        assert "Reconnecting once, 500 header(s) kept" in _err.getvalue(), _err.getvalue()
+        _s1, _s2 = ([u for k, us in s.fetches if k == "header" for u in us]
+                    for s in _used)
+        assert _s1 == [str(u) for u in range(1, 1001)], len(_s1)   # the second chunk died
+        assert _s2 == [str(u) for u in range(501, 1201)], _s2[:3]  # 1 to 500 were kept
+        assert sum(k == "fence" for k, _ in _used[1].fetches) == FENCE_LIMIT
+        _md = (store_dir(ident) / "inbox.md").read_text(encoding="utf-8")
+        assert f"TRIMMED: {1200 - FENCE_LIMIT} thread(s)" in _md, _md[:400]
+        assert _md.count("```quoted") == FENCE_LIMIT
+        # the next run reads one new header and fences only the one new thread
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as _err:
+            assert inbox_main([ident["name"]]) == 0, _err.getvalue()
+        assert _used[2].fetches == [("header", ["1201"]), ("fence", ["1201"])], \
+            _used[2].fetches
+    finally:
+        postman.imap_session = _real_session
+        os.environ.pop(_pw_key, None)
     print("inbox selftest: OK")
