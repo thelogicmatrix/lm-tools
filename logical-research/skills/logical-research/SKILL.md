@@ -89,11 +89,20 @@ or delegated.**
 Enumerate everything and get a word count *first*. This decides whether the job is one session
 or several.
 
+Pick a scratch directory outside the repo before the first command, for example
+`$TMPDIR/research-<slug>`, and use it as `<scratch>` in every command here. Files written into a
+shared repo get reported into every session that opens it.
+
 ```bash
 # YouTube channel → full inventory as JSON
+mkdir -p "<scratch>"
 python -m yt_dlp --flat-playlist --dump-single-json --no-warnings \
-  "https://www.youtube.com/channel/<ID>/videos" > channel.json
+  --retries 10 --socket-timeout 30 \
+  "https://www.youtube.com/channel/<ID>/videos" > "<scratch>/channel.json"
 ```
+
+The inventory takes no `--download-archive`. An archive filters flat playlist entries too, so a
+re-run would leave the videos already pulled out of the count.
 
 Then compute item count, total duration, total words, median length.
 
@@ -120,8 +129,15 @@ primary source contradicts. Mislabelling here contaminates everything downstream
 ```bash
 python -m yt_dlp --skip-download --write-subs --write-auto-subs \
   --sub-langs "en.*" --sub-format vtt --write-info-json --sleep-requests 1 \
-  -o "subs/%(playlist_index)02d-%(id)s.%(ext)s" "<channel-url>/videos"
+  --retries 10 --socket-timeout 30 \
+  --download-archive "<scratch>/archive.txt" --force-write-archive \
+  -o "<scratch>/subs/%(playlist_index)02d-%(id)s.%(ext)s" "<channel-url>/videos"
 ```
+
+A killed or stalled pull resumes where it stopped: re-run the same command and it skips every
+video already listed in `<scratch>/archive.txt`. `--socket-timeout` turns a stalled socket into
+a retry instead of a hang. `--force-write-archive` is load-bearing. With `--skip-download`,
+yt-dlp writes nothing to the archive without it, so the re-run would start from zero.
 
 **Books / PDFs** — read directly; chapters are the items. **Podcasts** — as YouTube if hosted
 there, else transcribe. **Docs sites / articles** — fetch one file per page.
