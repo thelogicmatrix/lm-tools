@@ -203,17 +203,20 @@ export const codexEnvelope = (text) => ({
   hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: text },
 });
 
-// ~/.jev.env is the canonical home, shared with jevtools. The match is jevtools/scripts/lib.mjs's:
-// anchored to the line start so a commented old line cannot win, a shell `export` prefix allowed,
-// and one pair of surrounding quotes stripped (left in, they give a 401 on every prompt).
-export function readKey(env = process.env, file = path.join(HOME, '.jev.env')) {
-  if (env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY;
-  try {
-    const m = fs.readFileSync(file, 'utf8')
-      .match(/^\s*(?:export\s+)?OPENROUTER_API_KEY=(.*)$/m);
+// ~/.jev.env is the canonical home, shared with jevtools. The match and the lookup order are
+// jevtools/scripts/lib.mjs's: anchored to the line start so a commented old line cannot win, a shell
+// `export` prefix allowed, one pair of surrounding quotes stripped (left in, they give a 401 on every
+// prompt), and OPENROUTER_KEY_<CONSUMER> (here RUNBOOKS) before the legacy shared OPENROUTER_API_KEY.
+export function readKey(env = process.env, file = path.join(HOME, '.jev.env'), consumer = 'RUNBOOKS') {
+  const own = `OPENROUTER_KEY_${consumer}`;
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch { /* not there, and a missing file is a fallback, never an error */ }
+  for (const name of [own, 'OPENROUTER_API_KEY']) {
+    if (env[name]) return env[name];
+    const m = text.match(new RegExp(`^\\s*(?:export\\s+)?${name}=(.*)$`, 'm'));
     const v = m ? m[1].trim().replace(/^(['"])(.*)\1$/, '$2') : '';
     if (v) return v;
-  } catch { /* not there, and a missing file is a fallback, never an error */ }
+  }
   return null;
 }
 

@@ -49,14 +49,20 @@ export { isMain } from './lib/exit.mjs';
 // with no key has one clear line to say, and an exception from a helper buries it in a stack.
 // The match is anchored to the line start so a commented old line cannot win, allows a shell
 // `export` prefix, and strips one pair of surrounding quotes (left in, they give a 401).
-export function readKey(env = process.env, file = path.join(os.homedir(), '.jev.env')) {
-  if (env.OPENROUTER_API_KEY) return env.OPENROUTER_API_KEY;
-  try {
-    const m = fs.readFileSync(file, 'utf8')
-      .match(/^\s*(?:export\s+)?OPENROUTER_API_KEY=(.*)$/m);
+//
+// Each consumer has its own OpenRouter key so spend can be split per consumer (openrouter-spend.md).
+// OPENROUTER_KEY_<CONSUMER> is read first, env then file, and the legacy shared OPENROUTER_API_KEY
+// only after it, so a stray legacy env var can never take over a consumer's attribution.
+export function readKey(env = process.env, file = path.join(os.homedir(), '.jev.env'), consumer = 'JEVTOOLS') {
+  const own = `OPENROUTER_KEY_${consumer}`;
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch { /* not there, and a missing file is a fallback, never an error */ }
+  for (const name of [own, 'OPENROUTER_API_KEY']) {
+    if (env[name]) return env[name];
+    const m = text.match(new RegExp(`^\\s*(?:export\\s+)?${name}=(.*)$`, 'm'));
     const v = m ? m[1].trim().replace(/^(['"])(.*)\1$/, '$2') : '';
     if (v) return v;
-  } catch { /* not there, and a missing file is a fallback, never an error */ }
+  }
   return null;
 }
 

@@ -331,6 +331,11 @@ test('router selftest', async () => {
       a.ok(readKey({}, kf('suffix', `OLD_${V}=dummy-suffix\n`)) === null, 'a longer name ending in the same text is not the key');
       a.ok(readKey({ [V]: 'dummy-env' }, kf('env', `${V}=dummy-file\n`)) === 'dummy-env', 'the env var takes precedence');
       a.ok(readKey({}, path.join(dir, 'absent')) === null, 'a missing file gives null');
+      const P = 'OPENROUTER_KEY_RUNBOOKS';
+      a.ok(readKey({}, kf('own', `${V}=dummy-legacy\n${P}=dummy-own\n`)) === 'dummy-own', 'the per-consumer line beats the legacy line');
+      a.ok(readKey({ [V]: 'dummy-legacy-env' }, kf('own-file', `${P}=dummy-own-file\n`)) === 'dummy-own-file', 'a per-consumer file line beats a legacy env var');
+      a.ok(readKey({ [P]: 'dummy-own-env' }, kf('own-env', `${P}=dummy-own-file\n`)) === 'dummy-own-env', 'the per-consumer env var beats the file');
+      a.ok(readKey({}, kf('other', `OPENROUTER_KEY_JEVTOOLS=dummy-j\n${V}=dummy-legacy\n`)) === 'dummy-legacy', "another consumer's key is never used");
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   }
 });

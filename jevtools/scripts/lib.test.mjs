@@ -87,6 +87,14 @@ try {
   assert.ok(readKey({ OPENROUTER_API_KEY: 'dummy-env' }, keyFile('env', 'OPENROUTER_API_KEY=dummy-file\n')) === 'dummy-env', 'the env var takes precedence');
   // A missing file is null, never a throw.
   assert.ok(readKey({}, path.join(keyDir, 'absent')) === null, 'a missing file gives null');
+  // Per-consumer names win over the legacy name, in both places, and the env beats the file.
+  const P = 'OPENROUTER_KEY_JEVTOOLS', L = 'OPENROUTER_API_KEY';
+  assert.ok(readKey({}, keyFile('own', `${L}=dummy-legacy\n${P}=dummy-own\n`)) === 'dummy-own', 'the per-consumer line beats the legacy line');
+  assert.ok(readKey({ [L]: 'dummy-legacy-env' }, keyFile('own-file', `${P}=dummy-own-file\n`)) === 'dummy-own-file', 'a per-consumer file line beats a legacy env var');
+  assert.ok(readKey({ [P]: 'dummy-own-env' }, keyFile('own-env', `${P}=dummy-own-file\n`)) === 'dummy-own-env', 'the per-consumer env var beats the file');
+  assert.ok(readKey({}, keyFile('other', `OPENROUTER_KEY_RUNBOOKS=dummy-r\n${L}=dummy-legacy\n`)) === 'dummy-legacy', "another consumer's key is never used");
+  assert.ok(readKey({}, keyFile('named', `OPENROUTER_KEY_RUNBOOKS=dummy-r\n`), 'RUNBOOKS') === 'dummy-r', 'the consumer argument picks the name');
+  assert.ok(readKey({}, keyFile('suffix-own', `X_${P}=dummy-x\n`)) === null, 'a longer name ending in the per-consumer name is not the key');
 } finally {
   fs.rmSync(keyDir, { recursive: true, force: true });
 }
