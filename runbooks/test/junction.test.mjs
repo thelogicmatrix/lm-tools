@@ -21,7 +21,7 @@ function sandbox(t) {
   mkdirSync(dir);
   writeFileSync(join(dir, "deploy.md"), "# Deploy\n**Type:** procedure\n**Purpose:** Ship the Acme scraper to production.\n");
   // No key anywhere, so the router takes its no-key notice and never reaches the network.
-  const env = { ...process.env, HOME: root, USERPROFILE: root, LOCALAPPDATA: root, RUNBOOKS_DIR: dir };
+  const env = { ...process.env, HOME: root, USERPROFILE: root, LOCALAPPDATA: root, RUNBOOKS_DIR: dir, CLAUDE_CONFIG_DIR: "" };
   delete env.OPENROUTER_API_KEY;
   return { root, link, env };
 }

@@ -17,7 +17,7 @@ const DEFAULTS = { firesAt: 0.8, maxInject: 6, shortlist: 30 };
 const isDir = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
 // Git top of cwd, or cwd itself when it is not in a repo or git is unavailable.
-function projectRoot(cwd) {
+export function projectRoot(cwd) {
   try {
     const top = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     if (top) return resolve(top);

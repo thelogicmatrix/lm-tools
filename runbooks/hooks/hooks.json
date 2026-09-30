@@ -5,6 +5,13 @@
     ],
     "SessionStart": [
       { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/index.mjs\"", "timeout": 10, "statusMessage": "Loading runbooks" } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Skill", "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/resolve.mjs\" --hook", "timeout": 10 } ] },
+      { "matcher": "Bash|PowerShell", "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/action.mjs\"", "timeout": 5 } ] }
+    ],
+    "PostCompact": [
+      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session.mjs\" --clear", "timeout": 5 } ] }
     ]
   }
 }

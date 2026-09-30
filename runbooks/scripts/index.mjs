@@ -41,20 +41,48 @@ export const DORMANT_RE = /^dormant\b/;
 // Verified joined 2026-09-24: a dated "checked against reality" stamp that nine runbooks already
 // carried, which this list rejected as unrecognised. It is the only freshness signal left, since the
 // 2026-09 sweeps put a September commit date on every file.
-const FIELDS = ["Type", "Status", "Project", "Purpose", "Run", "Verified"];
+// Triggers joined 2026-09-30: the commands a runbook governs, matched by action.mjs on PreToolUse.
+const FIELDS = ["Type", "Status", "Project", "Purpose", "Triggers", "Run", "Verified"];
 // Only the first 800 bytes count as the header. One real runbook carries a second **Purpose:**
 // far down the body, and a whole-file regex would read that one instead.
 const HEAD_BYTES = 800;
 
+// The header block: the contiguous run of field lines around the first known field within
+// HEAD_BYTES, ended by a blank line or any non-field line. Shared by parseHeader (Triggers) and
+// lintFile (unrecognised fields) so the two cannot disagree about where the header stops.
+export function headerBlock(text) {
+  const lines = text.split("\n");
+  const headLineCount = text.slice(0, HEAD_BYTES).split("\n").length;
+  const anchor = lines.findIndex((l, i) => {
+    const m = i < headLineCount && FIELD_LINE.exec(l);
+    return m && isField(m[1]);
+  });
+  if (anchor < 0) return null;
+  let first = anchor;
+  let last = anchor;
+  while (first > 0 && FIELD_LINE.test(lines[first - 1])) first--;
+  while (last + 1 < lines.length && FIELD_LINE.test(lines[last + 1])) last++;
+  return { first, last };
+}
+
 export function parseHeader(head) {
   const text = (head ?? "").slice(0, HEAD_BYTES);
+  const block = headerBlock(text);
   const found = FIELDS.map((name) => {
     // Case-insensitive on the LABEL only. One runbook carried an uppercase **STATUS:** in
     // header position and a case-sensitive match made it invisible to both the index and the
     // lint — a silently vanished field is the exact failure this header block exists to prevent.
     // RETIRED_RE stays case-sensitive: the retirement VALUE format is still exact.
     const m = new RegExp(`^\\*\\*${name}:\\*\\*[ \\t]*(.*)$`, "mi").exec(text);
-    return m ? { name, value: m[1].trim(), at: m.index } : null;
+    if (!m) return null;
+    // Triggers is read from the header block only. A bold **Triggers:** lead-in in body prose is
+    // ordinary prose, and in a procedure or standard it would otherwise become a live action trigger.
+    // The other fields keep the whole-window read they have always had.
+    if (name === "Triggers") {
+      const line = text.slice(0, m.index).split("\n").length - 1;
+      if (!block || line < block.first || line > block.last) return null;
+    }
+    return { name, value: m[1].trim(), at: m.index };
   }).filter(Boolean);
   const value = (name) => found.find((f) => f.name === name)?.value || null;
   return {
@@ -62,6 +90,7 @@ export function parseHeader(head) {
     status: value("Status"),
     project: value("Project"),
     purpose: value("Purpose"),
+    triggers: value("Triggers"),
     run: value("Run"),
     verified: value("Verified"),
     order: [...found].sort((a, b) => a.at - b.at).map((f) => f.name),
@@ -80,6 +109,40 @@ export function lintProject(slug, text, allowed) {
   for (const tag of tags.filter(Boolean)) {
     if (tags.filter((s) => s === tag).length > 1 && !out.includes(`${slug}: duplicate project "${tag}"`)) out.push(`${slug}: duplicate project "${tag}"`);
     if (!allowed.has(tag)) out.push(`${slug}: unknown project "${tag}"`);
+  }
+  return out;
+}
+
+// The types router.mjs keeps (its RB_KEEP), so the only ones an action trigger can surface.
+const ROUTED = new Set(["procedure", "standard", "reference"]);
+// A one-word trigger naming one of these would match most commands in a session.
+export const COMMON_BINARIES = new Set(["git", "node", "npm", "npx", "cd", "ls", "cat", "echo", "python",
+  "python3", "pip", "docker", "ssh", "curl", "bash", "sh", "pwsh", "powershell", "rm", "cp", "mv", "mkdir"]);
+
+// "git push, fj pr create" -> [["git","push"],["fj","pr","create"]]. Empty items are dropped here
+// and reported by lintTriggers.
+export function parseTriggers(value) {
+  return String(value ?? "").split(",").map((s) => s.trim().split(/\s+/).filter(Boolean)).filter((w) => w.length);
+}
+
+export function lintTriggers(slug, text) {
+  const h = parseHeader(text);
+  if (h.triggers === null) {
+    // Empty only when the bare label sits in the header block, not in a body lead-in.
+    return h.order.includes("Triggers") ? [`${slug}: empty **Triggers:**`] : [];
+  }
+  const out = [];
+  if (h.type && TYPES.has(h.type) && !ROUTED.has(h.type)) {
+    out.push(`${slug}: **Triggers:** belongs to procedures, standards and references only, this is a ${h.type}`);
+  }
+  if (h.triggers.split(",").some((s) => !s.trim())) out.push(`${slug}: empty trigger in **Triggers:**`);
+  for (const words of parseTriggers(h.triggers)) {
+    const t = words.join(" ");
+    if (words.some((w) => w.startsWith("-") || /[|&;<>"'`$()]/.test(w))) {
+      out.push(`${slug}: trigger "${t}" holds a flag, a quote or a shell operator, use plain command words`);
+    } else if (words.length === 1 && COMMON_BINARIES.has(words[0].toLowerCase())) {
+      out.push(`${slug}: trigger "${t}" is a bare common command, add the subcommand`);
+    }
   }
   return out;
 }
@@ -140,17 +203,9 @@ export function lintFile(slug, text) {
   // field lines holding the header: a blank line ends it, so the bold lead-in that opens the
   // body of four real runbooks stays prose. A window measured in bytes instead would grade
   // those by how long the lines above them ran.
-  const headLineCount = text.slice(0, HEAD_BYTES).split("\n").length;
-  const anchor = lines.findIndex((l, i) => {
-    const m = i < headLineCount && FIELD_LINE.exec(l);
-    return m && isField(m[1]);
-  });
-  if (anchor >= 0) {
-    let first = anchor;
-    let last = anchor;
-    while (first > 0 && FIELD_LINE.test(lines[first - 1])) first--;
-    while (last + 1 < lines.length && FIELD_LINE.test(lines[last + 1])) last++;
-    for (const line of lines.slice(first, last + 1)) {
+  const block = headerBlock(text);
+  if (block) {
+    for (const line of lines.slice(block.first, block.last + 1)) {
       const name = FIELD_LINE.exec(line)[1];
       if (!isField(name)) {
         out.push(`${slug}: unrecognised header field **${name}:**, expected one of ${FIELDS.join(", ")}`);
@@ -161,6 +216,7 @@ export function lintFile(slug, text) {
   // asks Jev to judge, one question per runbook in a single call. A rambling purpose makes a worse
   // question, and it is still what gets injected on a match or a fallback. 25 words is where the ten
   // longest sat after the 2026-08-27 trim, which took ~90 words off the index.
+  out.push(...lintTriggers(slug, text));
   const pwords = (h.purpose ?? "").split(/\s+/).filter(Boolean).length;
   if (PUSHED.has(h.type) && pwords > PURPOSE_MAX_WORDS) {
     out.push(`${slug}: pushed purpose is ${pwords} words, keep it to ${PURPOSE_MAX_WORDS} (it is the router's question text)`);
@@ -321,6 +377,20 @@ async function runLint() {
       problems.push(...lintProject(`retired/${f.slice(0, -3)}`, readFileSync(join(dir, "retired", f), "utf8"), allowed));
     }
   }
+  // Skills declare topics, and a topic that maps to nothing (or to a runbook that was retired or
+  // renamed) is a skill step that will read nothing. No call is made here.
+  const R = await import("./resolve.mjs");
+  const { loadAll } = await import("./router.mjs");
+  const { projectRoot } = await import("./config.mjs");
+  // A plugin skill's malformed block or unmapped topic comes back as an advisory, since the host
+  // cannot edit the block and may have no runbook for the topic.
+  const skills = R.skillViolations({
+    top: projectRoot(process.cwd()),
+    configDir: process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"),
+    root,
+    books: loadAll(dir),
+  });
+  problems.push(...skills.violations);
   const splits = problems.filter((p) => p.endsWith("consider splitting"));
   const violations = problems.filter((p) => !p.endsWith("consider splitting"));
   for (const p of violations) console.log(p);
@@ -328,6 +398,13 @@ async function runLint() {
   if (splits.length) console.log(`\n${splits.length} split candidates (advisory, not violations):`);
   for (const p of splits) console.log(`  ${p}`);
   console.log(`\n${files.length} runbooks, ${violations.length} violations.`);
+  if (skills.advisories.length) {
+    console.log(`\n${skills.advisories.length} skill topics from installed plugins are not mapped (advisory, map the ones this host has a runbook for):`);
+    for (const a of skills.advisories) console.log(`  ${a}`);
+  }
+  if ([...skills.violations, ...skills.advisories].some((p) => p.endsWith("is not mapped"))) {
+    console.log(`Map a skill's topics: node "${join(PLUGIN, "scripts", "resolve.mjs").replace(/\\/g, "/")}" --skill <name>`);
+  }
   // Retirement is permanent by design, so nothing ever falls out of the tail on its own, and no
   // per-file rule can tell a tombstone that still earns its place (a retired DNS proxy: nothing
   // stops a future session re-proposing it) from one that has outlived its subject. An age rule would
@@ -426,7 +503,10 @@ async function main() {
   // start first on the theory that they overlapped the reads, but the reads are sync and block the
   // loop, so nothing overlapped, and a slow import waited outside the deadline entirely.
   const nudges = await runNudges(loadExtensions(root, "nudges"), { root, dir, entries });
-  const out = summarize(entries, nudges, { pushed: process.argv.includes("--pushed") });
+  // The manual entry to the resolver. One line, so a session can look a topic up mid-task without
+  // waiting for a prompt, a skill or a command to bring the runbook to it.
+  const findLine = `Find a runbook by topic: node "${join(PLUGIN, "scripts", "find.mjs").replace(/\\/g, "/")}" "<topic>"`;
+  const out = summarize(entries, [findLine, ...nudges], { pushed: process.argv.includes("--pushed") });
   // Exit explicitly once the output is flushed. A nudge dropped at the deadline can still hold
   // the process open: a half-open TCP connect measured keeping it alive to about 10.8 s.
   process.stdout.write(out ? JSON.stringify(out) + "\n" : "", () => process.exit());

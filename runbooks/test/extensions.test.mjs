@@ -77,7 +77,7 @@ function fixture() {
   const project = join(base, "project");
   mkdirSync(project, { recursive: true });
   execFileSync("git", ["init", "-q", project]);
-  const env = { ...process.env, HOME: base, USERPROFILE: base, RUNBOOKS_DIR: "" };
+  const env = { ...process.env, HOME: base, USERPROFILE: base, RUNBOOKS_DIR: "", CLAUDE_CONFIG_DIR: "" };
   const run = (...args) =>
     spawnSync(process.execPath, [INDEX, ...args], { input: JSON.stringify({ cwd: project }), env, encoding: "utf8" });
   return { base, project, env, run };
@@ -94,7 +94,8 @@ test("the hook appends a nudge extension's line and gives it the entries", () =>
   assert.equal(r.status, 0, r.stderr);
   assert.equal(
     JSON.parse(r.stdout).hookSpecificOutput.additionalContext,
-    "Postmortems, read before re-proposing their subject: old-thing.\nsaw 1"
+    "Postmortems, read before re-proposing their subject: old-thing.\n"
+      + `Find a runbook by topic: node "${join(dirname(INDEX), "find.mjs").replace(/\\/g, "/")}" "<topic>"\nsaw 1`
   );
 });
 

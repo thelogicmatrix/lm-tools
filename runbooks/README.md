@@ -35,6 +35,38 @@ Residuals and postmortems work differently. When a session starts, the plugin li
 
 If the scoring call can't run (no API key, no internet), the plugin says so rather than silently doing nothing.
 
+## Three ways a runbook arrives
+
+The router is one of three. The other two watch what the agent does instead of what you asked.
+
+| When | What is matched | Cost |
+|---|---|---|
+| You send a prompt | The prompt, by one model call | One call per prompt |
+| A skill loads | The topics the skill declares in its `runbooks:` frontmatter | Free after each topic is mapped once |
+| A command runs | The commands a runbook declares in `**Triggers:**` | Free |
+
+Each one injects a path and a purpose line. The agent reads the file when it needs it.
+
+The skill and command triggers run in Claude Code only for now. Codex gets the prompt router.
+
+**Skills.** A skill names topics in its own words, so it works on any host whatever its runbooks are called:
+
+```yaml
+runbooks:
+  - topic: branching, pushing and opening a pull request on this host
+    at: dispatch, landing
+```
+
+`at` is optional. It names the skill's steps where the agent should read the runbook.
+
+`node <plugin>/scripts/resolve.mjs --skill <name>` maps each topic to one of your runbooks, with one model call per topic it has not seen, and writes the result to `.runbooks/topics.json`. A topic that no runbook fits well enough is printed as `unresolved:` and left out. You can also write an entry by hand. It needs only a slug: `{ "<topic>": { "slug": "git-workflow" } }`. When the skill loads, the plugin reads that map and makes no call.
+
+The lint checks every skill's topics. For a skill in your project (`.claude/skills` or `.agents/skills`), a topic that maps to nothing or a `runbooks:` block it can't read fails the lint. For a skill from an installed plugin those two are advisories, listed after the violation count, because you can't edit that skill. A topic mapped to a runbook that was renamed or retired fails the lint wherever the skill lives.
+
+**Commands.** Add `**Triggers:** git push, fj pr create` to a runbook's header. The line arrives beside the output of the first matching command in a conversation, so name the earliest command in the flow. It never blocks a command. A runbook the conversation already got, from the router or a skill, isn't sent again until the conversation is compacted.
+
+**By hand.** `node <plugin>/scripts/find.mjs "<topic>"` lists the runbooks that match a phrase, locally and with no key. `--judge` scores them with one model call.
+
 ## Install
 
 Add the logical-tools marketplace as the [root README](../README.md) shows, then:

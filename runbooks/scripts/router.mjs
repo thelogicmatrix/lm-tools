@@ -44,6 +44,7 @@ import { fileURLToPath } from 'node:url';
 import { buildIndex, shortlist } from './prefilter.mjs';
 import { settings, STATE_DIR } from './config.mjs';
 import { DORMANT_RE, parseHeader, readInput, RETIRED_RE } from './index.mjs';
+import { claimRunbooks, scopeOf } from './session.mjs';
 
 const HOME = os.homedir();
 // Every prompt is posted here, with no customer-data screen.
@@ -68,6 +69,9 @@ const RETRY_DELAY_MS = 100;
 // Exported for check.mjs, which grades runbook purpose lines against this same bar.
 export const FIRES_AT = 0.8;
 export const MAX_INJECT = 6;
+// How many scores route() hands back beside its hits. resolve.mjs reads the top one to say how
+// far under the bar a topic fell.
+export const RANKED_N = 5;
 // Runbook types worth pushing. A procedure is pulled by its slug and stays out.
 // Procedures joined on 2026-09-22, and until then the router could not see one. That is why the
 // 43-procedure block stayed in index.mjs at 2,973 tokens a session: a procedure is PULLED
@@ -284,11 +288,12 @@ async function attempt(prompt, books, key, fetchImpl, timeoutMs, firesAt, maxInj
     if (!res.ok) { meter(null, books.length, 0, spend, 'unreported'); return { mode: 'fallback', why: `http ${res.status}` }; }
     const body = await res.json();
     if (!body?.answers) { meter(body?.usage, books.length, 0, spend, 'no_answers'); return { mode: 'fallback', why: 'no answers' }; }
-    const hits = books
-      .map((b) => ({ ...b, p: body.answers[keyFor(b)]?.noul ?? 0 }))
-      .filter((b) => b.p >= firesAt).sort((x, y) => y.p - x.p).slice(0, maxInject);
+    const scored = books.map((b) => ({ ...b, p: body.answers[keyFor(b)]?.noul ?? 0 }))
+      .sort((x, y) => y.p - x.p);
+    const hits = scored.filter((b) => b.p >= firesAt).slice(0, maxInject);
     meter(body.usage, books.length, hits.length, spend, body.usage ? 'ok' : 'unreported');
-    return { text: matchedBlock(hits), mode: 'matched', hits: hits.length };
+    return { text: matchedBlock(hits), mode: 'matched', hits: hits.length,
+      files: hits.map((h) => h.file), ranked: scored.slice(0, RANKED_N).map(({ file, p }) => ({ file, p })) };
   } catch (e) {
     meter(null, books.length, 0, spend, 'unreported');
     // A thrown fetch is a network-level failure, which is retryable. The message still rides along
@@ -466,6 +471,8 @@ if (isEntry()) {
     { firesAt: cfg.firesAt, maxInject: cfg.maxInject, shortlist: cfg.shortlist, skipApi,
       spend: { activity: 'active_route', session: sessionId } });
   if (tripsBreaker(r)) markOutage();
+  // So the skill and action triggers do not hand this conversation the same runbook again.
+  if (r.files?.length) claimRunbooks(scopeOf(input), r.files);
   const { text, mode, why, hits, attempts } = r;
   // Claude Code takes plain stdout as context. Codex reads only the JSON envelope and drops
   // anything else on the floor, silently, which looks exactly like a router that found no match.

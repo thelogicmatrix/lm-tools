@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHeader } from '../scripts/index.mjs';
-import { OUTAGE_MS, DEDUPE_MS, DEDUPE_KEEP_MS, RB_KEEP, SHORTLIST, STALE_LINE, ageLabel, breakerOpen, claimPrompt, codexEnvelope, dedupeFile, dedupeRecord,
+import { OUTAGE_MS, DEDUPE_MS, DEDUPE_KEEP_MS, RANKED_N, RB_KEEP, SHORTLIST, STALE_LINE, ageLabel, breakerOpen, claimPrompt, codexEnvelope, dedupeFile, dedupeRecord,
   failNotice, isDuplicate, keyFor, loadCorpus, markOutage, matchedBlock, narrow, parse, readKey, readOutage, route,
   tripsBreaker } from '../scripts/router.mjs';
 
@@ -410,4 +410,21 @@ test('dedupe prunes day-old session files and the legacy shared file, and keeps 
       ['dedupe-bbbbbbbbbbbb.json', path.basename(dedupeFile('sess-C', dir)), 'outage.json'].sort(),
       'only day-old dedupe files go, and nothing else in the state dir');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('route names the files it injected and the top scores under the bar', async (t) => {
+  process.env.JEV_SPEND_DISABLED = '1';
+  t.after(() => { delete process.env.JEV_SPEND_DISABLED; });
+  const books = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((n) => ({ file: `${n}.md`, type: 'reference', purpose: `About ${n}.` }));
+  const scores = { a: 0.91, b: 0.85, c: 0.79, d: 0.4, e: 0.3, f: 0.2, g: 0.1 };
+  const answers = Object.fromEntries(books.map((b) => [keyFor(b), { noul: scores[b.file[0]] }]));
+  const stub = async () => ({ ok: true, status: 200, json: async () => ({ answers }) });
+  const r = await route('a real task of sufficient length', books, 'k', stub, { narrow: false });
+  assert.strictEqual(r.mode, 'matched');
+  assert.strictEqual(r.hits, 2);
+  assert.deepStrictEqual(r.files, ['a.md', 'b.md']);
+  assert.strictEqual(RANKED_N, 5);
+  assert.deepStrictEqual(r.ranked, [
+    { file: 'a.md', p: 0.91 }, { file: 'b.md', p: 0.85 }, { file: 'c.md', p: 0.79 },
+    { file: 'd.md', p: 0.4 }, { file: 'e.md', p: 0.3 }]);
 });

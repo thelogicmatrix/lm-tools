@@ -33,6 +33,7 @@ Every file opens with this header, fields in this order:
     **Status:** retired YYYY-MM-DD — what replaced it, or why it died
     **Project:** one or more comma-separated project slugs
     **Purpose:** one line, what this is for and when it applies.
+    **Triggers:** comma-separated commands this runbook governs
     **Run:** the single entry command
     **Verified:** YYYY-MM-DD
 
@@ -49,6 +50,13 @@ Any other `Status` value is a lint violation.
 
 **`Run`** is for procedures only, and only where one obvious entry command exists.
 
+**`Triggers`** names the commands a runbook governs, such as `git push, fj pr create`. When a
+session runs a matching command the runbook's path and purpose are injected once for that
+conversation. Use plain command words, no flags and no quotes. A single word is allowed only
+when it is not a common command like `git` or `node`. Only procedures, standards and references
+take triggers. The line arrives beside the output of the first matching command, so pick the
+earliest command in the flow the runbook covers.
+
 **`Verified`** records the date the runbook was last checked against reality. Commit dates stop
 meaning anything once a sweep has touched every file, so this is the freshness signal.
 
@@ -59,7 +67,7 @@ parse. Write it long if it needs to be long, but write it on one line. For
 standards and references the lint also fails a purpose over 25 words, because that line is the
 question the router asks. How to write one is in `purpose-lines.md`.
 
-**Those five labels are the whole set.** A sixth `**Something:**` in the header block is a
+**Those labels are the whole set.** A sixth `**Something:**` in the header block is a
 violation, because a field nobody parses is a field that silently does nothing. The header block
 ends at the first blank line, so a bold lead-in in the body is ordinary prose and is not caught.
 

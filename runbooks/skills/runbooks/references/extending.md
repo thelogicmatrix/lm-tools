@@ -21,7 +21,7 @@ The first of these that exists as a folder wins. A missing candidate is skipped.
 3. `docs/runbooks/` at the git top of the working directory
 4. `~/docs/runbooks/`
 
-With none found, both hooks print nothing, and the lint and `check.mjs` exit with an error.
+With none found, every hook prints nothing, and the lint and `check.mjs` exit with an error.
 
 ## 1. `config.json`
 
@@ -57,6 +57,20 @@ keep any timeout inside a nudge, a network call's included, well under 1.2 secon
 dropped before its own timeout can fire. An import still pending at the deadline drops every
 nudge, so keep slow work out of a module's top level. A file that throws on import, or whose
 default export is not a function, is skipped, and so is any `*.test.mjs`, here and in `lint/`.
+
+### `skill-nudges/<name>.mjs`
+
+A line of your own when a skill loads, printed after the skill's runbook lines. The default export
+is a function `fn({ skill, topics, resolved })`:
+
+- `skill` is the skill's name, as the agent called it.
+- `topics` holds the skill's declared topics, each `{ topic, at }`, with `at` a list of steps.
+- `resolved` holds the topics that map to a runbook, each `{ topic, at, file }`, with `file` the
+  runbook's path inside the runbooks folder.
+- It returns a string to print, or null for nothing. It may be async.
+
+They run like `nudges/`, under a 500 ms deadline shared by all of them, import time included. A
+skill that declares no topics, or whose `runbooks:` block can't be read, runs none of them.
 
 ## 3. `lint/<name>.mjs`
 

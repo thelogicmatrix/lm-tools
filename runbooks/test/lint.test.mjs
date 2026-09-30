@@ -19,7 +19,7 @@ function fixture(t) {
   const docs = join(base, 'docs', 'runbooks');
   mkdirSync(docs, { recursive: true });
   writeFileSync(join(docs, 'x.md'), '# X\n**Type:** standard\n**Purpose:** A valid standard.\n');
-  const env = { ...process.env, HOME: base, USERPROFILE: base, LOCALAPPDATA: base, RUNBOOKS_DIR: '' };
+  const env = { ...process.env, HOME: base, USERPROFILE: base, LOCALAPPDATA: base, RUNBOOKS_DIR: '', CLAUDE_CONFIG_DIR: '' };
   const lint = () => spawnSync(process.execPath, [INDEX, '--lint'], { cwd: base, env, encoding: 'utf8' });
   return { base, docs, lint };
 }
