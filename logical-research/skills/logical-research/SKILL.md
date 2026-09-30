@@ -1,6 +1,9 @@
 ---
 name: logical-research
 description: Use whenever research is asked for or a body of source material must become reusable, traceable context. Triggers on "research X", "look into X properly", "what do the docs or sources say about X", "research this channel/author/book", "build me a knowledge pack on X", "read all of these and synthesise", or when a later task needs principles extracted from sources with every claim traceable. Self-selects a tier, Scan (a question or a small source set, one graded file) or Pack (a bounded corpus, the full pipeline). A single fact lookup with no synthesis is a plain search, not this.
+runbooks:
+  - topic: searching files, pages and code on this host
+    at: acquire
 ---
 
 # Logical Research
@@ -14,6 +17,10 @@ structured so it can be fed to a model as working context for a later task.
 The output is **not a summary**. It's a reusable knowledge artifact: original analysis with
 claims graded by evidence strength, principles extracted as instructions, and every source
 traceable back to the item it came from.
+
+## Runbooks
+
+With the runbooks plugin, the topics in this skill's frontmatter resolve to this host's runbooks when the skill loads, and each path arrives with the step that reads it. Read them before fetching or searching any source, at either tier, and paste the paths into any worker's brief. Without the plugin, open this skill's SKILL.md, read the runbooks: list in its frontmatter, and read what your own docs say on each topic before the step named beside it. A topic the load reports as unmapped reads as if the plugin were absent.
 
 ## Pick the tier
 

@@ -1,6 +1,11 @@
 ---
 name: due-diligence
 description: Use only when explicitly invoked, immediately before an outbound send or publication, or for the final whole-branch review. Do not use for planning, construction, routine code review, verification, intermediate task completion, or local-only deliverables.
+runbooks:
+  - topic: sending, posting or publishing to other people on this host
+    at: context
+  - topic: what to scan for before anything is published or sent
+    at: context
 ---
 
 # Due Diligence
@@ -67,6 +72,10 @@ artifact is irreversible or external. Never de-escalate automatically. Announce 
 line with the numbers: *"Light: 1 blocker, 4 should-fix over 3 lenses. Escalating to Standard."*
 Dispatch the Standard critic on a cheaper model tier than the session, naming the model
 explicitly.
+
+## Runbooks
+
+With the runbooks plugin, the topics in this skill's frontmatter resolve to this host's runbooks when the skill loads, and each path arrives with the step that reads it. Read them at Step 0 and hand the paths to every Critic, because a host's own rules for what may leave the machine outrank a generic lens. Without the plugin, open this skill's SKILL.md, read the runbooks: list in its frontmatter, and read what your own docs say on each topic before the step named beside it. A topic the load reports as unmapped reads as if the plugin were absent.
 
 ## Step 0: context, ask if unknown
 

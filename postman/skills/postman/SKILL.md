@@ -2,6 +2,13 @@
 name: postman
 description: >-
   Real outbound email from your own mailboxes, one identity per address. Cold outbound and replies onto an existing thread, byte-exact signature, recipient verification, live thread resolution, per-identity voice, and a read path that pulls a mailbox window down for a model to read. Use when asked to "send these emails", "reply to the recruiter", or "what's in the inbox". Proactively suggest when outreach has been drafted but nothing has verified the addresses. Nothing to do with Postman the API client.
+runbooks:
+  - topic: sending, posting or publishing to other people on this host
+    at: ritual
+  - topic: negotiating with a vendor by email
+    at: ritual
+  - topic: fetching a stored credential without printing it
+    at: credentials
 ---
 
 # Postman
@@ -20,6 +27,10 @@ overwrite. `references/extending.md` covers the fields.
 The reason there is no search: `pw_cmd` is **executed**, and the same file names an
 `assets` directory that is concatenated into outbound mail. A config found by standing in
 a directory is not a config anyone chose.
+
+## Runbooks
+
+With the runbooks plugin, the topics in this skill's frontmatter resolve to this host's runbooks when the skill loads, and each path arrives with the step that reads it. Read them before step 0 of the ritual and before touching a credential. Without the plugin, open this skill's SKILL.md, read the runbooks: list in its frontmatter, and read what your own docs say on each topic before the step named beside it. A topic the load reports as unmapped reads as if the plugin were absent.
 
 ## The batch file
 

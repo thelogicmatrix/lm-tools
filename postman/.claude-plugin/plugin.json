@@ -1,6 +1,6 @@
 {
   "name": "postman",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "The ultimate email manager. Sends cold email and threaded replies from your own mailbox. If any reply in a batch cannot find its thread, nothing sends. Extend it with one identity per mailbox, each with its own signature, voice and password command.",
   "author": { "name": "Nathan Wong" }
 }
