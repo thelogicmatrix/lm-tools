@@ -62,6 +62,12 @@ Every plugin has the same three layers.
 
 The plugin only reads your folder, so an update cannot overwrite your changes.
 
+## [lib-cli](lib-cli/README.md): the CLI framework
+
+Most plugins do their bookkeeping in a small Node CLI, so the agent spends no tokens on it. `lib-cli/` is the shared code under those CLIs: finding the repo root, parsing flags, a one-file-per-record JSON store, git with a lock retry, and exit handling. It is not a plugin and has no marketplace entry. An installed plugin can't import from a sibling, so each plugin vendors a copy of the files it uses.
+
+To build a new plugin CLI on it, list the files you want in a `.framework.json` next to where the copies will live, run `node scripts/sync-lib.mjs`, and import the copies by relative path. Outside this repo, copy the files you need. They use only Node's built-in modules, plus the git binary for `root.mjs` and `git.mjs`. [lib-cli/README.md](lib-cli/README.md) covers each file and the rules for changing one, and [lib-cli/CHANGELOG.md](lib-cli/CHANGELOG.md) holds its version.
+
 ## License
 
 See [LICENSE](LICENSE).

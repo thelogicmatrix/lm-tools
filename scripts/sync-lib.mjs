@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // Copies the lib-cli files each plugin lists into that plugin, so every plugin ships whole.
 // A plugin lists what it vendors in a .framework.json beside the copies: {"files": ["args.mjs"]}.
-//   node scripts/sync-lib.mjs          copy every listed file whose content differs
-//   node scripts/sync-lib.mjs --check  change nothing, exit 1 when a copy differs or is missing
+// A sync stamps the manifest with lib-cli's version, the top "## X.Y.Z" heading of
+// lib-cli/CHANGELOG.md, so an installed plugin can say which lib-cli its copies came from.
+//   node scripts/sync-lib.mjs          copy every listed file whose content differs, restamp
+//   node scripts/sync-lib.mjs --check  change nothing, exit 1 when a copy differs or is missing,
+//                                      or a manifest's stamp is not the current version
 // Content is compared with CRLF read as LF. A Windows checkout with core.autocrlf rewrites line
 // endings on disk while git stores the same bytes, and that must never read as drift.
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
@@ -37,15 +40,23 @@ export function manifests(repo) {
   return plugins(repo).flatMap((p) => walk(join(repo, p), [])).sort();
 }
 
-// One row per listed file. Throws on a manifest it cannot use, naming it, so a typo never reads as
-// in sync.
+export function libVersion(repo) {
+  const m = /^## (\d+\.\d+\.\d+)\b/m.exec(readFileSync(join(repo, 'lib-cli', 'CHANGELOG.md'), 'utf8'));
+  if (!m) throw new Error('lib-cli/CHANGELOG.md has no "## X.Y.Z" heading');
+  return m[1];
+}
+
+// One row per listed file, then a 'version' row for a manifest whose stamp is not the current
+// version. Throws on a manifest it cannot use, naming it, so a typo never reads as in sync.
 export function status(repo) {
   const rows = [];
-  for (const m of manifests(repo)) {
+  const found = manifests(repo);
+  const version = found.length ? libVersion(repo) : null;
+  for (const m of found) {
     const where = rel(repo, m);
-    let files;
+    let files, stamp;
     try {
-      ({ files } = JSON.parse(readFileSync(m, 'utf8')));
+      ({ files, version: stamp } = JSON.parse(readFileSync(m, 'utf8')));
     } catch (e) {
       throw new Error(`${where}: not valid JSON - ${e.message}`);
     }
@@ -59,9 +70,12 @@ export function status(repo) {
         : lf(readFileSync(target, 'utf8')) === lf(readFileSync(canonical, 'utf8')) ? 'same' : 'differs';
       rows.push({ canonical, target, state });
     }
+    if (stamp !== version) rows.push({ canonical: join(repo, 'lib-cli', 'CHANGELOG.md'), target: m, state: 'version', version, files });
   }
   return rows;
 }
+
+const stamped = (version, files) => `{ "version": ${JSON.stringify(version)}, "files": [${files.map((f) => JSON.stringify(f)).join(', ')}] }\n`;
 
 export function main(argv, repo = REPO) {
   const unknown = argv.find((a) => a !== '--check');
@@ -77,16 +91,25 @@ export function main(argv, repo = REPO) {
     return 2;
   }
   const off = rows.filter((r) => r.state !== 'same');
+  const copies = rows.filter((r) => r.state !== 'version').length;
   if (argv.includes('--check')) {
-    for (const r of off) console.log(`${r.state}: ${rel(repo, r.target)} (from ${rel(repo, r.canonical)})`);
-    console.log(`${rows.length - off.length} of ${rows.length} vendored files match lib-cli.`);
+    for (const r of off) {
+      console.log(r.state === 'version' ? `stale stamp: ${rel(repo, r.target)} (lib-cli is ${r.version})`
+        : `${r.state}: ${rel(repo, r.target)} (from ${rel(repo, r.canonical)})`);
+    }
+    console.log(`${copies - off.filter((r) => r.state !== 'version').length} of ${copies} vendored files match lib-cli.`);
     return off.length ? 1 : 0;
   }
   for (const r of off) {
-    writeFileSync(r.target, readFileSync(r.canonical));
-    console.log(`synced ${rel(repo, r.target)}`);
+    if (r.state === 'version') {
+      writeFileSync(r.target, stamped(r.version, r.files));
+      console.log(`stamped ${rel(repo, r.target)} with lib-cli ${r.version}`);
+    } else {
+      writeFileSync(r.target, readFileSync(r.canonical));
+      console.log(`synced ${rel(repo, r.target)}`);
+    }
   }
-  console.log(`${rows.length} vendored files match lib-cli.`);
+  console.log(`${copies} vendored files match lib-cli.`);
   return 0;
 }
 
