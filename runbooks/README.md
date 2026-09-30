@@ -59,7 +59,7 @@ runbooks:
 
 `at` is optional. It names the skill's steps where the agent should read the runbook.
 
-`node <plugin>/scripts/resolve.mjs --skill <name>` maps each topic to one of your runbooks, with one model call per topic it has not seen, and writes the result to `.runbooks/topics.json`. A topic that no runbook fits well enough is printed as `unresolved:` and left out. You can also write an entry by hand. It needs only a slug: `{ "<topic>": { "slug": "git-workflow" } }`. When the skill loads, the plugin reads that map and makes no call.
+`node <plugin>/scripts/resolve.mjs --skill <name>` maps each topic to one of your runbooks, with one model call per topic it has not seen, and writes the result to `.runbooks/topics.json`. It writes there only when that `.runbooks/` sits beside the runbooks (`<its parent>/docs/runbooks`), or when its `config.json` `dir` or `RUNBOOKS_DIR` names them, so one repo's map never lands in another's. A topic that no runbook fits well enough is printed as `unresolved:` and left out. You can also write an entry by hand. It needs only a slug: `{ "<topic>": { "slug": "git-workflow" } }`. When the skill loads, the plugin reads that map and makes no call.
 
 The lint checks every skill's topics. For a skill in your project (`.claude/skills` or `.agents/skills`), a topic that maps to nothing or a `runbooks:` block it can't read fails the lint. For a skill from an installed plugin those two are advisories, listed after the violation count, because you can't edit that skill. A topic mapped to a runbook that was renamed or retired fails the lint wherever the skill lives.
 

@@ -45,6 +45,16 @@ test('--lint prints a core rule violation and exits 1', (t) => {
   assert.equal(r.status, 1, r.stdout + r.stderr);
 });
 
+test('#123: --lint flags a Triggers line on a runbook in retired/, with no projects allow-list', (t) => {
+  const f = fixture(t);
+  mkdirSync(join(f.docs, 'retired'), { recursive: true });
+  writeFileSync(join(f.docs, 'retired', 'old.md'),
+    '# Old\n**Type:** procedure\n**Status:** retired 2026-09-30 \u2014 replaced\n**Purpose:** x\n**Triggers:** fj issue\n');
+  const r = f.lint();
+  assert.match(r.stdout, /^retired\/old: \*\*Triggers:\*\* on a retired runbook never fires, remove the line$/m, r.stderr);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+});
+
 test('--lint names the check command quoted and with forward slashes', (t) => {
   const f = fixture(t);
   const r = f.lint();

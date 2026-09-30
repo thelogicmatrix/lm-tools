@@ -71,3 +71,8 @@ test('Triggers reads the same with or without a blank line under the title', () 
   assert.equal(parseHeader(`# X\n${fields}`).triggers, 'git push');
   assert.equal(parseHeader(`# X\n\n${fields}`).triggers, 'git push');
 });
+
+test('#123: a Triggers line on a retired runbook fails the lint', () => {
+  const text = '# Old\n**Type:** procedure\n**Status:** retired 2026-09-30 — replaced\n**Purpose:** x\n**Triggers:** fj issue\n';
+  assert.ok(lintTriggers('old', text).some((p) => p.includes('retired')));
+});

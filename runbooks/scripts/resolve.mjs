@@ -88,9 +88,20 @@ export function parseRunbooksBlock(text) {
 }
 
 const isFile = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
+const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
 const list = (d) => { try { return fs.readdirSync(d); } catch { return []; } };
 const semver = (v) => /^(\d+)\.(\d+)\.(\d+)/.exec(v)?.slice(1).map(Number) ?? [-1, -1, -1];
 const byVersion = (a, b) => { const x = semver(a), y = semver(b); return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; };
+// -1 marks a non-directory, so a stray file (a lockfile) is never a version.
+const mtime = (p) => { try { const st = fs.statSync(p); return st.isDirectory() ? st.mtimeMs : -1; } catch { return -1; } };
+// The installed version of one plugin: the highest semver folder, and among folders with no semver
+// (a SHA-named cache), the newest by mtime. The lint and the skill hook both call this, so they
+// read the same SKILL.md (#122).
+export function newestVersion(plugDir) {
+  const rows = list(plugDir).map((v) => ({ v, m: mtime(path.join(plugDir, v)) })).filter((r) => r.m >= 0);
+  rows.sort((a, b) => byVersion(a.v, b.v) || a.m - b.m);
+  return rows.pop()?.v ?? null;
+}
 // The name arrives from a tool call. One path segment, or it is not a skill name.
 const segment = (s) => typeof s === 'string' && s !== '' && !/[\\/:]/.test(s) && !/^\.+$/.test(s);
 
@@ -119,10 +130,9 @@ export function findSkill(name, { cwd = process.cwd(), home = os.homedir(),
   for (const market of list(cache)) {
     for (const plug of list(path.join(cache, market))) {
       if (plugin && plug !== plugin) continue;
-      for (const version of list(path.join(cache, market, plug))) {
-        const p = path.join(cache, market, plug, version, 'skills', skill, 'SKILL.md');
-        if (isFile(p)) found.push({ p, version });
-      }
+      const version = newestVersion(path.join(cache, market, plug));
+      const p = version && path.join(cache, market, plug, version, 'skills', skill, 'SKILL.md');
+      if (p && isFile(p)) found.push({ p, version });
     }
   }
   found.sort((x, y) => byVersion(y.version, x.version));
@@ -188,7 +198,7 @@ function judgeWith(cfg, books) {
 }
 
 async function changed(cfg, books) {
-  const map = loadTopics(cfg.root);
+  const map = loadTopics(cfg.topicsRoot);
   const bySlug = new Map(books.map((b) => [slugOf(b.file), b]));
   const moved = Object.keys(map).filter((k) => {
     const b = bySlug.get(map[k]?.slug);
@@ -203,7 +213,7 @@ async function changed(cfg, books) {
     const r = await resolveTopics([{ topic, at: [] }], { map: trial, books, judgeFn, writeBar: cfg.writeBar,
       today: new Date().toISOString().slice(0, 10) });
     const won = Object.hasOwn(trial, topic) ? trial[topic] : undefined;
-    if (r.resolved.length) { setOwn(map, topic, won); saveTopics(cfg.root, map); console.log(`  ${won.slug} at ${won.score}`); }
+    if (r.resolved.length) { setOwn(map, topic, won); saveTopics(cfg.topicsRoot, map); console.log(`  ${won.slug} at ${won.score}`); }
     // The entry stays. It is reported, and whoever reads the report decides.
     else { stale += 1; console.log(`  stale: ${r.unresolved[0].why}`); }
   }
@@ -246,7 +256,7 @@ function skillFiles(top, configDir) {
   const cache = path.join(configDir, 'plugins', 'cache');
   for (const market of list(cache)) {
     for (const plug of list(path.join(cache, market))) {
-      const newest = list(path.join(cache, market, plug)).sort(byVersion).pop();
+      const newest = newestVersion(path.join(cache, market, plug));
       if (!newest) continue;
       for (const s of list(path.join(cache, market, plug, newest, 'skills'))) {
         const p = path.join(cache, market, plug, newest, 'skills', s, 'SKILL.md');
@@ -257,28 +267,42 @@ function skillFiles(top, configDir) {
   return out;
 }
 
+// What a repo does to keep its own map. With no .runbooks/ it creates one. A .runbooks/ it already
+// has sits beside no runbooks folder it uses, so its config.json has to name them.
+const ownRoot = (top) => path.join(top, '.runbooks');
+const setDirHint = (top) => `Set dir in ${slash(path.join(ownRoot(top), 'config.json'))} to the runbooks it should map.`;
+function foreignNote(top, root) {
+  if (isDir(ownRoot(top))) return `skills: ${slash(ownRoot(top))} does not sit beside the runbooks this repo uses. ${setDirHint(top)}`;
+  return `skills: ${slash(topicsFile(root))} maps the runbooks beside ${slash(path.dirname(root))}, not this repo's. Create ${slash(ownRoot(top))} to map this repo's topics.`;
+}
+
 // No call is made here. The lint says what is unmapped and names the command that maps it.
 // The lint fails only on what the host can fix. A plugin's malformed block or unmapped topic is
 // advisory: the host cannot edit the block, and may have no runbook for the topic, so a failure
 // there could only be cleared by uninstalling the plugin or mapping the topic to something
 // unrelated. A dead mapping is a violation wherever the skill lives, because the map entry is the
 // host's own and a renamed or retired runbook has to turn the lint red.
-export function skillViolations({ top, configDir, root, books }) {
+// `foreign` is a map that sits beside another repo's runbooks (#121). Its findings are not this
+// repo's to fix, so every one is advisory.
+export function skillViolations({ top, configDir, root, books, foreign = false }) {
+  const note = foreign ? [foreignNote(top, root)] : [];
   let map;
-  try { map = loadTopics(root); } catch (e) { return { violations: [e.message], advisories: [] }; }
+  // A foreign map is not this repo's to fix, so a corrupt one is advisory too.
+  try { map = loadTopics(root); } catch (e) { return foreign ? { violations: [], advisories: [...note, e.message] } : { violations: [e.message], advisories: [] }; }
   const live = new Set(books.map((b) => slugOf(b.file)));
   const violations = [];
-  const advisories = [];
+  const advisories = [...note];
+  const hard = foreign ? advisories : violations;
   for (const { name, file, cached } of skillFiles(top, configDir)) {
     let block;
     try { block = parseRunbooksBlock(fs.readFileSync(file, 'utf8')); } catch { continue; }
-    const soft = cached ? advisories : violations;
+    const soft = cached ? advisories : hard;
     for (const e of block.errors) soft.push(`skill ${name}: ${e}`);
     for (const t of block.topics) {
       // Own keys only, as in resolveTopics, so a topic named `constructor` is not read off Object.prototype.
       const e = Object.hasOwn(map, t.topic) ? map[t.topic] : undefined;
       if (!e) soft.push(`skill ${name}: topic "${t.topic}" is not mapped`);
-      else if (!live.has(e.slug)) violations.push(`skill ${name}: topic "${t.topic}" is mapped to ${e.slug}, which is not a live runbook`);
+      else if (!live.has(e.slug)) hard.push(`skill ${name}: topic "${t.topic}" is mapped to ${e.slug}, which is not a live runbook`);
     }
   }
   return { violations, advisories };
@@ -314,7 +338,7 @@ async function main(argv) {
   const str = (v) => (typeof v === 'string' && v !== '' ? v : null);
   const cfg = settings({ cwd: process.cwd() });
   if (flags.changed === true) {
-    if (!cfg.dir || !cfg.root) return;
+    if (!cfg.dir || !cfg.topicsRoot) return;
     return changed(cfg, loadAll(cfg.dir));
   }
   const name = str(flags.skill);
@@ -332,9 +356,11 @@ async function main(argv) {
   let mapped = 0;
   const { resolved, unresolved } = await resolveTopics(topics, { map, books, judgeFn: judgeWith(cfg, books),
     writeBar: cfg.writeBar, today: new Date().toISOString().slice(0, 10),
-    onMapped: (m) => { mapped += 1; if (cfg.root) saveTopics(cfg.root, m); } });
-  if (!cfg.root && mapped) {
-    console.error('resolve: no .runbooks/ folder, so nothing was cached and the next run pays again');
+    onMapped: (m) => { mapped += 1; if (cfg.topicsRoot) saveTopics(cfg.topicsRoot, m); } });
+  if (!cfg.topicsRoot && (mapped || unresolved.length)) {
+    const top = projectRoot(process.cwd());
+    const fix = isDir(ownRoot(top)) ? setDirHint(top) : `Create ${slash(ownRoot(top))} to keep this repo's map.`;
+    console.error(`resolve: nothing was cached, because no .runbooks/ folder sits beside ${slash(cfg.dir)}. ${fix}`);
   }
   const files = [...new Set(resolved.map((r) => r.book.file))];
   if (flags.inject === true) {

@@ -24,8 +24,8 @@ test('the Claude hooks name scripts that exist, on the events this plugin uses',
 });
 
 test('both manifests carry the same version', () => {
-  assert.equal(json('.claude-plugin', 'plugin.json').version, '1.4.1');
-  assert.equal(json('.codex-plugin', 'plugin.json').version, '1.4.1');
+  assert.equal(json('.claude-plugin', 'plugin.json').version, '1.4.3');
+  assert.equal(json('.codex-plugin', 'plugin.json').version, '1.4.3');
 });
 
 test('the Codex hooks are unchanged: no PreToolUse is registered there yet', () => {

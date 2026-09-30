@@ -134,7 +134,7 @@ test('a cached plugin skill\'s unmapped topic is advisory and the lint passes', 
   assert.deepEqual(skillViolations(c.opts), { violations: [], advisories: ['skill tools:riff: topic "a plugin topic" is not mapped'] });
   const r = c.lint();
   assert.equal(r.status, 0, r.stdout + r.stderr);
-  assert.ok(r.stdout.includes('\n1 skill topics from installed plugins are not mapped (advisory, map the ones this host has a runbook for):\n'
+  assert.ok(r.stdout.includes('\n1 skill topic advisories (they never fail the lint):\n'
     + '  skill tools:riff: topic "a plugin topic" is not mapped\n'), r.stdout);
   assert.match(r.stdout, /resolve\.mjs" --skill <name>/);
 });

@@ -44,19 +44,31 @@ const fromRoot = (root, p) => (isAbsolute(p) || !root ? resolve(p) : resolve(dir
 // wherever the harness happened to start it.
 function dirFrom({ cwd, project, root, config, env, home }) {
   const candidates = [
-    env.RUNBOOKS_DIR && resolve(cwd, env.RUNBOOKS_DIR),
-    typeof config.dir === 'string' && config.dir && fromRoot(root, config.dir),
-    join(project, 'docs', 'runbooks'),
-    join(home, 'docs', 'runbooks'),
+    [env.RUNBOOKS_DIR && resolve(cwd, env.RUNBOOKS_DIR), 'named'],
+    [typeof config.dir === 'string' && config.dir && fromRoot(root, config.dir), 'named'],
+    [join(project, 'docs', 'runbooks'), 'found'],
+    [join(home, 'docs', 'runbooks'), 'found'],
   ];
-  return candidates.find((p) => p && isDir(p)) ?? null;
+  const hit = candidates.find(([p]) => p && isDir(p));
+  return hit ? { dir: hit[0], from: hit[1] } : { dir: null, from: null };
+}
+
+// .runbooks/ holds the topics map only for the runbooks it sits beside, or the ones its config or
+// RUNBOOKS_DIR named. Otherwise a map scored against one repo's runbooks lands in another's
+// .runbooks/, where its slugs are dead (#121). A found folder is owned only when it is exactly
+// <parent of .runbooks>/docs/runbooks. Any folder under that parent was too loose, because for
+// ~/.runbooks the parent is the whole home folder and every repo under it would write home's map.
+function ownsDir(root, dir, from) {
+  if (!root || !dir) return false;
+  return from === 'named' || resolve(dir) === resolve(dirname(root), 'docs', 'runbooks');
 }
 
 function resolveAll({ cwd = process.cwd(), env = process.env, home = homedir() } = {}) {
   const project = projectRoot(cwd);
   const root = rootFrom(project, cwd, home);
   const config = loadConfig(root);
-  return { root, config, dir: dirFrom({ cwd, project, root, config, env, home }) };
+  const { dir, from } = dirFrom({ cwd, project, root, config, env, home });
+  return { root, config, dir, topicsRoot: ownsDir(root, dir, from) ? root : null };
 }
 
 export function resolveDir(opts) {
@@ -67,7 +79,7 @@ export function resolveDir(opts) {
 const num = (v, d) => (Number.isFinite(v) ? v : d);
 
 export function settings(opts) {
-  const { root, config, dir } = resolveAll(opts);
+  const { root, config, dir, topicsRoot } = resolveAll(opts);
   const firesAt = num(config.firesAt, DEFAULTS.firesAt);
   // A writeBar under firesAt would pass a purpose the router never fires on, so it falls back too.
   const writeBar = num(config.writeBar, -Infinity);
@@ -77,6 +89,7 @@ export function settings(opts) {
   return {
     root,
     dir,
+    topicsRoot,
     firesAt,
     writeBar: writeBar >= firesAt ? writeBar : +(firesAt + 0.05).toFixed(2),
     maxInject: num(config.maxInject, DEFAULTS.maxInject),

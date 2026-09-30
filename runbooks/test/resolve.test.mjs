@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findSkill, loadTopics, parseRunbooksBlock, resolveTopics, saveTopics, slugOf, topicKey } from '../scripts/resolve.mjs';
+import { findSkill, loadTopics, newestVersion, parseRunbooksBlock, resolveTopics, saveTopics, skillViolations, slugOf, topicKey } from '../scripts/resolve.mjs';
 import { purposeHash } from '../scripts/ledger.mjs';
 import { slash } from '../scripts/find.mjs';
 
@@ -317,4 +317,107 @@ test('a judged __proto__ topic is written as an own key and round-trips with no 
   const second = await resolveTopics([{ topic: '__proto__', at: [] }], { ...opts, map: loaded });
   assert.deepEqual(second.resolved.map((x) => x.book.file), ['git-workflow.md']);
   assert.equal(calls, 1, 'the loaded map answers, no second paid call');
+});
+
+test('#121: a repo with docs/runbooks and no .runbooks/ never writes home\'s map', (t) => {
+  const f = fixture(t);
+  const home = tmp(t, 'rb-res-home-');
+  const homeMap = path.join(home, '.runbooks', 'topics.json');
+  put(homeMap, JSON.stringify({ 'which model tier a task gets': { slug: 'model-routing' } }));
+  fs.rmSync(path.join(f.base, '.runbooks'), { recursive: true, force: true });
+  const before = fs.readFileSync(homeMap, 'utf8');
+  const r = spawnSync(process.execPath, [SCRIPT, '--skills-dir', path.join(f.base, 'skills'), '--skill', 'swarm'],
+    { cwd: f.base, encoding: 'utf8',
+      env: { ...process.env, HOME: home, USERPROFILE: home, LOCALAPPDATA: home, RUNBOOKS_DIR: '', CLAUDE_CONFIG_DIR: '', OPENROUTER_API_KEY: '' } });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, new RegExp(`Create ${slash(path.join(f.base, '.runbooks')).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.equal(fs.readFileSync(homeMap, 'utf8'), before);
+});
+
+test('#121: the lint turns a foreign map\'s findings into advisories', (t) => {
+  const base = tmp(t);
+  execFileSync('git', ['init', '-q', base]);
+  put(path.join(base, '.claude', 'skills', 'swarm', 'SKILL.md'), SKILL);
+  const root = path.join(base, 'elsewhere', '.runbooks');
+  put(path.join(root, 'topics.json'), JSON.stringify({ 'which model tier a task gets': { slug: 'gone' } }));
+  const args = { top: base, configDir: path.join(base, 'cfg'), root, books: [] };
+  const own = skillViolations({ ...args, foreign: false });
+  assert.ok(own.violations.some((v) => v.includes('mapped to gone')));
+  const foreign = skillViolations({ ...args, foreign: true });
+  assert.deepEqual(foreign.violations, []);
+  assert.ok(foreign.advisories.some((v) => v.includes('mapped to gone')));
+  assert.ok(foreign.advisories.some((v) => v.includes('is not mapped')));
+});
+
+test('#121: a corrupt foreign topics.json is an advisory, a corrupt own one a violation', (t) => {
+  const base = tmp(t);
+  execFileSync('git', ['init', '-q', base]);
+  const root = path.join(base, 'elsewhere', '.runbooks');
+  put(path.join(root, 'topics.json'), '{ not json');
+  const args = { top: base, configDir: path.join(base, 'cfg'), root, books: [] };
+  const own = skillViolations({ ...args, foreign: false });
+  assert.ok(own.violations.some((v) => v.includes('is not a JSON object')));
+  const foreign = skillViolations({ ...args, foreign: true });
+  assert.deepEqual(foreign.violations, []);
+  assert.ok(foreign.advisories.some((v) => v.includes('is not a JSON object')));
+});
+
+test('#121: a repo whose own .runbooks/ does not own its runbooks is told to set dir, not to create it', (t) => {
+  const base = tmp(t);
+  execFileSync('git', ['init', '-q', base]);
+  put(path.join(base, '.claude', 'skills', 'swarm', 'SKILL.md'), SKILL);
+  const root = path.join(base, '.runbooks');
+  put(path.join(root, 'topics.json'), '{}');
+  const r = skillViolations({ top: base, configDir: path.join(base, 'cfg'), root, books: [], foreign: true });
+  const want = `set dir in ${slash(path.join(root, 'config.json'))} to the runbooks it should map`;
+  assert.ok(r.advisories.some((a) => a.toLowerCase().includes(want.toLowerCase())), r.advisories.join('\n'));
+  assert.ok(!r.advisories.some((a) => a.includes('Create ')), r.advisories.join('\n'));
+});
+
+test('#121: the CLI tells a repo with its own .runbooks/ and no docs/runbooks to set dir', (t) => {
+  const base = tmp(t);
+  execFileSync('git', ['init', '-q', base]);
+  put(path.join(base, 'skills', 'swarm', 'SKILL.md'), SKILL);
+  fs.mkdirSync(path.join(base, '.runbooks'));
+  // No docs/runbooks in the repo, so the runbooks folder falls back to home's.
+  const home = tmp(t, 'rb-res-home-');
+  for (const b of books) put(path.join(home, 'docs', 'runbooks', b.file), `# T\n**Type:** ${b.type}\n**Purpose:** ${b.purpose}\n`);
+  const r = spawnSync(process.execPath, [SCRIPT, '--skills-dir', path.join(base, 'skills'), '--skill', 'swarm'],
+    { cwd: base, encoding: 'utf8',
+      env: { ...process.env, HOME: home, USERPROFILE: home, LOCALAPPDATA: home, RUNBOOKS_DIR: '', CLAUDE_CONFIG_DIR: '', OPENROUTER_API_KEY: '' } });
+  assert.equal(r.status, 1, r.stderr);
+  const want = `set dir in ${slash(path.join(base, '.runbooks', 'config.json'))} to the runbooks it should map`;
+  assert.ok(r.stderr.toLowerCase().includes(want.toLowerCase()), r.stderr);
+  assert.doesNotMatch(r.stderr, /Create /);
+  assert.equal(fs.existsSync(path.join(base, '.runbooks', 'topics.json')), false);
+});
+
+test('#122: newestVersion takes semver first, then the newest SHA folder by mtime', (t) => {
+  const plug = tmp(t);
+  for (const v of ['abc123', 'def456']) fs.mkdirSync(path.join(plug, v));
+  fs.utimesSync(path.join(plug, 'abc123'), new Date(2026, 0, 2), new Date(2026, 0, 2));
+  fs.utimesSync(path.join(plug, 'def456'), new Date(2026, 0, 1), new Date(2026, 0, 1));
+  assert.equal(newestVersion(plug), 'abc123', 'newest mtime, not name order');
+  fs.mkdirSync(path.join(plug, '1.0.0'));
+  assert.equal(newestVersion(plug), '1.0.0', 'any semver folder beats a SHA folder');
+  assert.equal(newestVersion(path.join(plug, 'missing')), null);
+  fs.writeFileSync(path.join(plug, 'zzz.lock'), '');
+  fs.utimesSync(path.join(plug, 'zzz.lock'), new Date(2026, 5, 1), new Date(2026, 5, 1));
+  fs.rmSync(path.join(plug, '1.0.0'), { recursive: true });
+  assert.equal(newestVersion(plug), 'abc123', 'a stray file with the newest mtime is not a version');
+});
+
+test('#122: the hook and the lint read the same SHA-named folder', (t) => {
+  const base = tmp(t);
+  execFileSync('git', ['init', '-q', base]);
+  const configDir = path.join(base, 'cfg');
+  const dir = (v) => path.join(configDir, 'plugins', 'cache', 'm', 'ctx', v);
+  // The newest folder by mtime is FIRST by name, so a readdir-order pop would pick the wrong one.
+  put(path.join(dir('aaa111'), 'skills', 'docs', 'SKILL.md'), '---\nname: docs\nrunbooks:\n  - topic: a topic only the newest has\n---\nnew');
+  put(path.join(dir('bbb222'), 'skills', 'docs', 'SKILL.md'), '---\nname: docs\n---\nold');
+  fs.utimesSync(dir('aaa111'), new Date(2026, 0, 2), new Date(2026, 0, 2));
+  fs.utimesSync(dir('bbb222'), new Date(2026, 0, 1), new Date(2026, 0, 1));
+  assert.equal(findSkill('ctx:docs', { cwd: base, home: base, configDir }), path.join(dir('aaa111'), 'skills', 'docs', 'SKILL.md'));
+  const lint = skillViolations({ top: base, configDir, root: null, books: [], foreign: false });
+  assert.ok(lint.advisories.some((a) => a.includes('a topic only the newest has')), 'the lint read aaa111 too');
 });

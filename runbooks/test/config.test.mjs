@@ -104,7 +104,7 @@ test('7. settings with an empty config returns the measured defaults plus paths'
   writeConfig(root, {});
   const dir = mk(f.project, 'docs', 'runbooks');
   assert.deepStrictEqual(settings({ cwd: f.project, env: f.env, home: f.home }), {
-    root, dir, firesAt: 0.8, writeBar: 0.85, maxInject: 6, shortlist: 30,
+    root, dir, topicsRoot: root, firesAt: 0.8, writeBar: 0.85, maxInject: 6, shortlist: 30,
     ledger: join(dir, '.router-ledger.json'),
   });
 });
@@ -174,13 +174,57 @@ test('10. invalid or missing config.json gives {}', (t) => {
   assert.deepStrictEqual(loadConfig(root), { firesAt: 0.9 });
 });
 
+test('11. topicsRoot: .runbooks/ owns the map only for the runbooks beside it', (t) => {
+  const f = fixture(t);
+  const homeRoot = mk(f.home, '.runbooks');
+  writeConfig(homeRoot, {});
+  mk(f.project, 'docs', 'runbooks');
+  // The #121 case: home's .runbooks/ found, the project's own docs/runbooks used.
+  assert.strictEqual(settings({ cwd: f.project, env: f.env, home: f.home }).topicsRoot, null);
+  const projRoot = mk(f.project, '.runbooks');
+  writeConfig(projRoot, {});
+  assert.strictEqual(settings({ cwd: f.project, env: f.env, home: f.home }).topicsRoot, projRoot);
+});
+
+test('11b. home .runbooks/ owns home docs/runbooks when the project has none', (t) => {
+  const f = fixture(t);
+  const homeRoot = mk(f.home, '.runbooks');
+  writeConfig(homeRoot, {});
+  mk(f.home, 'docs', 'runbooks');
+  assert.strictEqual(settings({ cwd: f.project, env: f.env, home: f.home }).topicsRoot, homeRoot);
+});
+
+test('11c. a runbooks folder named by config.dir or RUNBOOKS_DIR is owned wherever it sits', (t) => {
+  const f = fixture(t);
+  const store = mk(f.base, 'store');
+  // A home worktree: the project carries .runbooks/ with an absolute config.dir to another folder.
+  const projRoot = mk(f.project, '.runbooks');
+  writeConfig(projRoot, { dir: store });
+  assert.strictEqual(settings({ cwd: f.project, env: f.env, home: f.home }).topicsRoot, projRoot);
+  writeConfig(projRoot, {});
+  assert.strictEqual(settings({ cwd: f.project, env: { RUNBOOKS_DIR: store }, home: f.home }).topicsRoot, projRoot);
+});
+
+test('11d. a repo nested inside home does not write its map into home .runbooks/', (t) => {
+  const f = fixture(t);
+  mk(f.home, '.runbooks');
+  // ~/code/foo with its own docs/runbooks and no .runbooks/. Home's .runbooks/ is found, but it
+  // sits beside ~/docs/runbooks, not beside this repo's runbooks.
+  const nested = mk(f.home, 'code', 'foo');
+  execFileSync('git', ['init', '-q', nested]);
+  const dir = mk(nested, 'docs', 'runbooks');
+  const s = settings({ cwd: nested, env: f.env, home: f.home });
+  assert.strictEqual(s.dir, dir);
+  assert.strictEqual(s.topicsRoot, null);
+});
+
 test('STATE_DIR ends in claude-router', () => {
   assert.match(STATE_DIR, /claude-router$/);
 });
 
 test('settings() and resolveDir() with no argument fall back to process.cwd() and do not throw', () => {
   const s = settings();
-  assert.deepStrictEqual(Object.keys(s), ['root', 'dir', 'firesAt', 'writeBar', 'maxInject', 'shortlist', 'ledger']);
+  assert.deepStrictEqual(Object.keys(s), ['root', 'dir', 'topicsRoot', 'firesAt', 'writeBar', 'maxInject', 'shortlist', 'ledger']);
   assert.strictEqual(resolveDir(), s.dir);
   assert.strictEqual(resolveDir({}), s.dir);
 });

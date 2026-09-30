@@ -126,6 +126,14 @@ export function parseTriggers(value) {
   return String(value ?? "").split(",").map((s) => s.trim().split(/\s+/).filter(Boolean)).filter((w) => w.length);
 }
 
+// A Triggers line on a retired runbook never fires (#123). The lint runs this on the top-level
+// files through lintTriggers and on retired/ directly, where retired runbooks usually sit.
+export function lintRetiredTriggers(slug, text, h = parseHeader(text)) {
+  return h.triggers !== null && RETIRED_RE.test(h.status ?? "")
+    ? [`${slug}: **Triggers:** on a retired runbook never fires, remove the line`]
+    : [];
+}
+
 export function lintTriggers(slug, text) {
   const h = parseHeader(text);
   if (h.triggers === null) {
@@ -136,6 +144,7 @@ export function lintTriggers(slug, text) {
   if (h.type && TYPES.has(h.type) && !ROUTED.has(h.type)) {
     out.push(`${slug}: **Triggers:** belongs to procedures, standards and references only, this is a ${h.type}`);
   }
+  out.push(...lintRetiredTriggers(slug, text, h));
   if (h.triggers.split(",").some((s) => !s.trim())) out.push(`${slug}: empty trigger in **Triggers:**`);
   for (const words of parseTriggers(h.triggers)) {
     const t = words.join(" ");
@@ -358,7 +367,7 @@ function runbookFiles(dir) {
 // The lint shares the hook's parser deliberately. A separate script would carry its own copy
 // of these rules and drift from the ones the index actually applies.
 async function runLint() {
-  const { root, dir: found, ledger } = settings();
+  const { root, dir: found, ledger, topicsRoot } = settings();
   if (!found) {
     console.error("No runbooks folder found (RUNBOOKS_DIR, .runbooks/config.json dir, docs/runbooks).");
     process.exitCode = 1;
@@ -373,9 +382,12 @@ async function runLint() {
     const text = readFileSync(join(dir, f), "utf8");
     return [...lintFile(slug, text), ...(allowed ? lintProject(slug, text, allowed) : []), ...runLintExtensions(rules, { slug, text, header: parseHeader(text) })];
   });
-  if (allowed && existsSync(join(dir, "retired"))) {
+  // retired/ gets the Project check when there is an allow-list, and the retired-Triggers check always.
+  if (existsSync(join(dir, "retired"))) {
     for (const f of runbookFiles(join(dir, "retired")).files) {
-      problems.push(...lintProject(`retired/${f.slice(0, -3)}`, readFileSync(join(dir, "retired", f), "utf8"), allowed));
+      const slug = `retired/${f.slice(0, -3)}`;
+      const text = readFileSync(join(dir, "retired", f), "utf8");
+      problems.push(...lintRetiredTriggers(slug, text), ...(allowed ? lintProject(slug, text, allowed) : []));
     }
   }
   // Skills declare topics, and a topic that maps to nothing (or to a runbook that was retired or
@@ -390,6 +402,7 @@ async function runLint() {
     configDir: process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"),
     root,
     books: loadAll(dir),
+    foreign: Boolean(root) && !topicsRoot,
   });
   problems.push(...skills.violations);
   const splits = problems.filter((p) => p.endsWith("consider splitting"));
@@ -400,7 +413,7 @@ async function runLint() {
   for (const p of splits) console.log(`  ${p}`);
   console.log(`\n${files.length} runbooks, ${violations.length} violations.`);
   if (skills.advisories.length) {
-    console.log(`\n${skills.advisories.length} skill topics from installed plugins are not mapped (advisory, map the ones this host has a runbook for):`);
+    console.log(`\n${skills.advisories.length} skill topic advisories (they never fail the lint):`);
     for (const a of skills.advisories) console.log(`  ${a}`);
   }
   if ([...skills.violations, ...skills.advisories].some((p) => p.endsWith("is not mapped"))) {
