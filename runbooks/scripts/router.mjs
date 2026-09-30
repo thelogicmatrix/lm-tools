@@ -45,6 +45,7 @@ import { buildIndex, shortlist } from './prefilter.mjs';
 import { settings, STATE_DIR } from './config.mjs';
 import { DORMANT_RE, parseHeader, readInput, RETIRED_RE } from './index.mjs';
 import { claimRunbooks, scopeOf } from './session.mjs';
+import { isMain } from './lib/exit.mjs';
 
 const HOME = os.homedir();
 // Every prompt is posted here, with no customer-data screen.
@@ -430,21 +431,18 @@ export async function route(prompt, books, key, fetchImpl = fetch, opts = {}) {
 
 // --- hook entry ---
 // Only run the hook when this file IS the command. An import wants the exports, not a stdin read.
-// Real paths on both sides. Launched through a junction, argv[1] keeps the link while node
-// resolves this module to its target, and a URL compare never ran the hook (#32). realpathSync
-// throws on a missing or undefined argv[1], which is not this file either.
-const isEntry = () => { try { return fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
+// isMain (lib/exit.mjs) compares real paths, so a junctioned plugin cache still runs main().
 // The selftest lives in test/router.test.mjs now (#37). `--selftest` is still named in runbooks, so
 // it runs that file. NODE_TEST_CONTEXT is dropped so a run started inside a test runner reports as
 // its own.
-if (isEntry() && process.argv.includes('--selftest')) {
+if (isMain(import.meta.url) && process.argv.includes('--selftest')) {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   const r = spawnSync(process.execPath, ['--test', fileURLToPath(new URL('../test/router.test.mjs', import.meta.url))],
     { stdio: 'inherit', env });
   process.exit(r.status ?? 1);
 }
-if (isEntry()) {
+if (isMain(import.meta.url)) {
   // index.mjs's read, with its 500 ms deadline. `for await` over stdin waited for an EOF that a
   // caller holding the pipe open never sends, and the hook hung until the harness killed it.
   const input = await readInput();

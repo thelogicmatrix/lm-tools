@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from '
 import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { readCollection } from './lib/store.mjs';
+import { isMain } from './lib/exit.mjs';
 import { CS_END, CS_START, NARRATIVE_UNWRITTEN, pagePath, renderList, setCurrentState } from './lib/page.mjs';
 import { commit, readStore, resolveRoot, today, writeStore } from './lib/portfolio.mjs';
 import { PROJECTS_DIR, REL_ENTRIES, REL_INDEX, REL_STORE, THEMES, THEME_ORDER, assertRenderable, renderIndex, validateSlug, validateStatus, validateTheme } from './lib/render.mjs';
@@ -249,7 +250,7 @@ function warnDanglingParents(root, from, to) {
   // silent-miss the warning exists to prevent.
   for (const dir of ['docs/handoffs/active', 'docs/handoffs/backlog']) {
     try {
-      for (const e of readCollection(root, dir)) if (e && e.parent === from) hits.push(e.slug);
+      for (const e of readCollection(root, dir, { name: 'projects' })) if (e && e.parent === from) hits.push(e.slug);
     } catch { /* not installed, or an unreadable record. Either way there is nothing to report. */ }
   }
   if (!hits.length) return;
@@ -406,4 +407,4 @@ function fail(e) {
   process.exit(/unknown status|unknown theme|unknown project|invalid slug|was given|is required|no page|Migrate it first/.test(message) ? 2 : 1);
 }
 
-if (process.argv[1] && process.argv[1].endsWith('projects.mjs')) main();
+if (isMain(import.meta.url)) main();

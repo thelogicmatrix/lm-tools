@@ -473,8 +473,8 @@ export function fun(events, rows) {
 export function buildReport(root) {
   const { events, available } = readEvents(root);
   const sessions = readSessions(root);
-  const active = readCollection(root, 'docs/handoffs/active');
-  const backlog = readCollection(root, 'docs/handoffs/backlog');
+  const active = readCollection(root, 'docs/handoffs/active', { name: 'gtg' });
+  const backlog = readCollection(root, 'docs/handoffs/backlog', { name: 'gtg' });
   const effort = readDurations(root);
   const rows = perProject(events, sessions, active, backlog, effort);
   const tp = throughput(events);

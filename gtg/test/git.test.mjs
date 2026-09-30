@@ -1,6 +1,5 @@
-// lib/git.mjs runGit, and gtg's commit() on a failed commit. The git.mjs copies in
-// logical-projects and logical-learning are pinned to this one by store-parity.test.mjs, so the
-// runGit cases here cover all three. Each tool's own suite checks its commit() leaves nothing
+// lib/git.mjs runGit, and gtg's commit() on a failed commit. Every vendored git.mjs is pinned to
+// lib-cli/git.mjs by test/framework.test.mjs, so the runGit cases here cover every copy. Each tool's own suite checks its commit() leaves nothing
 // staged when the commit fails.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

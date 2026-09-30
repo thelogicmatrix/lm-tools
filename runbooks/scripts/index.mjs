@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, loadExtensions, settings } from "./config.mjs";
+import { isMain } from "./lib/exit.mjs";
 
 // The plugin root, so the lint's advisory names a command that runs from any cwd. The advisory
 // quotes it with forward slashes, so it pastes into bash and PowerShell alike on Windows.
@@ -512,10 +513,7 @@ async function main() {
   process.stdout.write(out ? JSON.stringify(out) + "\n" : "", () => process.exit());
 }
 
-// Real paths on both sides. Launched through a junction, argv[1] keeps the link while node
-// resolves this module to its target, and a URL compare never ran main (#32). argv[1] is
-// undefined under `node -e`, so the throw is caught to keep this module importable inline.
-const isEntry = () => { try { return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
-if (isEntry()) {
+// isMain (lib/exit.mjs) compares real paths, so a junctioned plugin cache still runs main().
+if (isMain(import.meta.url)) {
   main();
 }

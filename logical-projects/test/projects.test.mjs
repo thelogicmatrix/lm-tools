@@ -1369,6 +1369,17 @@ test('main wires sync: exit 0 on a clean store, exit 1 on a page it cannot parse
   assert.equal(runCli(root, ['sync']).stdout, broken.stdout);
 });
 
+test('a store file that does not parse is a deliberate refusal, not an internal error', () => {
+  const root = fixture();
+  writeStore(root, { version: 1, projects: [
+    { slug: 'ok', name: 'OK', status: 'active', where: [], page: 'ok.md', lastTouched: '2026-07-29' }] });
+  writeFileSync(join(root, REL_ENTRIES, 'ok.json'), '{');
+  const r = runCli(root, []);
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /^projects: cannot parse docs\/projects\/entries\/ok\.json/);
+  assert.doesNotMatch(r.stderr, /internal error/);
+});
+
 // ── sync, fix round 5 ────────────────────────────────────────────────────────────────
 
 test('a status body opening with a stamp line cannot pass as the header stamp', () => {

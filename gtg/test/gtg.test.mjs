@@ -2913,4 +2913,15 @@ ${r.stdout}`);
   console.log('ok 79 - a name-only rename keeps the slug and the handoff path');
 }
 
+// --- 80. a record that does not parse is reported under gtg's name ---
+{
+  const repo = tempRepo();
+  gtg(repo, HANDOFF_ARGS('solid', 'Solid'), { input: BODY });
+  writeFileSync(join(repo, 'docs', 'handoffs', 'active', 'broken.json'), '{');
+  const r = gtg(repo, ['list']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /gtg: cannot parse docs\/handoffs\/active\/broken\.json/);
+  console.log('ok 80 - a record that does not parse is reported under gtg\'s name');
+}
+
 console.log('ALL PASS');

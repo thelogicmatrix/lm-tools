@@ -22,6 +22,8 @@ import { judge, slash } from './find.mjs';
 import { purposeHash } from './ledger.mjs';
 import { loadAll, readKey } from './router.mjs';
 import { claimRunbooks, scopeOf } from './session.mjs';
+import { parseArgs } from './lib/args.mjs';
+import { fail, isMain } from './lib/exit.mjs';
 
 export const slugOf = (file) => slash(file).replace(/\.md$/, '');
 export const topicKey = (t) => String(t ?? '').replace(/\s+/g, ' ').trim();
@@ -179,9 +181,6 @@ export async function resolveTopics(topics, { map, books, judgeFn = null, writeB
   return { resolved, unresolved };
 }
 
-const flagValue = (argv, f) => { const i = argv.indexOf(f); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null; };
-const fail = (msg, code = 2) => { console.error(msg); process.exitCode = code; };
-
 function judgeWith(cfg, books) {
   const key = readKey();
   return (topic) => judge(topic, books, key, fetch,
@@ -311,19 +310,21 @@ async function hookMain() {
 }
 
 async function main(argv) {
+  const { flags } = parseArgs(argv, { boolean: ['hook', 'changed', 'inject'] });
+  const str = (v) => (typeof v === 'string' && v !== '' ? v : null);
   const cfg = settings({ cwd: process.cwd() });
-  if (argv.includes('--changed')) {
+  if (flags.changed === true) {
     if (!cfg.dir || !cfg.root) return;
     return changed(cfg, loadAll(cfg.dir));
   }
-  const name = flagValue(argv, '--skill');
+  const name = str(flags.skill);
   if (!name) return fail('usage: resolve.mjs --skill <name> [--paths | --inject] [--at <step>] [--skills-dir <dir>]  |  --changed');
   if (!cfg.dir) return; // no runbooks folder: silent
-  const file = findSkill(name, { cwd: process.cwd(), skillsDir: flagValue(argv, '--skills-dir') });
+  const file = findSkill(name, { cwd: process.cwd(), skillsDir: str(flags['skills-dir']) });
   if (!file) return fail(`resolve: no skill named ${name}`);
   const block = parseRunbooksBlock(fs.readFileSync(file, 'utf8'));
   if (block.errors.length) return fail(block.errors.map((e) => `${name}: ${e}`).join('\n'));
-  const step = flagValue(argv, '--at');
+  const step = str(flags.at);
   const topics = step ? block.topics.filter((t) => t.at.includes(step)) : block.topics;
   if (!topics.length) return;
   const books = loadAll(cfg.dir);
@@ -336,7 +337,7 @@ async function main(argv) {
     console.error('resolve: no .runbooks/ folder, so nothing was cached and the next run pays again');
   }
   const files = [...new Set(resolved.map((r) => r.book.file))];
-  if (argv.includes('--inject')) {
+  if (flags.inject === true) {
     // Trailing whitespace trimmed, so each file is followed by exactly one blank line whether or not
     // it ends in a newline.
     for (const f of files.slice(0, cfg.maxInject)) {
@@ -349,9 +350,8 @@ async function main(argv) {
   if (unresolved.length) process.exitCode = 1;
 }
 
-const isEntry = () => { try { return fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
-if (isEntry() && process.argv.includes('--hook')) {
+if (isMain(import.meta.url) && process.argv.includes('--hook')) {
   try { await hookMain(); } catch { /* a hook never fails a skill load */ }
-} else if (isEntry()) {
+} else if (isMain(import.meta.url)) {
   try { await main(process.argv.slice(2)); } catch (e) { fail(`resolve: ${e.message}`); }
 }

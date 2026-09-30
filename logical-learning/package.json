@@ -1,6 +1,6 @@
 {
   "name": "logical-learning",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Self-directed learning sprints: one concept a session, closed by a graded mastery gate.",
   "type": "module",
   "engines": { "node": ">=18" },

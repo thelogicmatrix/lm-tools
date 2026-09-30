@@ -1,6 +1,6 @@
 {
   "name": "logical-learning",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Your personal tutor. One subject, one project you want, one new concept per session, and a pass/fail gate at the end of each session that you don't get to mark yourself. Extend it with your own study tracks in .learn/tracks/.",
   "author": {
     "name": "Nathan Wong"

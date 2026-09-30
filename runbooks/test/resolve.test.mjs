@@ -213,6 +213,14 @@ test('--inject prints contents under a path heading', (t) => {
   assert.equal(r.stdout, `## ${slash(path.join(f.docs, 'git-workflow.md'))}\n# T\n**Type:** procedure\n**Purpose:** Branch, push and open a pull request.\n\n`);
 });
 
+test('--inject stays boolean when a stray token follows it', (t) => {
+  const f = fixture(t);
+  const plain = f.run('--skill', 'swarm', '--at', 'landing', '--inject');
+  const stray = f.run('--skill', 'swarm', '--at', 'landing', '--inject', 'stray');
+  assert.equal(stray.status, plain.status, stray.stderr);
+  assert.equal(stray.stdout, plain.stdout);
+});
+
 test('silent exit 0: a skill with no block, and a host with no runbooks folder (spec gate 6)', (t) => {
   const f = fixture(t);
   const plain = f.run('--skill', 'plain');

@@ -1,30 +1,27 @@
-// ponytail: a near-copy of gtg/skills/gtg/lib/store.mjs. The two plugins install and version
-// independently, so a shared module would break on a version skew for the sake of 70 lines.
-// A change here probably belongs there too.
+// lib-cli/store.mjs. Canonical in the logical-tools repo, vendored into each plugin that lists it in a
+// .framework.json. Edit the canonical copy, run node scripts/sync-lib.mjs, commit both.
 //
-// One file per record. A packed collection ({version, projects: [...]}) made every write rewrite
-// the whole file, so two machines editing UNRELATED projects still collided on the same bytes
-// and a JSON array conflict has no semantic merge. Per-record files make unrelated edits
-// disjoint, and a same-project fork conflicts on one small file, which is correct.
+// A JSON collection store, one file per record. A packed file made every write rewrite the whole
+// collection, so two machines editing unrelated records collided on the same bytes. One file per
+// record makes unrelated edits disjoint, and a same-record fork conflicts on one small file.
+// Every thrown message starts with the caller's `name` (gtg, projects), because callers print it
+// as is and some classify it by that prefix.
 import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 
 const SLUG_OK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 // The record files this process last read or wrote, per directory. writeCollection deletes only
-// files named here, so a record another session created after our read is never seen and never
-// deleted. Before this, stale came from a fresh listing and keep from the caller's earlier read,
-// so that record was removed as if the caller had dropped it.
-// ponytail: per-process memory, so a caller that learns of records some other way (git show,
-// a hand read) cannot delete them through here. Upgrade path: pass the seen set explicitly.
+// files named here, so a record another session created after our read is never deleted.
+// ponytail: per-process memory, so a caller that learns of records some other way (git show, a
+// hand read) cannot delete them through here. Upgrade path: pass the seen set explicitly.
 const SEEN = new Map();
 
-// Write beside the target and rename over it, so a reader or a second writer never meets a
-// half-written record. The temp name ends in .tmp, never .json, so readCollection cannot list it.
-// Windows refuses to replace a file another process is reading (EPERM, EACCES or EBUSY) for as
-// long as that read lasts, which is milliseconds, so the rename is retried briefly.
-// ponytail: gives up after about 0.5 s and throws, leaving the old record whole. Upgrade path:
-// a longer budget if a slow reader (an indexer, antivirus) ever holds a record that long.
+// Write beside the target and rename over it, so a reader never meets a half-written record. The
+// temp name ends in .tmp, never .json, so readCollection cannot list it. Windows refuses to replace
+// a file another process is reading (EPERM, EACCES or EBUSY) for the milliseconds that read lasts,
+// so the rename is retried briefly.
+// ponytail: gives up after about 0.5 s and throws, leaving the old record whole.
 function writeAtomic(p, body) {
   const tmp = `${p}.${process.pid}.tmp`;
   writeFileSync(tmp, body);
@@ -41,16 +38,15 @@ function writeAtomic(p, body) {
   }
 }
 
-function slugFile(slug) {
+function slugFile(slug, name) {
   if (typeof slug !== 'string' || !SLUG_OK.test(slug)) {
-    throw new Error(`projects: record has an unusable slug ${JSON.stringify(slug)} - cannot name its file`);
+    throw new Error(`${name}: record has an unusable slug ${JSON.stringify(slug)} - cannot name its file`);
   }
   return `${slug}.json`;
 }
 
-// Windows is case-insensitive, Linux is case-sensitive. Two slugs
-// differing only in case are two records on one machine and one clobbered record on the
-// other. Refuse the write rather than lose a record on whichever machine syncs second.
+// Windows is case-insensitive and Linux is not. Two slugs differing only in case are two records on
+// one machine and one clobbered record on the other, so the write is refused.
 export function slugCollision(items) {
   const seen = new Set();
   for (const it of items) {
@@ -61,15 +57,10 @@ export function slugCollision(items) {
   return null;
 }
 
-// The directory is the ONLY store. This used to fall back to the packed file when the directory
-// was absent, and the packed files are deleted now, so there is nothing left to fall back to.
-// Absent therefore means what empty means: a store holding no records. That is a real state -
-// everything archived - and the fallback was the thing that could turn it into a resurrection,
-// by reading a frozen array on any checkout the directory had not reached.
-//
-// A rollback is `git show <pre-shard-commit>:<packed file>` plus the pre-shard plugin, not a
-// code path here. See docs/runbooks/git-parity.md in the store's own repo.
-export function readCollection(root, dir) {
+// The directory is the whole store. Absent means empty: a store holding no records.
+// A file that does not parse throws, naming it. A silent skip would make one record vanish from a
+// list that otherwise looks complete.
+export function readCollection(root, dir, { name = 'store' } = {}) {
   const abs = join(root, dir);
   if (!existsSync(abs)) {
     SEEN.set(abs, new Set());
@@ -83,10 +74,7 @@ export function readCollection(root, dir) {
     try {
       rec = JSON.parse(readFileSync(p, 'utf8'));
     } catch (e) {
-      // NOT a silent skip. The packed store swallowed parse errors and returned null,
-      // which cost nothing when it meant "no store". Here it would mean one record
-      // silently disappearing from a list that otherwise looks complete.
-      throw new Error(`projects: cannot parse ${dir}/${f} - ${e.message}`);
+      throw new Error(`${name}: cannot parse ${dir}/${f} - ${e.message}`);
     }
     if (rec) out.push(rec);
   }
@@ -94,19 +82,18 @@ export function readCollection(root, dir) {
   return out;
 }
 
-// Returns repo-relative paths so the caller can hand them straight to commit(), which must
-// name every path on BOTH `git add` and `git commit` - deletions included, or the removal
-// stays in the working tree and the next session commits it as its own.
-export function writeCollection(root, dir, items) {
+// Returns repo-relative paths so the caller can hand them to its commit, which must name every path
+// on both `git add` and `git commit`, deletions included.
+export function writeCollection(root, dir, items, { name = 'store' } = {}) {
   const collision = slugCollision(items);
   if (collision) {
-    throw new Error(`projects: slugs collide case-insensitively on "${collision}" - one machine would lose a record`);
+    throw new Error(`${name}: slugs collide case-insensitively on "${collision}" - one machine would lose a record`);
   }
-  for (const it of items) slugFile(it?.slug); // validate all before touching disk
+  for (const it of items) slugFile(it?.slug, name); // validate all before touching disk
 
   const abs = join(root, dir);
   const before = existsSync(abs) ? readdirSync(abs).filter((f) => f.endsWith('.json')) : [];
-  const keep = new Set(items.map((it) => slugFile(it.slug)));
+  const keep = new Set(items.map((it) => slugFile(it.slug, name)));
   const seen = SEEN.get(abs) ?? new Set();
   const stale = before.filter((f) => !keep.has(f) && seen.has(f));
 
@@ -115,37 +102,29 @@ export function writeCollection(root, dir, items) {
   const written = new Set();
   const deleted = new Set();
 
-  // Git cannot track an empty directory. Without this file a collection that empties out - the
-  // last active entry consumed, a prune, everything parked - simply does not exist in the other
-  // machine's checkout. That used to be a silent resurrection: readCollection took the LEGACY
-  // branch there and returned the frozen packed array, and migrateCollection re-sharded it. With
-  // the packed files gone the failure is smaller but still wrong - the collection reads as a
-  // store that was never created rather than as one deliberately emptied, and the first write on
-  // that machine re-creates the directory as a fresh commit, forking history against this one.
-  // Created once, beside the first write, and named in `written` so commit() adds it there.
+  // Git cannot track an empty directory. Without this file a collection that empties out does not
+  // exist in another machine's checkout, and the first write there forks history against this one.
   const gitkeep = join(abs, '.gitkeep');
   if (!existsSync(gitkeep)) {
     writeFileSync(gitkeep, '');
     written.add(`${dir}/.gitkeep`);
   }
 
-  // A slug whose case changed (Alpha -> alpha) is TWO files on Linux and ONE on Windows.
-  // Rename the old casing onto the new one BEFORE writing: on Windows the write would
-  // otherwise land in the old file and the delete pass below would then remove the record
-  // we just wrote. rename never leaves a hole, so a crash here cannot lose the record.
+  // A slug whose case changed (Alpha to alpha) is two files on Linux and one on Windows. Rename the
+  // old casing onto the new one before writing, or on Windows the delete pass below would remove
+  // the record just written.
   for (const f of stale) {
     const target = [...keep].find((k) => k.toLowerCase() === f.toLowerCase());
     if (!target) continue;
     renameSync(join(abs, f), join(abs, target));
     deleted.add(`${dir}/${f}`);
-    written.add(`${dir}/${target}`); // git must be told the new path even if the body matches
+    written.add(`${dir}/${target}`);
   }
 
-  // Write everything first, delete last. A failure partway then leaves a SUPERSET of the
-  // intended state (a stale extra record), which a re-run converges. Deleting first would
-  // leave a hole, which nothing converges.
+  // Write everything first, delete last. A failure partway leaves a superset of the intended state,
+  // which a re-run converges. Deleting first would leave a hole.
   for (const it of items) {
-    const f = slugFile(it.slug);
+    const f = slugFile(it.slug, name);
     const body = JSON.stringify(it, null, 2) + '\n';
     const p = join(abs, f);
     if (existsSync(p) && readFileSync(p, 'utf8') === body) continue; // unchanged: leave it alone

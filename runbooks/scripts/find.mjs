@@ -13,9 +13,8 @@
 //
 // --judge: the paid score through route(), about $0.0004. For callers with no reader to judge a
 // shortlist: resolve.mjs mapping a skill's topics, and the lint.
-import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isMain } from './lib/exit.mjs';
 import { settings } from './config.mjs';
 import { buildIndex, rank } from './prefilter.mjs';
 import { loadAll, readKey, route } from './router.mjs';
@@ -68,5 +67,4 @@ async function main(argv) {
   }
 }
 
-const isEntry = () => { try { return fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
-if (isEntry()) await main(process.argv.slice(2));
+if (isMain(import.meta.url)) await main(process.argv.slice(2));

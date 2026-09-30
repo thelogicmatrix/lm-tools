@@ -1,10 +1,10 @@
 // The one place every runbooks script resolves paths and settings.
 // .runbooks/ is the user tier: project root first, then ~/.runbooks. First found wins, no merging.
-import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { gitTop } from './lib/root.mjs';
 
 // Spend and dedupe logs. LOCALAPPDATA on Windows, XDG-style state dir elsewhere.
 export const STATE_DIR = process.env.LOCALAPPDATA
@@ -18,11 +18,7 @@ const isDir = (p) => { try { return statSync(p).isDirectory(); } catch { return 
 
 // Git top of cwd, or cwd itself when it is not in a repo or git is unavailable.
 export function projectRoot(cwd) {
-  try {
-    const top = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    if (top) return resolve(top);
-  } catch {}
-  return resolve(cwd);
+  return resolve(gitTop(cwd) ?? cwd);
 }
 
 function rootFrom(project, cwd, home) {

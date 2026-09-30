@@ -10,6 +10,9 @@ jobs:
           node-version: 20
       # First, and fast: the tree must not name a person, machine or private address.
       - run: node --test test/*.test.mjs
+      # The canonical framework every plugin vendors from (lib-cli/README.md).
+      - run: node --test lib-cli/test/*.test.mjs
+      - run: node --test scripts/*.test.mjs
       # Globs, not a hand list. The list missed 6 of 9 gtg files and the projects store test.
       # The shell expands the glob (Node 20 has no --test glob support). gtg runs one file at a
       # time because gtg.test.mjs spawns the CLI against many temp repos (gtg/package.json).

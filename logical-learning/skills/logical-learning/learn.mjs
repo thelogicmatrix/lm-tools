@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, renameSync, rmSync } from 'node:fs';
-import { join, dirname, basename, resolve } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runGit, firstMeaningfulLine } from './lib/git.mjs';
+import { hubRoot } from './lib/root.mjs';
+import { isMain } from './lib/exit.mjs';
 
 export const CLI_DIR = dirname(fileURLToPath(import.meta.url));
 const SAFE = /^[A-Za-z0-9_-]+$/;
@@ -53,8 +55,8 @@ export function readSprint(root, slug) {
 // Write beside the target and rename over it, so a concurrent reader never meets a half-written
 // sprint. Windows refuses to replace a file another process is reading (EPERM, EACCES or EBUSY)
 // for as long as that read lasts, which is milliseconds, so the rename is retried briefly.
-// ponytail: the twin of writeAtomic in gtg's and projects' lib/store.mjs, gives up after about
-// 0.5 s. Upgrade path: move it into a shared twin file under the parity test if a third caller appears.
+// ponytail: the same shape as writeAtomic in lib-cli/store.mjs (vendored into gtg and projects),
+// gives up after about 0.5 s. Upgrade path: export it from lib-cli if a third caller appears.
 function writeAtomic(p, body) {
   const tmp = `${p}.${process.pid}.tmp`;
   writeFileSync(tmp, body);
@@ -88,12 +90,7 @@ export function writeSprint(root, sprint) {
 }
 
 export function resolveRoot() {
-  if (process.env.LEARN_HUB) return process.env.LEARN_HUB;
-  try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
-  } catch {
-    return die(2, 'no LEARN_HUB set and not inside a git repo. Set LEARN_HUB or run from a repo.');
-  }
+  return hubRoot('LEARN_HUB') ?? die(2, 'no LEARN_HUB set and not inside a git repo. Set LEARN_HUB or run from a repo.');
 }
 
 // The gate is toplevel EQUALITY, not "is this inside a repo". LEARN_HUB may point at an
@@ -551,12 +548,5 @@ async function main(argv) {
   }
 }
 
-// Compare the FILENAME, not the path. Comparing import.meta.url against
-// pathToFileURL(argv[1]) looks stricter but breaks the moment the two disagree on path form,
-// and an installed plugin is exactly where they disagree: the work account reaches its plugin
-// cache through a junction, so node resolved this module to its real path while argv[1] kept
-// the junction path it was handed. main() then never ran and every verb exited 0 with no
-// output — a silent no-op, worse than a crash. projects.mjs already used the filename form.
-if (process.argv[1] && basename(process.argv[1]) === 'learn.mjs') {
-  await main(process.argv.slice(2));
-}
+// isMain compares real paths, so the junctioned plugin cache still runs main().
+if (isMain(import.meta.url)) { await main(process.argv.slice(2)); }

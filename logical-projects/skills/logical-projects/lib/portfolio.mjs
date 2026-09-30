@@ -1,22 +1,18 @@
 // Where the portfolio lives and how it reaches disk and git: the root, the record store and its
 // guard against rendering an empty index over a populated one, today's date, and the path-named
-// commit. Split out of projects.mjs (#37), code unchanged.
+// commit. Split out of projects.mjs (#37).
 import { readFileSync, existsSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { readCollection, writeCollection } from './store.mjs';
+import { hubRoot } from './root.mjs';
 import { runGit, firstMeaningfulLine } from './git.mjs';
 import { REL_ENTRIES, REL_INDEX, parseIndex } from './render.mjs';
 
 export function resolveRoot() {
-  if (process.env.PROJECTS_ROOT) return process.env.PROJECTS_ROOT;
-  try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { stdio: ['ignore', 'pipe', 'ignore'] })
-      .toString().trim();
-  } catch {
-    console.error('projects: not inside a git repository and PROJECTS_ROOT is not set');
-    process.exit(2);
-  }
+  const root = hubRoot('PROJECTS_ROOT');
+  if (root) return root;
+  console.error('projects: not inside a git repository and PROJECTS_ROOT is not set');
+  process.exit(2);
 }
 
 // parseIndex already carries the header and separator guards, so it counts the rows here rather
@@ -35,7 +31,7 @@ export function readStore(root) {
   // absent; the packed file is deleted, so an absent directory is a root with no projects
   // registered yet, which readCollection returns as []. The refusal below is what keeps that
   // from quietly wiping a populated INDEX.md.
-  const store = { projects: readCollection(root, REL_ENTRIES) };
+  const store = { projects: readCollection(root, REL_ENTRIES, { name: 'projects' }) };
   // Refused HERE because every verb reads the store through this one function, so one guard covers
   // all of them and every verb added later. Without it, rows in INDEX.md with none in the store is a
   // loaded gun: this returns an empty list, saveAndRender renders a bare header over the table, and
@@ -73,7 +69,7 @@ export function readStore(root) {
 // every path on both `git add` and `git commit` or a removal is left in the working tree for
 // whichever session commits next to pick up as its own.
 export function writeStore(root, store) {
-  const { written, deleted } = writeCollection(root, REL_ENTRIES, store.projects);
+  const { written, deleted } = writeCollection(root, REL_ENTRIES, store.projects, { name: 'projects' });
   return [...written, ...deleted];
 }
 

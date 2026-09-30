@@ -34,18 +34,8 @@ export function runSelftest(testUrl) {
   process.exitCode = r.status ?? 1;
 }
 
-// True when the module at `url` is the script node was started with. Both sides go through
-// realpathSync, because a plugin reached through a junction runs with argv[1] on the junction path
-// while node resolves import.meta.url to the target, and a plain compare never ran main() there
-// (runbooks #32). A path that does not resolve is not the entry point.
-export function isMain(url, argv1 = process.argv[1]) {
-  if (!argv1) return false;
-  try {
-    return fs.realpathSync(argv1) === fs.realpathSync(fileURLToPath(url));
-  } catch {
-    return false;
-  }
-}
+// isMain lives in the vendored lib-cli copy (lib/exit.mjs). Re-exported so every script keeps its import.
+export { isMain } from './lib/exit.mjs';
 
 // The key, from the environment first and then from ~/.jev.env.
 //

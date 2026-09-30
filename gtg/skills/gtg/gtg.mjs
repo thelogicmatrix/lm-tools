@@ -2,12 +2,14 @@
 // gtg - zero-model bookkeeping CLI for the gtg pause/resume skill.
 // Storage root: GTG_HUB env var if set, else the current git repo's root.
 // Unknown subcommands dispatch to <root>/.gtg/commands/<name>.mjs (see README).
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync, renameSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync, renameSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { readCollection, writeCollection } from './lib/store.mjs';
 import { runGit, firstMeaningfulLine } from './lib/git.mjs';
+import { gitTop } from './lib/root.mjs';
+import { isMain } from './lib/exit.mjs';
 import { forgeConfig, openForge } from './lib/forge.mjs';
 import { readProgress, renderProgress, renderProgressTaskList } from './lib/progress.mjs';
 import { EXTENSIONS, REVIEW_ACTIVE_DAYS, REVIEW_BACKLOG_DAYS, REVIEW_CMDS, ago, c, displayOrder, localOffsetSuffix, nowIso,
@@ -20,12 +22,7 @@ import { resumeConsume as resumeFor } from './lib/resume.mjs';
 // hang every command.
 let cwdTop;
 function callerRepo() {
-  if (cwdTop === undefined) {
-    try {
-      cwdTop = execFileSync('git', ['rev-parse', '--show-toplevel'],
-        { stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }).toString().trim() || null;
-    } catch { cwdTop = null; }
-  }
+  if (cwdTop === undefined) cwdTop = gitTop();
   return cwdTop;
 }
 function resolveRoot() {
@@ -166,14 +163,14 @@ function commit(paths, message) {
 let FORGE = null;
 function entries(which) {
   if (FORGE) return FORGE.entries(which);
-  return readCollection(ROOT, COLLECTIONS[which]);
+  return readCollection(ROOT, COLLECTIONS[which], { name: 'gtg' });
 }
 // Returns the repo-relative paths touched, INCLUDING deletions, because commit() must name
 // every path on both `git add` and `git commit` or a removal is left for another session to
 // pick up as its own.
 function saveEntries(which, items) {
   if (FORGE) return FORGE.save(which, items);
-  const { written, deleted } = writeCollection(ROOT, COLLECTIONS[which], items);
+  const { written, deleted } = writeCollection(ROOT, COLLECTIONS[which], items, { name: 'gtg' });
   return [...written, ...deleted];
 }
 
@@ -1223,5 +1220,4 @@ async function main(argv) {
 
 // Real paths on both sides. Through a junction argv[1] keeps the link while node resolves this
 // module to its target, and a plain compare would never run main (runbooks #32).
-const isMain = () => { try { return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } };
-if (isMain()) await main(process.argv.slice(2));
+if (isMain(import.meta.url)) await main(process.argv.slice(2));

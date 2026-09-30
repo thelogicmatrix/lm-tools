@@ -8,6 +8,7 @@
 import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { firstMeaningfulLine } from './git.mjs';
+import { parseFlags } from './args.mjs';
 // gtg add-ons come in two kinds. An EXTENSION owns entries in the handoff store and renders
 // its own separated list, so its entries are excluded from `list` and `backlog`. A MOD owns
 // no entries and only adds a view (stats, report), so mods are absent from this map.
@@ -78,16 +79,8 @@ export function resolveEntry(arr, t, order = sortByProject) {
     ?? arr.find((e) => e.project.toLowerCase().includes(t.toLowerCase()))
     ?? null;
 }
-export function parseFlags(argv) {
-  const a = {};
-  for (let i = 0; i < argv.length; i++) {
-    if (!argv[i].startsWith('--')) continue;
-    const k = argv[i].slice(2);
-    if (argv[i + 1] !== undefined && !argv[i + 1].startsWith('--')) a[k] = argv[++i];
-    else a[k] = true;
-  }
-  return a;
-}
+// Re-exported so gtg.mjs and lib/resume.mjs keep importing it from here.
+export { parseFlags };
 
 // Live uncommitted-file count for a worktree. A SessionEnd hook that recorded
 // this was retired 2026-07-11 for MISSING dirty worktrees - it only fired on

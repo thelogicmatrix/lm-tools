@@ -6,7 +6,7 @@
 // The CLI's store calls are synchronous (entries/saveEntries) and HTTP is not, so this loads every
 // record once, lets the command edit the in-memory copy exactly as it edits the file store, and
 // writes the difference in flush(). A separate module rather than a branch in lib/store.mjs,
-// because that file must stay byte-identical in code to the logical-projects plugin's copy.
+// because that file is vendored from lib-cli (test/framework.test.mjs pins it).
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

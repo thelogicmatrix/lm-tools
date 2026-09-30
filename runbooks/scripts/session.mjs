@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { isMain } from './lib/exit.mjs';
 import { STATE_DIR } from './config.mjs';
 
 export const SENT_KEEP_MS = 86_400_000;
@@ -78,8 +78,7 @@ export function clearSent(scope, { dir = STATE_DIR } = {}) {
   try { fs.rmSync(sentFile(scope, dir), { force: true }); } catch { /* nothing to clear */ }
 }
 
-const isEntry = () => { try { return fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url); } catch { return false; } };
-if (isEntry() && process.argv.includes('--clear')) {
+if (isMain(import.meta.url) && process.argv.includes('--clear')) {
   try {
     const { readInput } = await import('./index.mjs');
     clearSent(scopeOf(await readInput()));
